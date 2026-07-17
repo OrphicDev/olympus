@@ -4,6 +4,8 @@ const { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync, readdirSy
 const { join } = require("node:path");
 const { homedir, tmpdir } = require("node:os");
 const { execFile } = require("node:child_process");
+const { randomUUID } = require("node:crypto");
+const nodemailer = require("nodemailer");
 
 const CFG = JSON.parse(readFileSync(join(__dirname, "app-config.json"), "utf8"));
 const PEG = CFG.pegasus;
@@ -476,6 +478,113 @@ ipcMain.handle("chat:send", async (_e, body) => {
   if (!r.ok) return { ok: false, error: "Envoi impossible." };
   const arr = await r.json();
   return { ok: true, message: Array.isArray(arr) ? arr[0] : arr };
+});
+
+// ══════════ CHRONOS (calendrier / tâches) ══════════
+ipcMain.handle("chronos:list", async (_e, from, to) => {
+  const r = await authedFetch(`/rest/v1/events?select=*&date=gte.${from}&date=lte.${to}&order=date.asc,time.asc.nullsfirst`);
+  if (!r.ok) return { ok: false, error: "Chronos indisponible." };
+  return { ok: true, events: await r.json() };
+});
+ipcMain.handle("chronos:create", async (_e, ev) => {
+  const s = loadSession();
+  const body = {
+    title: ev.title, date: ev.date, time: ev.time || null,
+    category: ev.category || "general", assignee: ev.assignee || null,
+    notes: ev.notes || null, created_by: s?.user?.id || null,
+  };
+  const r = await authedFetch(`/rest/v1/events`, { method: "POST", headers: { Prefer: "return=representation" }, body: JSON.stringify(body) });
+  if (!r.ok) return { ok: false, error: "Création impossible." };
+  const arr = await r.json();
+  return { ok: true, event: Array.isArray(arr) ? arr[0] : arr };
+});
+ipcMain.handle("chronos:update", async (_e, id, patch) => {
+  const r = await authedFetch(`/rest/v1/events?id=eq.${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+  return r.ok ? { ok: true } : { ok: false, error: "Mise à jour impossible." };
+});
+ipcMain.handle("chronos:delete", async (_e, id) => {
+  const r = await authedFetch(`/rest/v1/events?id=eq.${id}`, { method: "DELETE" });
+  return r.ok ? { ok: true } : { ok: false, error: "Suppression impossible." };
+});
+
+// ══════════ PRÉSENCE (qui est en ligne) ══════════
+ipcMain.handle("presence:beat", async () => {
+  const s = loadSession();
+  if (!s?.user) return { ok: false };
+  const name = ((s.user.first_name || "") + " " + (s.user.last_name || "")).trim() || s.user.email;
+  await authedFetch(`/rest/v1/presence?on_conflict=user_id`, {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates" },
+    body: JSON.stringify({ user_id: s.user.id, name, last_seen: new Date().toISOString() }),
+  });
+  return { ok: true };
+});
+ipcMain.handle("presence:online", async () => {
+  const r = await authedFetch(`/rest/v1/presence?select=user_id,name,last_seen&order=name.asc`);
+  if (!r.ok) return { ok: false, users: [] };
+  return { ok: true, users: await r.json() };
+});
+
+// ══════════ IRIS (email + CRM) ══════════
+function escHtml(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+function keychainGet(account) {
+  return new Promise((res) => execFile("security", ["find-generic-password", "-a", account, "-s", "OlympusGmail", "-w"], (err, out) => res(err ? null : String(out).trim())));
+}
+function keychainSet(account, password) {
+  return new Promise((res) => execFile("security", ["add-generic-password", "-U", "-a", account, "-s", "OlympusGmail", "-w", password], () => res()));
+}
+
+ipcMain.handle("iris:status", async () => {
+  const email = loadSettings().gmailEmail || null;
+  return { connected: !!email && !!(await keychainGet(email)), email };
+});
+
+ipcMain.handle("iris:connect", async (_e, email, appPassword) => {
+  email = String(email || "").trim();
+  appPassword = String(appPassword || "").replace(/\s+/g, ""); // Google affiche le mdp avec des espaces
+  if (!email || !appPassword) return { ok: false, error: "Email et mot de passe d'application requis." };
+  try {
+    await nodemailer.createTransport({ host: "smtp.gmail.com", port: 465, secure: true, auth: { user: email, pass: appPassword } }).verify();
+  } catch {
+    return { ok: false, error: "Connexion Gmail refusée. Vérifie l'email et le mot de passe d'application." };
+  }
+  const s = loadSettings(); s.gmailEmail = email; saveSettings(s);
+  await keychainSet(email, appPassword);
+  return { ok: true };
+});
+
+ipcMain.handle("iris:disconnect", () => { const s = loadSettings(); delete s.gmailEmail; saveSettings(s); return { ok: true }; });
+
+ipcMain.handle("iris:send", async (_e, d) => {
+  const email = loadSettings().gmailEmail;
+  if (!email) return { ok: false, error: "Gmail non connecté." };
+  const pass = await keychainGet(email);
+  if (!pass) return { ok: false, error: "Mot de passe d'application introuvable, reconnecte Gmail." };
+  const { to, toName, subject, body } = d || {};
+  if (!to || !subject || !body) return { ok: false, error: "Destinataire, sujet et message requis." };
+  const trackingId = randomUUID();
+  const pixel = `<img src="${AUTH_BASE}/functions/v1/track?t=${trackingId}" width="1" height="1" alt="" style="display:none">`;
+  const html = `<div style="font-family:-apple-system,Segoe UI,sans-serif;font-size:14px;line-height:1.6;color:#222;white-space:pre-wrap">${escHtml(body)}</div>${pixel}`;
+  const s = loadSession();
+  const sentByName = s?.user ? (((s.user.first_name || "") + " " + (s.user.last_name || "")).trim() || s.user.email) : email;
+  try {
+    await nodemailer.createTransport({ host: "smtp.gmail.com", port: 465, secure: true, auth: { user: email, pass } })
+      .sendMail({ from: `${sentByName} <${email}>`, to, subject, html });
+  } catch (e) {
+    return { ok: false, error: "Envoi échoué : " + e.message };
+  }
+  await authedFetch(`/rest/v1/emails`, { method: "POST", body: JSON.stringify({ tracking_id: trackingId, to_email: to, to_name: toName || null, subject, preview: String(body).slice(0, 140), sent_by: s?.user?.id || null, sent_by_name: sentByName }) });
+  await authedFetch(`/rest/v1/contacts?on_conflict=email`, { method: "POST", headers: { Prefer: "resolution=merge-duplicates" }, body: JSON.stringify({ email: to, name: toName || null, created_by: s?.user?.id || null }) });
+  return { ok: true };
+});
+
+ipcMain.handle("crm:emails", async () => {
+  const r = await authedFetch(`/rest/v1/emails?select=*&order=sent_at.desc&limit=100`);
+  return r.ok ? { ok: true, emails: await r.json() } : { ok: false, emails: [] };
+});
+ipcMain.handle("crm:contacts", async () => {
+  const r = await authedFetch(`/rest/v1/contacts?select=*&order=created_at.desc&limit=200`);
+  return r.ok ? { ok: true, contacts: await r.json() } : { ok: false, contacts: [] };
 });
 
 app.whenReady().then(createWindow);

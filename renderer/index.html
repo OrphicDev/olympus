@@ -7,13 +7,52 @@
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   :root {
-    --bg:#0a0c12; --panel:#10141d; --card:#151a25; --card2:#1a2130;
-    --line:#232c3d; --line2:#313b50; --txt:#eef2f9; --muted:#8b96ab; --dim:#5b6479;
-    --accent2:#8b63ff; --accent3:#6a3cff; --ok:#4ade80; --warn:#fbbf24; --err:#ff6b7a; --gold:#e8c477;
+    color-scheme: dark;
+    /* Monochrome : le blanc est l'accent (réf. IMG_1804) */
+    --accent2:#f4f4f6; --accent3:#d9d9dd; --accent:#f4f4f6; --accent-fg:#141416;
+    --ok:#8fd6a6; --warn:#ddc487; --err:#e0868f; --gold:#c8c8cd;
+    /* ── Thème sombre (charbon neutre) ── */
+    --bg1:#151517; --bg2:#0b0b0d; --bg-accent:rgba(255,255,255,.035);
+    --txt:#f2f2f4; --muted:#9a9aa1; --dim:#626269;
+    --bg:rgba(255,255,255,.04);
+    --panel:rgba(24,24,27,.55);
+    --card:rgba(255,255,255,.045);
+    --card2:rgba(255,255,255,.09);
+    --line:rgba(255,255,255,.08);
+    --line2:rgba(255,255,255,.16);
+    --focus:rgba(255,255,255,.22); --glow-rgb:255,255,255;
+    --glass-blur:26px;
+    --shadow:0 16px 48px rgba(0,0,0,.36);
+    --neu:3px 3px 9px rgba(0,0,0,.35), -2px -2px 7px rgba(255,255,255,.02);
+    --neu-in:inset 2px 2px 6px rgba(0,0,0,.38), inset -1px -1px 4px rgba(255,255,255,.022);
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --accent2:#1b1b1d; --accent3:#2c2c30; --accent:#1b1b1d; --accent-fg:#f4f4f6;
+    --ok:#3f9d63; --warn:#b3872c; --err:#c6555f; --gold:#8a8a90;
+    --bg1:#f1f1f3; --bg2:#e5e5e9; --bg-accent:rgba(0,0,0,.018);
+    --txt:#1b1b1d; --muted:#5c5c63; --dim:#9a9aa1;
+    --bg:rgba(255,255,255,.55);
+    --panel:rgba(255,255,255,.62);
+    --card:rgba(255,255,255,.6);
+    --card2:rgba(255,255,255,.9);
+    --line:rgba(20,20,26,.1);
+    --line2:rgba(20,20,26,.18);
+    --focus:rgba(0,0,0,.18); --glow-rgb:34,34,38;
+    --shadow:0 16px 42px rgba(120,120,132,.2);
+    --neu:4px 4px 12px rgba(190,190,198,.45), -4px -4px 12px rgba(255,255,255,.92);
+    --neu-in:inset 3px 3px 7px rgba(190,190,198,.42), inset -2px -2px 6px rgba(255,255,255,.92);
   }
   html,body{height:100%;}
-  body{background:var(--bg);color:var(--txt);font:14.5px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased;overflow:hidden;user-select:none;}
-  #hub{display:grid;grid-template-columns:236px 1fr;height:100vh;}
+  body{
+    background:
+      radial-gradient(1100px 600px at 12% -12%, var(--bg-accent), transparent 62%),
+      linear-gradient(160deg, var(--bg1), var(--bg2));
+    background-attachment:fixed;
+    color:var(--txt);font:14.5px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    -webkit-font-smoothing:antialiased;overflow:hidden;user-select:none;
+  }
+  #hub{display:grid;grid-template-columns:236px 1fr 268px;height:100vh;}
 
   .sidebar{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;padding:22px 14px;-webkit-app-region:drag;}
   .side-brand{font-size:17px;letter-spacing:.16em;font-weight:300;padding:26px 12px 18px;}
@@ -42,7 +81,7 @@
 
   /* Bibliothèque : cartes */
   .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:22px;display:flex;flex-direction:column;}
+  .card{background:var(--card);border:none;border-radius:16px;padding:22px;display:flex;flex-direction:column;box-shadow:var(--shadow);}
   .card-icon{width:56px;height:56px;border-radius:15px;display:grid;place-items:center;font-size:30px;box-shadow:0 8px 22px rgba(0,0,0,.35);}
   .card-icon.peg{background:linear-gradient(145deg,#8b63ff,#4a2fb0);}
   .card-icon.zev{background:linear-gradient(145deg,#ff9a5a,#c2410c);}
@@ -117,6 +156,34 @@
   #chatInput:focus{border-color:var(--accent2);}
   #chatSend{padding:12px 22px;border:0;border-radius:11px;background:linear-gradient(180deg,var(--accent2),var(--accent3));color:#fff;font-weight:600;cursor:pointer;}
   #chatSend:hover{filter:brightness(1.08);}
+
+  /* ── Chronos (calendrier) ── */
+  #page-chronos.show{max-width:1000px;}
+  .cal-head{display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap;}
+  .cal-head h2{font-size:18px;font-weight:650;text-transform:capitalize;min-width:190px;}
+  .cal-nav{display:flex;gap:6px;}
+  .cal-btn{padding:7px 12px;border:1px solid var(--line);border-radius:9px;background:var(--card);color:var(--txt);font-size:13px;cursor:pointer;font-weight:500;}
+  .cal-btn:hover{border-color:var(--line2);}
+  .cal-btn.primary{background:linear-gradient(180deg,var(--accent2),var(--accent3));border:0;color:#fff;font-weight:600;}
+  .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;}
+  .cal-dow{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em;text-align:center;padding-bottom:2px;font-weight:600;}
+  .cal-cell{min-height:88px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:6px 7px;cursor:pointer;display:flex;flex-direction:column;gap:3px;transition:border-color .12s;overflow:hidden;}
+  .cal-cell:hover{border-color:var(--accent2);}
+  .cal-cell.other{opacity:.35;}
+  .cal-cell.today{box-shadow:inset 0 0 0 1.5px var(--accent2);}
+  .cal-cell.sel{border-color:var(--gold);}
+  .cal-daynum{font-size:12px;color:var(--muted);font-weight:600;}
+  .cal-cell.today .cal-daynum{color:var(--accent);}
+  .ev-chip{font-size:11px;padding:2px 6px;border-radius:6px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;line-height:1.5;}
+  .ev-chip.done{opacity:.5;text-decoration:line-through;}
+  .cat-general{background:#6a7688;} .cat-client{background:#8b63ff;} .cat-interne{background:#0ea5e9;}
+  .cat-deadline{background:#ef4444;} .cat-perso{background:#22c55e;}
+  .cal-form{display:none;margin-top:18px;padding:16px 18px;background:var(--card);border:1px solid var(--line);border-radius:14px;max-width:660px;}
+  .cal-form.show{display:block;}
+  .cal-form .row{display:flex;gap:10px;flex-wrap:wrap;}
+  .cal-form .auth-field{margin-bottom:10px;flex:1;min-width:120px;}
+  .ev-detail{margin-top:6px;font-size:12.5px;color:var(--muted);}
+  .ev-actions{display:flex;gap:8px;margin-top:10px;}
   .spin{display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;border-radius:50%;animation:s .7s linear infinite;vertical-align:-2px;margin-right:6px;}
   @keyframes s{to{transform:rotate(360deg);}}
 
@@ -137,6 +204,114 @@
   .env-row .nm{font-weight:550;font-size:14px;}
   .env-row .meta{color:var(--dim);font-size:12.5px;}
   kbd{background:#222a3a;border:1px solid #333d52;border-radius:6px;padding:1px 6px;font-family:ui-monospace,monospace;font-size:12px;}
+
+  /* ══════════ Design system — verre dépoli + neumorphisme (thème-aware) ══════════ */
+  .sidebar{background:var(--panel);backdrop-filter:blur(var(--glass-blur)) saturate(1.4);-webkit-backdrop-filter:blur(var(--glass-blur)) saturate(1.4);border-right:1px solid var(--line);}
+  .content{background:transparent;}
+  /* Surfaces en verre */
+  .card,.cal-form,.code-box,.account,.bubble.them,#membersSection>div{
+    backdrop-filter:blur(var(--glass-blur)) saturate(1.25);
+    -webkit-backdrop-filter:blur(var(--glass-blur)) saturate(1.25);
+  }
+  .account{background:var(--card);}
+  .card,.cal-form{box-shadow:var(--shadow);}
+  .auth-card{background:none;border:none;padding:0;box-shadow:none;backdrop-filter:none;-webkit-backdrop-filter:none;}
+  .auth-card .auth-field{margin-bottom:16px;}
+  .auth-card .auth-input{padding:14px 16px;border-radius:12px;}
+  .auth-card .auth-sub{margin-bottom:34px;}
+  .auth-card .auth-btn{margin-top:20px;padding:14px;border-radius:12px;}
+  /* Boutons secondaires / calendrier / membres : neumorphiques */
+  .btn.sec,.btn.ghost,.cal-btn:not(.primary),.member-btn{box-shadow:var(--neu);border:1px solid var(--line);transition:box-shadow .12s,transform .1s,color .12s;}
+  .btn.sec:active,.cal-btn:not(.primary):active,.member-btn:active{box-shadow:var(--neu-in);}
+  /* Champs enfoncés (inset) */
+  .auth-input,.code-input,#chatInput{box-shadow:var(--neu-in);}
+  .auth-input:focus,.code-input:focus,#chatInput:focus{box-shadow:var(--neu-in),0 0 0 2px rgba(139,99,255,.35);}
+  /* Onglet actif : pilule douce */
+  .nav-item.active{box-shadow:var(--neu);}
+  #themeToggle:hover,#logoutBtn:hover{color:var(--txt);}
+
+  /* ══════════ Minimalisme : contenu posé sur le fond, plus de cartes ══════════ */
+  .sidebar{border-right:none;}
+  .card{background:transparent;box-shadow:none;}
+  .code-box{background:transparent;border:none;padding:16px 0 0;}
+  .cal-form{background:transparent;border:none;box-shadow:none;backdrop-filter:none;-webkit-backdrop-filter:none;padding:8px 0 0;}
+  .account{background:transparent;border:none;backdrop-filter:none;-webkit-backdrop-filter:none;}
+  .env-row{background:transparent;border:none;padding:11px 2px;}
+  .cal-cell{background:transparent;}
+
+  /* ══════════ Accent monochrome (réf. IMG_1804) ══════════ */
+  .btn,.btn-lg,.auth-btn,.cal-btn.primary,#chatSend,.bubble.me{color:var(--accent-fg);}
+  .btn-lg.zev{background:linear-gradient(180deg,var(--accent2),var(--accent3));color:var(--accent-fg);}
+  .btn.ok{background:transparent;color:var(--muted);box-shadow:var(--neu);}
+  .nav-item.active{background:var(--card);box-shadow:none;}
+  .avatar{background:var(--card2);color:var(--txt);}
+  .auth-input:focus,.code-input:focus,#chatInput:focus{box-shadow:var(--neu-in),0 0 0 2px var(--focus);}
+
+  /* ── Sélection pleine largeur, sans arrondi (réf. IMG_1804) ── */
+  .nav-item{margin:0 -14px;padding:9px 26px;border-radius:0;}
+  .nav-item.active{background:var(--card2);box-shadow:none;}
+  .nav-item .ic{background:transparent!important;filter:grayscale(1);}
+  /* ── Tout monochrome : icônes tuiles, catégories, statuts ── */
+  .app-icon,.card-icon{background:var(--card2)!important;filter:grayscale(1);}
+  .cat-general{background:#57575c;} .cat-client{background:#8c8c92;} .cat-interne{background:#6d6d73;} .cat-deadline{background:#b2b2b8;} .cat-perso{background:#434348;}
+  .badge.yes{background:var(--card2);color:var(--muted);}
+  .env-row .st.ok{background:var(--card2);color:var(--txt);}
+  .env-row .st.miss{background:var(--card2);color:var(--muted);}
+
+  /* ── Boutons = texte lumineux (glow animé), plus de rectangle ── */
+  @keyframes textGlow{
+    0%,100%{text-shadow:0 0 6px rgba(var(--glow-rgb),.22),0 0 14px rgba(var(--glow-rgb),.1);}
+    50%{text-shadow:0 0 11px rgba(var(--glow-rgb),.48),0 0 26px rgba(var(--glow-rgb),.2);}
+  }
+  .btn,.btn-lg,.auth-btn,.cal-btn,#chatSend,.member-btn{
+    background:none!important;border:none!important;border-radius:0!important;box-shadow:none!important;padding:10px 6px!important;
+  }
+  .btn:not(.sec):not(.ok),.btn-lg:not(.sec),.auth-btn,.cal-btn.primary,#chatSend{
+    color:var(--accent)!important;font-weight:650;letter-spacing:.03em;
+    animation:textGlow 3.2s ease-in-out infinite;
+  }
+  .btn:not(.sec):not(.ok):hover,.auth-btn:hover,.cal-btn.primary:hover,#chatSend:hover{animation-duration:1.3s;filter:none;transform:none;}
+  .btn.sec,.btn.ok,.btn-lg.sec,.cal-btn:not(.primary),.member-btn{color:var(--muted)!important;font-weight:550;}
+  .btn.sec:hover,.btn.ok:hover,.btn-lg.sec:hover,.cal-btn:not(.primary):hover,.member-btn:hover{color:var(--txt)!important;}
+
+  /* ── Colonne droite (infos) ── */
+  #rightbar{background:var(--panel);backdrop-filter:blur(var(--glass-blur)) saturate(1.3);-webkit-backdrop-filter:blur(var(--glass-blur)) saturate(1.3);padding:58px 20px 24px;overflow-y:auto;display:flex;flex-direction:column;gap:28px;-webkit-app-region:drag;}
+  .rb-sec{-webkit-app-region:no-drag;animation:fadeUp .4s ease;}
+  .rb-sec h4{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin-bottom:12px;}
+  .rb-title{color:var(--txt);font-weight:550;font-size:14px;}
+  .rb-sub{color:var(--dim);font-size:12px;margin-top:2px;}
+  .rb-empty{font-size:12.5px;color:var(--dim);}
+  .rb-ev{display:flex;gap:10px;padding:6px 0;font-size:13px;}
+  .rb-ev .rb-time{color:var(--dim);font-variant-numeric:tabular-nums;min-width:38px;}
+  .rb-ev .rb-t{color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .rb-user{display:flex;align-items:center;gap:10px;padding:6px 0;font-size:13px;color:var(--txt);}
+  .avatar-sm{width:26px;height:26px;border-radius:50%;background:var(--card2);display:grid;place-items:center;font-size:11px;font-weight:700;color:var(--txt);flex-shrink:0;}
+  .status-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-left:auto;}
+  .status-dot.on{background:#3fb950;animation:pulseOn 2.4s infinite;}
+  .status-dot.off{background:#e5534b;opacity:.72;}
+  @keyframes pulseOn{0%{box-shadow:0 0 0 0 rgba(63,185,80,.45);}70%{box-shadow:0 0 0 5px rgba(63,185,80,0);}100%{box-shadow:0 0 0 0 rgba(63,185,80,0);}}
+
+  /* ── Iris (email · CRM) ── */
+  .link{color:var(--txt);text-decoration:underline;cursor:pointer;-webkit-app-region:no-drag;}
+  .link:hover{opacity:.75;}
+  textarea.auth-input{resize:vertical;font-family:inherit;line-height:1.5;}
+  .crm-row{display:flex;align-items:center;gap:14px;padding:13px 0;border-bottom:1px solid var(--line);max-width:820px;}
+  .crm-row:last-child{border-bottom:none;}
+  .crm-to{color:var(--txt);font-weight:550;font-size:13.5px;}
+  .crm-sub{color:var(--muted);font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:420px;}
+  .crm-meta{color:var(--dim);font-size:11.5px;margin-top:3px;}
+  .crm-open{margin-left:auto;font-size:11.5px;font-weight:600;padding:4px 11px;border-radius:20px;flex-shrink:0;white-space:nowrap;}
+  .crm-open.yes{background:var(--card2);color:var(--txt);}
+  .crm-open.no{background:transparent;color:var(--dim);border:1px solid var(--line);}
+
+  /* ── Boutons flottants (haut droite) ── */
+  #floatBar{position:fixed;top:16px;right:288px;display:flex;gap:8px;z-index:60;-webkit-app-region:no-drag;}
+  .float-btn{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;cursor:pointer;color:var(--muted);background:var(--card);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);box-shadow:var(--neu);font-size:15px;transition:color .12s;}
+  .float-btn:hover{color:var(--txt);}
+
+  /* ── Animations ── */
+  .page.show{animation:fadeUp .3s ease;}
+  @keyframes fadeUp{from{opacity:0;transform:translateY(7px);}to{opacity:1;transform:none;}}
 </style>
 </head>
 <body>
@@ -183,13 +358,17 @@
       <div class="nav-item active" data-page="library"><div class="ic">📚</div><span class="lbl">Alexandrie<small>bibliothèque</small></span></div>
       <div class="nav-label">Espace de travail</div>
       <div class="nav-item" data-page="hermes"><div class="ic">🪽</div><span class="lbl">Hermès<small>chat</small></span></div>
+      <div class="nav-item" data-page="chronos"><div class="ic">📅</div><span class="lbl">Chronos<small>calendrier</small></span></div>
+      <div class="nav-item" data-page="iris"><div class="ic">✉️</div><span class="lbl">Iris<small>email · CRM</small></span></div>
+      <div class="nav-item" data-page="argos"><div class="ic">👁️</div><span class="lbl">Argos<small>analytics</small></span></div>
+      <div class="nav-item" data-page="atlas"><div class="ic">🗂️</div><span class="lbl">Atlas<small>drive</small></span></div>
       <div class="nav-label">Mes applications</div>
       <div class="nav-item locked" data-page="titan" data-app="titan" data-role="super_admin"><div class="ic ic-titan">🛠️</div><span class="lbl">Titan</span><span class="lock">🔒</span></div>
       <div class="nav-item locked" data-page="pegasus" data-app="pegasus"><div class="ic">🦄</div><span class="lbl">Pegasus</span><span class="lock">🔒</span></div>
       <div class="nav-item locked" data-page="zevs" data-app="zevs"><div class="ic">📸</div><span class="lbl">Zevs</span><span class="lock">🔒</span></div>
       <div class="nav-spacer"></div>
       <div class="nav-item" data-page="settings"><div class="ic">⚙️</div><span class="lbl">Réglages</span></div>
-      <div class="account"><div class="avatar" id="accAvatar">O</div><div class="who" style="flex:1"><span id="accName">—</span><br><small id="accRole">—</small></div><span id="logoutBtn" title="Se déconnecter" style="cursor:pointer;color:var(--dim);font-size:16px;-webkit-app-region:no-drag;">⏻</span></div>
+      <div class="account"><div class="avatar" id="accAvatar">O</div><div class="who" style="flex:1"><span id="accName">—</span><br><small id="accRole">—</small></div></div>
     </aside>
 
     <main class="content">
@@ -280,6 +459,114 @@
         </div>
       </section>
 
+      <!-- ═══ CHRONOS (calendrier) ═══ -->
+      <section class="page" id="page-chronos">
+        <div class="page-head"><h1>Chronos</h1><p>Le calendrier & les tâches de l'équipe.</p></div>
+        <div class="cal-head">
+          <div class="cal-nav"><button class="cal-btn" id="calPrev">‹</button><button class="cal-btn" id="calNext">›</button></div>
+          <h2 id="calMonth">—</h2>
+          <button class="cal-btn" id="calToday">Aujourd'hui</button>
+          <button class="cal-btn primary" id="calAdd" style="margin-left:auto;">+ Ajouter</button>
+        </div>
+        <div class="cal-grid" id="calDow"></div>
+        <div class="cal-grid" id="calGrid" style="margin-top:6px;"></div>
+
+        <div class="cal-form" id="calForm">
+          <div class="auth-field" style="margin-bottom:10px;"><label>Titre</label><input class="auth-input" id="evTitle" placeholder="Réunion client, deadline…"></div>
+          <div class="row">
+            <div class="auth-field"><label>Date</label><input class="auth-input" id="evDate" type="date"></div>
+            <div class="auth-field"><label>Heure (optionnel)</label><input class="auth-input" id="evTime" type="time"></div>
+          </div>
+          <div class="row">
+            <div class="auth-field"><label>Catégorie</label>
+              <select class="auth-input" id="evCat">
+                <option value="general">Général</option>
+                <option value="client">Client</option>
+                <option value="interne">Interne</option>
+                <option value="deadline">Deadline</option>
+                <option value="perso">Perso</option>
+              </select>
+            </div>
+            <div class="auth-field"><label>Assigné à (optionnel)</label><input class="auth-input" id="evAssignee" placeholder="Prénom"></div>
+          </div>
+          <div class="ev-actions">
+            <button class="cal-btn primary" id="evSave">Ajouter</button>
+            <button class="cal-btn" id="evCancel">Annuler</button>
+            <button class="cal-btn" id="evDone" style="display:none;">Marquer fait</button>
+            <button class="cal-btn" id="evDelete" style="display:none;margin-left:auto;">Supprimer</button>
+          </div>
+          <div class="msg" id="evMsg"></div>
+        </div>
+      </section>
+
+      <!-- ═══ IRIS (email · CRM) ═══ -->
+      <section class="page" id="page-iris">
+        <div class="page-head"><h1>Iris</h1><p>Email & CRM — envoie tes mails et suis leurs ouvertures.</p></div>
+
+        <div id="irisConnect" style="max-width:470px;">
+          <div class="section">
+            <h3>Connecter Gmail</h3>
+            <p class="desc" style="margin-bottom:16px;">Iris envoie via ton Gmail avec un <b>mot de passe d'application</b> (pas ton mot de passe habituel). <span class="link" data-ext="https://myaccount.google.com/apppasswords">Générer un mot de passe d'application →</span></p>
+            <div class="auth-field"><label>Adresse Gmail</label><input class="auth-input" id="gmEmail" type="email" placeholder="toi@orphic-agency.com"></div>
+            <div class="auth-field"><label>Mot de passe d'application (16 caractères)</label><input class="auth-input" id="gmPass" type="password" placeholder="xxxx xxxx xxxx xxxx"></div>
+            <button class="btn" id="gmConnectBtn">Connecter</button>
+            <div class="msg" id="gmMsg"></div>
+          </div>
+        </div>
+
+        <div id="irisMain" style="display:none;">
+          <div class="section">
+            <h3>Nouveau message <span id="irisFrom" style="color:var(--dim);font-weight:400;text-transform:none;letter-spacing:0;"></span></h3>
+            <div style="max-width:660px;">
+              <div class="auth-row2">
+                <div class="auth-field" style="flex:2"><label>Destinataire</label><input class="auth-input" id="mailTo" type="email" placeholder="client@exemple.com"></div>
+                <div class="auth-field" style="flex:1"><label>Nom (optionnel)</label><input class="auth-input" id="mailToName"></div>
+              </div>
+              <div class="auth-field"><label>Sujet</label><input class="auth-input" id="mailSubject"></div>
+              <div class="auth-field"><label>Message</label><textarea class="auth-input" id="mailBody" rows="6"></textarea></div>
+              <div class="ev-actions"><button class="btn" id="mailSendBtn">Envoyer</button><button class="btn sec" id="gmDisconnect" style="margin-left:auto;">Déconnecter Gmail</button></div>
+              <div class="msg" id="mailMsg"></div>
+            </div>
+          </div>
+          <div class="section">
+            <h3>Mails envoyés</h3>
+            <div id="crmList"><div class="rb-empty">Aucun mail envoyé.</div></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ═══ ARGOS (analytics clients) ═══ -->
+      <section class="page" id="page-argos">
+        <div class="page-head"><h1>Argos</h1><p>Analytics clients — campagnes & réseaux sociaux.</p></div>
+        <div class="section">
+          <h3>Ce que fera Argos</h3>
+          <p class="desc">Suivre en un coup d'œil les <b>performances des clients</b> : campagnes publicitaires (Meta Ads, Google Ads) et réseaux sociaux (Instagram, Facebook, LinkedIn, TikTok) — audience, engagement, conversions, budget dépensé.</p>
+        </div>
+        <div class="section">
+          <h3>Sources à connecter</h3>
+          <div class="env">
+            <div class="env-row"><div class="st miss">!</div><div><div class="nm">Meta (Facebook / Instagram)</div><div class="meta">Ads + pages — à connecter</div></div></div>
+            <div class="env-row"><div class="st miss">!</div><div><div class="nm">Google Ads</div><div class="meta">campagnes — à connecter</div></div></div>
+            <div class="env-row"><div class="st miss">!</div><div><div class="nm">LinkedIn / TikTok</div><div class="meta">réseaux — à connecter</div></div></div>
+          </div>
+          <p class="desc" style="margin-top:16px;">On définira ensemble les plateformes prioritaires, puis on les intègre une par une (chacune a son accès/OAuth).</p>
+        </div>
+      </section>
+
+      <!-- ═══ ATLAS (Google Drive) ═══ -->
+      <section class="page" id="page-atlas">
+        <div class="page-head"><h1>Atlas</h1><p>Ton Google Drive, dans Olympus.</p></div>
+        <div class="section">
+          <h3>Ce que fera Atlas</h3>
+          <p class="desc">Parcourir, <b>uploader et télécharger</b> les fichiers de ton Google Drive directement depuis Olympus — sans quitter l'app.</p>
+        </div>
+        <div class="section">
+          <h3>Connexion Google requise</h3>
+          <p class="desc" style="margin-bottom:14px;">Atlas a besoin d'un accès Google (projet Google Cloud + OAuth). On le préparera ensemble — c'est le seul prérequis.</p>
+          <button class="btn sec" disabled>Connecter Google Drive · bientôt</button>
+        </div>
+      </section>
+
       <!-- ═══ TITAN (dev — super admin) ═══ -->
       <section class="page" id="page-titan">
         <div class="app-hero">
@@ -325,7 +612,7 @@
         <div class="section" id="membersSection" style="display:none;">
           <h3>Membres — super admin</h3>
           <p class="desc" style="margin-bottom:14px;">Crée un membre : il recevra un mot de passe temporaire à changer à sa 1ʳᵉ connexion.</p>
-          <div style="max-width:540px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;">
+          <div style="max-width:540px;">
             <div class="auth-row2">
               <div class="auth-field" style="flex:1"><label>Prénom</label><input class="auth-input" id="mFirst"></div>
               <div class="auth-field" style="flex:1"><label>Nom</label><input class="auth-input" id="mLast"></div>
@@ -346,6 +633,31 @@
         <div class="section"><h3>Version</h3><p class="desc">Olympus 0.1.0 — connexion par compte email + mot de passe.</p></div>
       </section>
     </main>
+
+    <aside id="rightbar">
+      <div class="rb-sec">
+        <h4>Projet en cours</h4>
+        <div class="rb-title" id="rbProject">—</div>
+        <div class="rb-sub" id="rbProjectSub">à définir</div>
+      </div>
+      <div class="rb-sec">
+        <h4>Aujourd'hui</h4>
+        <div id="rbToday"><div class="rb-empty">Rien de prévu.</div></div>
+      </div>
+      <div class="rb-sec">
+        <h4>À venir</h4>
+        <div id="rbSoon"><div class="rb-empty">—</div></div>
+      </div>
+      <div class="rb-sec">
+        <h4>Équipe</h4>
+        <div id="rbOnline"><div class="rb-empty">—</div></div>
+      </div>
+    </aside>
+
+    <div id="floatBar">
+      <span id="themeToggle" class="float-btn" title="Thème clair / sombre">◐</span>
+      <span id="logoutBtn" class="float-btn" title="Se déconnecter">⏻</span>
+    </div>
   </div>
   <script src="renderer.js"></script>
 </body>

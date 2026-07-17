@@ -32,6 +32,21 @@ contextBridge.exposeInMainWorld("olympus", {
   // Hermès (chat)
   chatList: (afterId) => ipcRenderer.invoke("chat:list", afterId),
   chatSend: (body) => ipcRenderer.invoke("chat:send", body),
+  // Chronos (calendrier)
+  chronosList: (from, to) => ipcRenderer.invoke("chronos:list", from, to),
+  chronosCreate: (ev) => ipcRenderer.invoke("chronos:create", ev),
+  chronosUpdate: (id, patch) => ipcRenderer.invoke("chronos:update", id, patch),
+  chronosDelete: (id) => ipcRenderer.invoke("chronos:delete", id),
+  // Présence
+  presenceBeat: () => ipcRenderer.invoke("presence:beat"),
+  presenceOnline: () => ipcRenderer.invoke("presence:online"),
+  // Iris (email + CRM)
+  irisStatus: () => ipcRenderer.invoke("iris:status"),
+  irisConnect: (email, pass) => ipcRenderer.invoke("iris:connect", email, pass),
+  irisDisconnect: () => ipcRenderer.invoke("iris:disconnect"),
+  irisSend: (d) => ipcRenderer.invoke("iris:send", d),
+  crmEmails: () => ipcRenderer.invoke("crm:emails"),
+  crmContacts: () => ipcRenderer.invoke("crm:contacts"),
   // Divers
   openExternal: (url) => ipcRenderer.invoke("open-external", url),
 });

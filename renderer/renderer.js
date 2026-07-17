@@ -1,6 +1,11 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
 
+// ══════════ THÈME (sombre / clair) ══════════
+function applyTheme(t) { document.documentElement.setAttribute("data-theme", t); localStorage.setItem("olympusTheme", t); }
+applyTheme(localStorage.getItem("olympusTheme") || "dark");
+$("themeToggle").onclick = () => applyTheme(document.documentElement.getAttribute("data-theme") === "light" ? "dark" : "light");
+
 // ══════════ NAVIGATION ══════════
 document.querySelectorAll(".nav-item").forEach((it) => {
   it.onclick = () => {
@@ -232,6 +237,169 @@ async function sendMsg() {
 $("chatSend").onclick = sendMsg;
 $("chatInput").addEventListener("keydown", (e) => { if (e.key === "Enter") sendMsg(); });
 
+// ══════════ CHRONOS (calendrier) ══════════
+let calDate = new Date();
+let calSelected = null;
+let editingEvent = null;
+let chronosEvents = [];
+const MONTHS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
+const DOW = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
+const pad2 = (n) => String(n).padStart(2, "0");
+const isoD = (y, m, d) => `${y}-${pad2(m + 1)}-${pad2(d)}`;
+
+async function renderChronos() {
+  const y = calDate.getFullYear(), m = calDate.getMonth();
+  $("calMonth").textContent = MONTHS[m] + " " + y;
+  $("calDow").innerHTML = DOW.map((d) => `<div class="cal-dow">${d}</div>`).join("");
+
+  const startOffset = (new Date(y, m, 1).getDay() + 6) % 7; // Lundi = 0
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+  const totalCells = Math.ceil((startOffset + daysInMonth) / 7) * 7;
+  const startCell = new Date(y, m, 1 - startOffset);
+  const endCell = new Date(y, m, 1 - startOffset + totalCells - 1);
+  const from = isoD(startCell.getFullYear(), startCell.getMonth(), startCell.getDate());
+  const to = isoD(endCell.getFullYear(), endCell.getMonth(), endCell.getDate());
+
+  const r = await window.olympus.chronosList(from, to);
+  chronosEvents = r.ok ? r.events : [];
+  const byDate = {};
+  for (const ev of chronosEvents) (byDate[ev.date] = byDate[ev.date] || []).push(ev);
+
+  const now = new Date();
+  const todayIso = isoD(now.getFullYear(), now.getMonth(), now.getDate());
+  let html = "";
+  for (let i = 0; i < totalCells; i++) {
+    const d = new Date(y, m, 1 - startOffset + i);
+    const dIso = isoD(d.getFullYear(), d.getMonth(), d.getDate());
+    const cls = (d.getMonth() !== m ? " other" : "") + (dIso === todayIso ? " today" : "") + (dIso === calSelected ? " sel" : "");
+    const chips = (byDate[dIso] || []).map((ev) =>
+      `<div class="ev-chip cat-${ev.category || "general"}${ev.done ? " done" : ""}" data-ev="${ev.id}">${ev.time ? ev.time.slice(0, 5) + " " : ""}${escapeHtml(ev.title)}</div>`
+    ).join("");
+    html += `<div class="cal-cell${cls}" data-date="${dIso}"><div class="cal-daynum">${d.getDate()}</div>${chips}</div>`;
+  }
+  $("calGrid").innerHTML = html;
+}
+
+$("calPrev").onclick = () => { calDate = new Date(calDate.getFullYear(), calDate.getMonth() - 1, 1); renderChronos(); };
+$("calNext").onclick = () => { calDate = new Date(calDate.getFullYear(), calDate.getMonth() + 1, 1); renderChronos(); };
+$("calToday").onclick = () => { calDate = new Date(); renderChronos(); };
+$("calAdd").onclick = () => { const n = new Date(); openEventForm(calSelected || isoD(n.getFullYear(), n.getMonth(), n.getDate())); };
+
+$("calGrid").onclick = (e) => {
+  const chip = e.target.closest(".ev-chip");
+  if (chip) { const ev = chronosEvents.find((x) => String(x.id) === chip.dataset.ev); if (ev) openEventForm(ev.date, ev); return; }
+  const cell = e.target.closest(".cal-cell");
+  if (cell) { calSelected = cell.dataset.date; openEventForm(cell.dataset.date); }
+};
+
+function openEventForm(date, ev) {
+  editingEvent = ev || null;
+  $("evTitle").value = ev?.title || "";
+  $("evDate").value = date;
+  $("evTime").value = ev?.time ? ev.time.slice(0, 5) : "";
+  $("evCat").value = ev?.category || "general";
+  $("evAssignee").value = ev?.assignee || "";
+  $("evSave").textContent = ev ? "Enregistrer" : "Ajouter";
+  $("evDelete").style.display = ev ? "" : "none";
+  $("evDone").style.display = ev ? "" : "none";
+  if (ev) $("evDone").textContent = ev.done ? "Marquer à faire" : "Marquer fait";
+  $("evMsg").textContent = "";
+  $("calForm").classList.add("show");
+  $("evTitle").focus();
+}
+$("evCancel").onclick = () => $("calForm").classList.remove("show");
+$("evSave").onclick = async () => {
+  const data = { title: $("evTitle").value.trim(), date: $("evDate").value, time: $("evTime").value || null, category: $("evCat").value, assignee: $("evAssignee").value.trim() || null };
+  if (!data.title || !data.date) { $("evMsg").className = "msg err"; $("evMsg").textContent = "Titre et date requis."; return; }
+  const r = editingEvent ? await window.olympus.chronosUpdate(editingEvent.id, data) : await window.olympus.chronosCreate(data);
+  if (r.ok) { $("calForm").classList.remove("show"); renderChronos(); refreshRightbar(); }
+  else { $("evMsg").className = "msg err"; $("evMsg").textContent = r.error || "Échec."; }
+};
+$("evDelete").onclick = async () => {
+  if (!editingEvent) return;
+  const r = await window.olympus.chronosDelete(editingEvent.id);
+  if (r.ok) { $("calForm").classList.remove("show"); renderChronos(); refreshRightbar(); }
+};
+$("evDone").onclick = async () => {
+  if (!editingEvent) return;
+  const r = await window.olympus.chronosUpdate(editingEvent.id, { done: !editingEvent.done });
+  if (r.ok) { $("calForm").classList.remove("show"); renderChronos(); refreshRightbar(); }
+};
+document.querySelector('.nav-item[data-page="chronos"]').addEventListener("click", renderChronos);
+
+// ══════════ COLONNE DROITE (infos) + présence ══════════
+let rbTimer = null;
+async function refreshRightbar() {
+  const now = new Date();
+  const today = isoD(now.getFullYear(), now.getMonth(), now.getDate());
+  const in30 = new Date(now.getTime() + 30 * 864e5);
+  const to = isoD(in30.getFullYear(), in30.getMonth(), in30.getDate());
+  const r = await window.olympus.chronosList(today, to);
+  const evs = (r.ok ? r.events : []).filter((e) => !e.done);
+  const todayEvs = evs.filter((e) => e.date === today);
+  const soonEvs = evs.filter((e) => e.date > today).slice(0, 5);
+  $("rbToday").innerHTML = todayEvs.length
+    ? todayEvs.map((e) => `<div class="rb-ev"><span class="rb-time">${e.time ? e.time.slice(0, 5) : "—"}</span><span class="rb-t">${escapeHtml(e.title)}</span></div>`).join("")
+    : '<div class="rb-empty">Rien de prévu.</div>';
+  $("rbSoon").innerHTML = soonEvs.length
+    ? soonEvs.map((e) => { const d = new Date(e.date + "T00:00"); return `<div class="rb-ev"><span class="rb-time">${d.getDate()}/${d.getMonth() + 1}</span><span class="rb-t">${escapeHtml(e.title)}</span></div>`; }).join("")
+    : '<div class="rb-empty">—</div>';
+  const p = await window.olympus.presenceOnline();
+  const users = p.ok ? p.users : [];
+  const nowMs = Date.now();
+  const isOn = (u) => nowMs - new Date(u.last_seen).getTime() < 120000;
+  users.sort((a, b) => (isOn(b) - isOn(a)) || (a.name || "").localeCompare(b.name || ""));
+  $("rbOnline").innerHTML = users.length
+    ? users.map((u) => { const on = isOn(u); const n = u.name || "?"; return `<div class="rb-user"><div class="avatar-sm">${escapeHtml(n.charAt(0).toUpperCase())}</div><span style="flex:1${on ? "" : ";color:var(--muted)"}">${escapeHtml(n)}</span><span class="status-dot ${on ? "on" : "off"}"></span></div>`; }).join("")
+    : '<div class="rb-empty">—</div>';
+}
+function startPresence() {
+  window.olympus.presenceBeat();
+  refreshRightbar();
+  if (rbTimer) clearInterval(rbTimer);
+  rbTimer = setInterval(() => { window.olympus.presenceBeat(); refreshRightbar(); }, 30000);
+}
+
+// ══════════ IRIS (email · CRM) ══════════
+async function refreshIris() {
+  const st = await window.olympus.irisStatus();
+  $("irisConnect").style.display = st.connected ? "none" : "";
+  $("irisMain").style.display = st.connected ? "" : "none";
+  if (st.connected) { $("irisFrom").textContent = "· " + st.email; refreshCrm(); }
+}
+async function refreshCrm() {
+  const r = await window.olympus.crmEmails();
+  const list = $("crmList");
+  const emails = r.ok ? r.emails : [];
+  list.innerHTML = emails.length ? emails.map((e) => {
+    const opened = (e.open_count || 0) > 0;
+    const when = new Date(e.sent_at).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+    const info = opened ? `Ouvert ✓${e.open_count > 1 ? " ×" + e.open_count : ""}` : "Non ouvert";
+    return `<div class="crm-row"><div style="flex:1;min-width:0"><div class="crm-to">${escapeHtml(e.to_name || e.to_email)}</div><div class="crm-sub">${escapeHtml(e.subject || "")}</div><div class="crm-meta">${escapeHtml(e.to_email)} · ${when}${e.sent_by_name ? " · " + escapeHtml(e.sent_by_name) : ""}</div></div><span class="crm-open ${opened ? "yes" : "no"}">${info}</span></div>`;
+  }).join("") : '<div class="rb-empty">Aucun mail envoyé.</div>';
+}
+$("gmConnectBtn").onclick = async () => {
+  const email = $("gmEmail").value.trim(), pass = $("gmPass").value.trim(), msg = $("gmMsg"), btn = $("gmConnectBtn");
+  if (!email || !pass) { msg.className = "msg err"; msg.textContent = "Email et mot de passe requis."; return; }
+  btn.disabled = true; msg.className = "msg"; msg.textContent = "Vérification…";
+  const r = await window.olympus.irisConnect(email, pass);
+  btn.disabled = false;
+  if (r.ok) { $("gmPass").value = ""; msg.textContent = ""; refreshIris(); }
+  else { msg.className = "msg err"; msg.textContent = r.error; }
+};
+$("gmDisconnect").onclick = async () => { await window.olympus.irisDisconnect(); refreshIris(); };
+$("mailSendBtn").onclick = async () => {
+  const d = { to: $("mailTo").value.trim(), toName: $("mailToName").value.trim(), subject: $("mailSubject").value.trim(), body: $("mailBody").value.trim() };
+  const msg = $("mailMsg"), btn = $("mailSendBtn");
+  if (!d.to || !d.subject || !d.body) { msg.className = "msg err"; msg.textContent = "Destinataire, sujet et message requis."; return; }
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Envoi…'; msg.className = "msg"; msg.textContent = "";
+  const r = await window.olympus.irisSend(d);
+  btn.disabled = false; btn.textContent = "Envoyer";
+  if (r.ok) { msg.className = "msg ok"; msg.textContent = "✅ Envoyé — suivi d'ouverture actif."; ["mailTo", "mailToName", "mailSubject", "mailBody"].forEach((id) => ($(id).value = "")); refreshCrm(); }
+  else { msg.className = "msg err"; msg.textContent = r.error; }
+};
+document.querySelector('.nav-item[data-page="iris"]').addEventListener("click", refreshIris);
+
 // ══════════ AUTH ══════════
 let pendingUser = null;
 
@@ -251,7 +419,7 @@ function enterHub(user) {
   $("accRole").textContent = user.role === "super_admin" ? "super admin" : "membre";
   $("accAvatar").textContent = (user.first_name || user.email || "?").charAt(0).toUpperCase();
   applyRole();
-  refreshLocks(); refreshEnv(); refreshTitan(); startChat();
+  refreshLocks(); refreshEnv(); refreshTitan(); startChat(); renderChronos(); startPresence(); refreshIris();
   if (currentRole === "super_admin") refreshMembers();
   goTo("library");
 }
