@@ -1,0 +1,6 @@
+{
+  "_comment": "Copie ce fichier en 'olympus.config.json' (même dossier) et remplis les valeurs depuis ton NOUVEAU projet Supabase Olympus. Ce fichier réel est gitignoré — aucun secret ne part sur GitHub.",
+  "supabase_url": "https://XXXXXXXXXXXX.supabase.co",
+  "supabase_anon_key": "sb_publishable_...ou eyJ...(anon public)",
+  "supabase_service_key": "sb_secret_...ou eyJ...(service_role — SECRET)"
+}

@@ -1,0 +1,29 @@
+{
+  "name": "olympus",
+  "productName": "Olympus",
+  "version": "0.1.0",
+  "description": "Hub desktop des apps internes d'Orphic Agency.",
+  "author": "Orphic Agency",
+  "license": "UNLICENSED",
+  "private": true,
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --mac"
+  },
+  "devDependencies": {
+    "electron": "^32.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "com.orphicagency.olympus",
+    "productName": "Olympus",
+    "files": ["main.js", "preload.js", "app-config.json", "renderer/**"],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [{ "target": "dmg", "arch": ["arm64", "x64"] }],
+      "identity": null
+    },
+    "dmg": { "title": "Installer Olympus" }
+  }
+}

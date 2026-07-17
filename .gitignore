@@ -1,0 +1,14 @@
+# ————— Secrets (jamais commités) —————
+config/olympus.config.json
+**/*.pem
+.env
+*.env
+
+# ————— Build / deps —————
+**/node_modules/
+/dist/
+/out/
+
+# ————— Divers —————
+.DS_Store
+**/.DS_Store

@@ -1,0 +1,16 @@
+{
+  "_comment": "Config publique embarquée dans l'app (aucun secret). La section 'olympus' (auth/catalogue) sera ajoutée quand le nouveau Supabase Olympus existera.",
+  "pegasus": {
+    "supabase_url": "https://wpmewwpnixfhhkflfpjg.supabase.co",
+    "supabase_anon_key": "sb_publishable_18UayP0uhRMLERBJKgRi1Q_UzpPmt-5"
+  },
+  "zevs": {
+    "version": "0.1.0",
+    "app_name": "Zevs.app",
+    "download_url": "https://github.com/OrphicDev/zevs-releases/releases/download/v0.1.0/Zevs-0.1.0-arm64.dmg"
+  },
+  "titan": {
+    "workspace": "Orphic-Dev",
+    "repos": ["OrphicDev/olympus", "OrphicDev/pegasus", "OrphicDev/zevs", "OrphicDev/zevs-releases"]
+  }
+}
