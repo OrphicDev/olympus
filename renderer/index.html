@@ -311,9 +311,44 @@
   .float-btn{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;cursor:pointer;color:var(--muted);background:var(--card);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);box-shadow:var(--neu);font-size:15px;transition:color .12s;}
   .float-btn:hover{color:var(--txt);}
 
-  /* ── Animations ── */
-  .page.show{animation:fadeUp .3s ease;}
-  @keyframes fadeUp{from{opacity:0;transform:translateY(7px);}to{opacity:1;transform:none;}}
+  /* ══════════ Animations ══════════ */
+  @keyframes fadeUp{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:none;}}
+  @keyframes fadeIn{from{opacity:0;}to{opacity:1;}}
+  @keyframes slideInLeft{from{opacity:0;transform:translateX(-12px);}to{opacity:1;transform:none;}}
+  @keyframes popIn{0%{opacity:0;transform:scale(.92);}60%{transform:scale(1.015);}100%{opacity:1;transform:scale(1);}}
+  @keyframes floatIn{from{opacity:0;transform:translateY(-10px);}to{opacity:1;transform:none;}}
+  /* Transition douce des couleurs au changement de thème */
+  body,.sidebar,#rightbar{transition:background .35s ease,color .3s ease;}
+  /* Micro-interactions (survol / clic) */
+  .nav-item,.float-btn,.btn,.btn-lg,.cal-btn,.member-btn,.crm-row,.env-row,.cal-cell,#profileCard,.card-icon,.app-icon,.ev-chip,.card,.avatar-sm{transition:transform .2s cubic-bezier(.2,.7,.3,1),color .15s,background .16s,box-shadow .2s,opacity .16s,filter .16s;}
+  .nav-item:hover:not(.locked):not(.active){transform:translateX(3px);}
+  .nav-item:active:not(.locked){transform:scale(.99);}
+  .float-btn:hover{transform:rotate(180deg) scale(1.08);}
+  .card-icon:hover,.app-icon:hover{transform:scale(1.05) rotate(-1.5deg);}
+  .card:hover{transform:translateY(-2px);}
+  .crm-row:hover,.env-row:hover{transform:translateX(3px);}
+  .ev-chip:hover{transform:scale(1.05);}
+  .btn:active,.btn-lg:active,.cal-btn:active,.member-btn:active{transform:scale(.96);}
+  #profileCard:active{transform:scale(.99);}
+  /* Entrées */
+  .page.show{animation:fadeIn .26s ease;}
+  .page-head{animation:fadeUp .44s both;}
+  .section{animation:fadeUp .48s both;}
+  .section:nth-of-type(2){animation-delay:.06s;}
+  .section:nth-of-type(3){animation-delay:.12s;}
+  .section:nth-of-type(4){animation-delay:.18s;}
+  .section:nth-of-type(5){animation-delay:.24s;}
+  .bubble{animation:popIn .3s both;}
+  .cal-cell{animation:fadeIn .32s both;}
+  .crm-row,.env-row{animation:fadeUp .42s both;}
+  .crm-row:nth-child(2),.env-row:nth-child(2){animation-delay:.05s;}
+  .crm-row:nth-child(3),.env-row:nth-child(3){animation-delay:.1s;}
+  .crm-row:nth-child(4),.env-row:nth-child(4){animation-delay:.15s;}
+  .crm-row:nth-child(5),.env-row:nth-child(5){animation-delay:.2s;}
+  .crm-row:nth-child(n+6),.env-row:nth-child(n+6){animation-delay:.25s;}
+  #floatBar{animation:floatIn .55s both;}
+  .side-brand,#profileCard{animation:fadeUp .5s both;}
+  .status-dot.off{transition:opacity .3s;}
 </style>
 </head>
 <body>
@@ -364,6 +399,8 @@
       <div class="nav-item" data-page="iris"><div class="ic">✉️</div><span class="lbl">Iris<small>email · CRM</small></span></div>
       <div class="nav-item" data-page="argos"><div class="ic">👁️</div><span class="lbl">Argos<small>analytics</small></span></div>
       <div class="nav-item" data-page="atlas"><div class="ic">🗂️</div><span class="lbl">Atlas<small>drive</small></span></div>
+      <div class="nav-item" data-page="apollon"><div class="ic">🖼️</div><span class="lbl">Apollon<small>galerie</small></span></div>
+      <div class="nav-item" data-page="metis"><div class="ic">📋</div><span class="lbl">Métis<small>briefs</small></span></div>
       <div class="nav-spacer"></div>
       <div class="nav-label">Mes applications</div>
       <div class="nav-item" data-page="library"><div class="ic">📚</div><span class="lbl">Alexandrie<small>bibliothèque</small></span></div>
@@ -424,6 +461,14 @@
           </div>
         </div>
 
+        <div class="section">
+          <h3>Clients connectés</h3>
+          <div id="pegClients"><div class="rb-empty">Chargement…</div></div>
+        </div>
+        <div class="section">
+          <h3>Historique & retour arrière</h3>
+          <p class="desc">Bientôt : consulter les <b>anciennes versions</b> d'un site client et <b>revenir en arrière en un clic</b> si une modification a cassé quelque chose. (Nécessite un ajout côté plugin WordPress Pegasus : sauvegarde/restauration des versions.)</p>
+        </div>
         <div class="section">
           <h3>Clé d'équipe</h3>
           <p class="desc" style="margin-bottom:12px;">Ta clé est installée dans <kbd>~/.pegasus/team-key</kbd>. Pense à ajouter le plugin dans Claude Code : Personnaliser → Plugins → <kbd>OrphicDev/pegasus</kbd>.</p>
@@ -534,6 +579,39 @@
             <h3>Mails envoyés</h3>
             <div id="crmList"><div class="rb-empty">Aucun mail envoyé.</div></div>
           </div>
+        </div>
+      </section>
+
+      <!-- ═══ APOLLON (galerie photo/vidéo) ═══ -->
+      <section class="page" id="page-apollon">
+        <div class="page-head"><h1>Apollon</h1><p>La galerie — vos shoots photo & vidéo.</p></div>
+        <div class="section">
+          <h3>Ce que fera Apollon</h3>
+          <p class="desc">Centraliser et <b>présenter vos productions</b> : shoots photo et vidéo, classés par client / projet. Aperçus, tri, partage — la vitrine du travail d'Orphic.</p>
+        </div>
+        <div class="section">
+          <h3>Stockage</h3>
+          <p class="desc">Les médias vivront dans Supabase Storage (ou reliés à Atlas / Drive). On définira ensemble : upload direct, dossiers par client, vignettes, lecteur vidéo.</p>
+          <button class="btn sec" disabled style="margin-top:14px;">Importer des médias · bientôt</button>
+        </div>
+      </section>
+
+      <!-- ═══ MÉTIS (briefs shooting) ═══ -->
+      <section class="page" id="page-metis">
+        <div class="page-head"><h1>Métis</h1><p>Les briefs — la préparation de vos shootings.</p></div>
+        <div class="section">
+          <h3>Ce que fera Métis</h3>
+          <p class="desc">Rédiger et stocker les <b>briefs de shooting</b> : objectifs, moodboard, lieux, matériel, plan de prises, équipe. Reliés à un client et à une date Chronos.</p>
+        </div>
+        <div class="section">
+          <h3>Structure d'un brief</h3>
+          <div class="env">
+            <div class="env-row"><div class="st">•</div><div><div class="nm">Client & projet</div><div class="meta">à qui, pour quoi</div></div></div>
+            <div class="env-row"><div class="st">•</div><div><div class="nm">Objectifs & références</div><div class="meta">moodboard, style</div></div></div>
+            <div class="env-row"><div class="st">•</div><div><div class="nm">Logistique</div><div class="meta">lieu, date, matériel, équipe</div></div></div>
+            <div class="env-row"><div class="st">•</div><div><div class="nm">Plan de prises</div><div class="meta">shotlist</div></div></div>
+          </div>
+          <button class="btn sec" disabled style="margin-top:14px;">Nouveau brief · bientôt</button>
         </div>
       </section>
 

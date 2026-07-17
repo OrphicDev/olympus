@@ -50,6 +50,8 @@ contextBridge.exposeInMainWorld("olympus", {
   // Contrôle par Claude Code (MCP)
   claudeStatus: () => ipcRenderer.invoke("claude:status"),
   claudeInstall: () => ipcRenderer.invoke("claude:install"),
+  // Pegasus — clients connectés
+  pegasusClients: () => ipcRenderer.invoke("pegasus:clients"),
   // Divers
   openExternal: (url) => ipcRenderer.invoke("open-external", url),
 });

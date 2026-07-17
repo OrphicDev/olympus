@@ -603,6 +603,21 @@ ipcMain.handle("claude:install", async () => {
   return { ok: true };
 });
 
+// ══════════ PEGASUS — clients connectés (registre via clé d'équipe) ══════════
+ipcMain.handle("pegasus:clients", async () => {
+  let d;
+  try { d = JSON.parse(Buffer.from(readFileSync(join(homedir(), ".pegasus", "team-key"), "utf8").trim(), "base64").toString("utf8")); }
+  catch { return { ok: false, error: "Clé Pegasus absente — installe Pegasus d'abord.", clients: [] }; }
+  try {
+    const r = await fetch(`${d.supabase_url.replace(/\/$/, "")}/rest/v1/sites?select=site_url,username,label,created_at&order=created_at.desc`, { headers: { apikey: d.supabase_service_key, Authorization: `Bearer ${d.supabase_service_key}` } });
+    if (!r.ok) return { ok: false, error: "Registre inaccessible.", clients: [] };
+    const rows = await r.json();
+    const seen = new Set(); const clients = [];
+    for (const row of rows) { if (!seen.has(row.site_url)) { seen.add(row.site_url); clients.push(row); } }
+    return { ok: true, clients };
+  } catch (e) { return { ok: false, error: e.message, clients: [] }; }
+});
+
 app.whenReady().then(createWindow);
 app.on("window-all-closed", () => app.quit());
 app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });

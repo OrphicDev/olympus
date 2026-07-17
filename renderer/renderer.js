@@ -108,6 +108,21 @@ $("setPegBtn").onclick = () => $("setPegBox").classList.toggle("show");
 wireInstaller("libPegCode", "libPegConnect", "libPegMsg", "libPegBox");
 wireInstaller("setPegCode", "setPegConnect", "setPegMsg", "setPegBox");
 
+// ── Pegasus : clients connectés
+async function refreshPegClients() {
+  const r = await window.olympus.pegasusClients();
+  const list = $("pegClients");
+  if (!list) return;
+  if (!r.ok) { list.innerHTML = `<div class="rb-empty">${escapeHtml(r.error || "Indisponible.")}</div>`; return; }
+  const c = r.clients || [];
+  list.innerHTML = c.length ? c.map((x) => {
+    const host = String(x.site_url || "").replace(/^https?:\/\//, "").replace(/\/$/, "");
+    const since = x.created_at ? new Date(x.created_at).toLocaleDateString("fr-FR") : "";
+    return `<div class="crm-row"><div style="flex:1;min-width:0"><div class="crm-to">${escapeHtml(x.label || host)}</div><div class="crm-meta">${escapeHtml(host)}${x.username ? " · " + escapeHtml(x.username) : ""}${since ? " · depuis " + since : ""}</div></div></div>`;
+  }).join("") : '<div class="rb-empty">Aucun site connecté pour l\'instant.</div>';
+}
+document.querySelector('.nav-item[data-app="pegasus"]').addEventListener("click", refreshPegClients);
+
 // ══════════ RÔLE (depuis la session) ══════════
 let currentRole = "classic";
 let currentUserId = null;
