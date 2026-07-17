@@ -11,6 +11,16 @@
   },
   "titan": {
     "workspace": "Orphic-Dev",
-    "repos": ["OrphicDev/olympus", "OrphicDev/pegasus", "OrphicDev/zevs", "OrphicDev/zevs-releases"]
+    "repos": [
+      "OrphicDev/olympus",
+      "OrphicDev/pegasus",
+      "OrphicDev/zevs",
+      "OrphicDev/zevs-releases"
+    ]
+  },
+  "olympus": {
+    "supabase_url": "https://ntpudyibkwluulbbokrd.supabase.co",
+    "supabase_anon_key": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im50cHVkeWlia3dsdXVsYmJva3JkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQzMDY4NDQsImV4cCI6MjA5OTg4Mjg0NH0.Al-COzdg5zDsPCOSAC1dZAXgm5RVToXEpSPaCJR_49M",
+    "admin_function": "https://ntpudyibkwluulbbokrd.supabase.co/functions/v1/admin"
   }
 }

@@ -101,6 +101,22 @@
   .member-btn:hover{color:var(--txt);border-color:var(--line2);}
   .member-btn.danger:hover{color:var(--err);border-color:var(--err);}
   .member-self{font-size:11px;color:var(--dim);flex-shrink:0;}
+
+  /* ── Hermès (chat) ── */
+  #page-hermes.show{display:flex;flex-direction:column;height:100%;max-width:none;padding-bottom:0;}
+  #page-hermes .page-head{flex-shrink:0;max-width:none;}
+  #chatMessages{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding-right:8px;}
+  .bubble{max-width:70%;padding:9px 13px;border-radius:14px;font-size:14px;line-height:1.5;word-wrap:break-word;}
+  .bubble .author{font-size:11px;color:var(--dim);margin-bottom:3px;font-weight:600;}
+  .bubble.them{align-self:flex-start;background:var(--card);border:1px solid var(--line);border-bottom-left-radius:4px;}
+  .bubble.me{align-self:flex-end;background:linear-gradient(180deg,var(--accent2),var(--accent3));color:#fff;border-bottom-right-radius:4px;}
+  .bubble.me .author{color:rgba(255,255,255,.75);}
+  .bubble .time{font-size:10px;opacity:.55;margin-top:3px;}
+  #chatComposer{flex-shrink:0;display:flex;gap:10px;padding:14px 0 22px;border-top:1px solid var(--line);margin-top:12px;}
+  #chatInput{flex:1;padding:12px 15px;border-radius:11px;background:var(--card);border:1px solid var(--line);color:var(--txt);font-size:14.5px;outline:none;}
+  #chatInput:focus{border-color:var(--accent2);}
+  #chatSend{padding:12px 22px;border:0;border-radius:11px;background:linear-gradient(180deg,var(--accent2),var(--accent3));color:#fff;font-weight:600;cursor:pointer;}
+  #chatSend:hover{filter:brightness(1.08);}
   .spin{display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;border-radius:50%;animation:s .7s linear infinite;vertical-align:-2px;margin-right:6px;}
   @keyframes s{to{transform:rotate(360deg);}}
 
@@ -165,6 +181,8 @@
     <aside class="sidebar">
       <div class="side-brand">OLYMP<b>US</b></div>
       <div class="nav-item active" data-page="library"><div class="ic">📚</div><span class="lbl">Alexandrie<small>bibliothèque</small></span></div>
+      <div class="nav-label">Espace de travail</div>
+      <div class="nav-item" data-page="hermes"><div class="ic">🪽</div><span class="lbl">Hermès<small>chat</small></span></div>
       <div class="nav-label">Mes applications</div>
       <div class="nav-item locked" data-page="titan" data-app="titan" data-role="super_admin"><div class="ic ic-titan">🛠️</div><span class="lbl">Titan</span><span class="lock">🔒</span></div>
       <div class="nav-item locked" data-page="pegasus" data-app="pegasus"><div class="ic">🦄</div><span class="lbl">Pegasus</span><span class="lock">🔒</span></div>
@@ -250,6 +268,16 @@
           <button class="btn" id="zevOpenBtn">Ouvrir Zevs</button>
         </div>
         <div class="section"><h3>À propos</h3><p class="desc">Tri et sélection photo : culling, recadrage intelligent, export vers Lightroom Classic.</p></div>
+      </section>
+
+      <!-- ═══ HERMÈS (chat) ═══ -->
+      <section class="page" id="page-hermes">
+        <div class="page-head"><h1>Hermès</h1><p>Le chat de l'équipe Orphic.</p></div>
+        <div id="chatMessages"></div>
+        <div id="chatComposer">
+          <input id="chatInput" placeholder="Écris un message…" autocomplete="off" spellcheck="true">
+          <button id="chatSend">Envoyer</button>
+        </div>
       </section>
 
       <!-- ═══ TITAN (dev — super admin) ═══ -->

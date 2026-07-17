@@ -1,5 +1,6 @@
 # ————— Secrets (jamais commités) —————
 config/olympus.config.json
+config/supabase-admin.json
 **/*.pem
 .env
 *.env

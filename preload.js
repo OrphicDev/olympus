@@ -29,6 +29,9 @@ contextBridge.exposeInMainWorld("olympus", {
   membersDelete: (id) => ipcRenderer.invoke("members:delete", id),
   membersResetPassword: (id) => ipcRenderer.invoke("members:resetPassword", id),
   membersSetRole: (id, role) => ipcRenderer.invoke("members:setRole", id, role),
+  // Hermès (chat)
+  chatList: (afterId) => ipcRenderer.invoke("chat:list", afterId),
+  chatSend: (body) => ipcRenderer.invoke("chat:send", body),
   // Divers
   openExternal: (url) => ipcRenderer.invoke("open-external", url),
 });

@@ -350,31 +350,34 @@ ${list}
 
 ipcMain.handle("open-external", (_e, url) => shell.openExternal(url));
 
-// ══════════ AUTHENTIFICATION + MEMBRES (Supabase Auth) ══════════
-const AUTH_BASE = PEG.supabase_url.replace(/\/$/, "");
-const AUTH_ANON = PEG.supabase_anon_key;
+// ══════════ AUTHENTIFICATION + MEMBRES (projet Supabase Olympus dédié) ══════════
+const OLY = CFG.olympus;
+const AUTH_BASE = OLY.supabase_url.replace(/\/$/, "");
+const AUTH_ANON = OLY.supabase_anon_key;
+const ADMIN_FN = OLY.admin_function || `${AUTH_BASE}/functions/v1/admin`;
 
-// Clé service (opérations admin) — lue depuis la clé d'équipe Pegasus locale, jamais embarquée.
-function serviceKey() {
-  try {
-    const tk = readFileSync(join(homedir(), ".pegasus", "team-key"), "utf8").trim();
-    return JSON.parse(Buffer.from(tk, "base64").toString("utf8")).supabase_service_key || null;
-  } catch { return null; }
+// Appel de l'Edge Function admin (gestion des membres). La clé service reste côté serveur ;
+// useAuth=true envoie le jeton du membre → le serveur vérifie le rôle super_admin.
+async function adminCall(action, params = {}, useAuth = true) {
+  const send = () => {
+    const s = loadSession();
+    const bearer = useAuth && s?.access_token ? s.access_token : AUTH_ANON;
+    return fetch(ADMIN_FN, {
+      method: "POST",
+      headers: { apikey: AUTH_ANON, Authorization: `Bearer ${bearer}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ action, ...params }),
+    });
+  };
+  let r = await send();
+  if (r.status === 403 && useAuth && (await refreshToken())) r = await send();
+  return r.json().catch(() => ({ error: "Réponse invalide." }));
 }
-const svcHeaders = () => { const k = serviceKey(); return k ? { apikey: k, Authorization: `Bearer ${k}`, "Content-Type": "application/json" } : null; };
 
 // Session persistante (jeton) — fichier local protégé.
 function sessionPath() { return join(app.getPath("userData"), "olympus-session.json"); }
 function loadSession() { try { return JSON.parse(readFileSync(sessionPath(), "utf8")); } catch { return null; } }
 function saveSession(s) { try { writeFileSync(sessionPath(), JSON.stringify(s), { mode: 0o600 }); } catch {} }
 function clearSession() { try { writeFileSync(sessionPath(), "{}", { mode: 0o600 }); } catch {} }
-
-async function listUsers() {
-  const h = svcHeaders(); if (!h) return null;
-  const r = await fetch(`${AUTH_BASE}/auth/v1/admin/users?per_page=200`, { headers: h });
-  if (!r.ok) return null;
-  return (await r.json()).users || [];
-}
 
 ipcMain.handle("auth:session", () => {
   const s = loadSession();
@@ -418,93 +421,61 @@ ipcMain.handle("auth:setPassword", async (_e, newPassword) => {
 
 ipcMain.handle("auth:logout", () => { clearSession(); return { ok: true }; });
 
-// Bootstrap possible ? (aucun super admin encore)
+// ── Bootstrap + membres via l'Edge Function admin (clé service jamais exposée à l'app)
 ipcMain.handle("auth:needsBootstrap", async () => {
-  const users = await listUsers();
-  if (users === null) return { possible: false, reason: "no-key" };
-  return { possible: !users.some((u) => u.user_metadata?.role === "super_admin") };
+  const r = await adminCall("needsBootstrap", {}, false);
+  return { possible: !!r.possible };
 });
+ipcMain.handle("auth:bootstrap", (_e, d) => adminCall("bootstrap", d || {}, false));
+ipcMain.handle("members:list", () => adminCall("list", {}));
+ipcMain.handle("members:create", (_e, d) => adminCall("create", d || {}));
+ipcMain.handle("members:delete", (_e, id) => adminCall("delete", { id }));
+ipcMain.handle("members:resetPassword", (_e, id) => adminCall("resetPassword", { id }));
+ipcMain.handle("members:setRole", (_e, id, role) => adminCall("setRole", { id, role }));
 
-// Créer le premier super admin (uniquement si aucun n'existe)
-ipcMain.handle("auth:bootstrap", async (_e, d) => {
-  const h = svcHeaders();
-  if (!h) return { ok: false, error: "Clé admin absente. Installe d'abord Pegasus (clé d'équipe)." };
-  const users = await listUsers();
-  if (users && users.some((u) => u.user_metadata?.role === "super_admin")) return { ok: false, error: "Un super admin existe déjà. Demande-lui de créer ton compte." };
-  const { email, password, first_name, last_name } = d || {};
-  if (!email || !password || !first_name || !last_name) return { ok: false, error: "Tous les champs sont requis." };
-  if (String(password).length < 8) return { ok: false, error: "Mot de passe : 8 caractères minimum." };
-  const r = await fetch(`${AUTH_BASE}/auth/v1/admin/users`, {
-    method: "POST", headers: h,
-    body: JSON.stringify({ email: String(email).trim().toLowerCase(), password, email_confirm: true, user_metadata: { first_name, last_name, role: "super_admin", must_reset_password: false } }),
+// ══════════ HERMÈS (chat d'équipe) ══════════
+async function refreshToken() {
+  const s = loadSession();
+  if (!s?.refresh_token) return false;
+  const r = await fetch(`${AUTH_BASE}/auth/v1/token?grant_type=refresh_token`, {
+    method: "POST", headers: { apikey: AUTH_ANON, "Content-Type": "application/json" },
+    body: JSON.stringify({ refresh_token: s.refresh_token }),
   });
+  if (!r.ok) return false;
   const j = await r.json();
-  if (!r.ok || !j.id) return { ok: false, error: j.msg || j.error_description || "Création échouée." };
-  return { ok: true };
-});
-
-// ── Membres (super admin)
-ipcMain.handle("members:list", async () => {
-  const users = await listUsers();
-  if (users === null) return { ok: false, error: "Clé admin absente (installe Pegasus)." };
-  const members = users.map((u) => ({
-    id: u.id, email: u.email,
-    first_name: u.user_metadata?.first_name || "", last_name: u.user_metadata?.last_name || "",
-    role: u.user_metadata?.role || "classic", last_sign_in: u.last_sign_in_at || null,
-  }));
-  return { ok: true, members };
-});
-
-ipcMain.handle("members:create", async (_e, d) => {
-  const h = svcHeaders();
-  if (!h) return { ok: false, error: "Clé admin absente (installe Pegasus)." };
-  const { email, password, first_name, last_name, role } = d || {};
-  if (!email || !password || !first_name || !last_name) return { ok: false, error: "Tous les champs sont requis." };
-  if (String(password).length < 8) return { ok: false, error: "Mot de passe temporaire : 8 caractères minimum." };
-  const r = await fetch(`${AUTH_BASE}/auth/v1/admin/users`, {
-    method: "POST", headers: h,
-    body: JSON.stringify({ email: String(email).trim().toLowerCase(), password, email_confirm: true, user_metadata: { first_name, last_name, role: role === "super_admin" ? "super_admin" : "classic", must_reset_password: true } }),
-  });
-  const j = await r.json();
-  if (!r.ok || !j.id) return { ok: false, error: j.msg || j.error_description || "Création échouée (email déjà utilisé ?)." };
-  return { ok: true };
-});
-
-async function getUserMeta(id) {
-  const h = svcHeaders(); if (!h) return null;
-  const r = await fetch(`${AUTH_BASE}/auth/v1/admin/users/${id}`, { headers: h });
-  if (!r.ok) return null;
-  return (await r.json()).user_metadata || {};
+  if (!j.access_token) return false;
+  s.access_token = j.access_token; if (j.refresh_token) s.refresh_token = j.refresh_token;
+  saveSession(s);
+  return true;
+}
+async function authedFetch(path, opts = {}) {
+  const tok = () => loadSession()?.access_token;
+  const call = (t) => fetch(`${AUTH_BASE}${path}`, { ...opts, headers: { apikey: AUTH_ANON, Authorization: `Bearer ${t}`, "Content-Type": "application/json", ...(opts.headers || {}) } });
+  let r = await call(tok());
+  if (r.status === 401 && (await refreshToken())) r = await call(tok());
+  return r;
 }
 
-ipcMain.handle("members:delete", async (_e, id) => {
-  const h = svcHeaders(); if (!h) return { ok: false, error: "Clé admin absente." };
-  const r = await fetch(`${AUTH_BASE}/auth/v1/admin/users/${id}`, { method: "DELETE", headers: h });
-  if (!r.ok) return { ok: false, error: "Suppression échouée." };
-  return { ok: true };
+ipcMain.handle("chat:list", async (_e, afterId) => {
+  const after = Number(afterId) || 0;
+  const r = await authedFetch(`/rest/v1/messages?select=id,user_id,author_name,body,created_at&id=gt.${after}&order=id.asc&limit=300`);
+  if (!r.ok) return { ok: false, error: "Chat indisponible (table créée ?)." };
+  return { ok: true, messages: await r.json() };
 });
 
-ipcMain.handle("members:resetPassword", async (_e, id) => {
-  const h = svcHeaders(); if (!h) return { ok: false, error: "Clé admin absente." };
-  const meta = await getUserMeta(id); if (!meta) return { ok: false, error: "Membre introuvable." };
-  const temp = "Orphic-" + Math.random().toString(36).slice(2, 8).toUpperCase() + "!";
-  const r = await fetch(`${AUTH_BASE}/auth/v1/admin/users/${id}`, {
-    method: "PUT", headers: h,
-    body: JSON.stringify({ password: temp, user_metadata: { ...meta, must_reset_password: true } }),
+ipcMain.handle("chat:send", async (_e, body) => {
+  body = String(body || "").trim();
+  if (!body) return { ok: false, error: "Message vide." };
+  const s = loadSession();
+  if (!s?.user) return { ok: false, error: "Non connecté." };
+  const author = ((s.user.first_name || "") + " " + (s.user.last_name || "")).trim() || s.user.email;
+  const r = await authedFetch(`/rest/v1/messages`, {
+    method: "POST", headers: { Prefer: "return=representation" },
+    body: JSON.stringify({ user_id: s.user.id, author_name: author, body }),
   });
-  if (!r.ok) { const j = await r.json().catch(() => ({})); return { ok: false, error: j.msg || "Échec." }; }
-  return { ok: true, tempPassword: temp };
-});
-
-ipcMain.handle("members:setRole", async (_e, id, role) => {
-  const h = svcHeaders(); if (!h) return { ok: false, error: "Clé admin absente." };
-  const meta = await getUserMeta(id); if (!meta) return { ok: false, error: "Membre introuvable." };
-  const r = await fetch(`${AUTH_BASE}/auth/v1/admin/users/${id}`, {
-    method: "PUT", headers: h,
-    body: JSON.stringify({ user_metadata: { ...meta, role: role === "super_admin" ? "super_admin" : "classic" } }),
-  });
-  if (!r.ok) return { ok: false, error: "Échec." };
-  return { ok: true };
+  if (!r.ok) return { ok: false, error: "Envoi impossible." };
+  const arr = await r.json();
+  return { ok: true, message: Array.isArray(arr) ? arr[0] : arr };
 });
 
 app.whenReady().then(createWindow);

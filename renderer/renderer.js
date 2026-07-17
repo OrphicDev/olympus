@@ -194,6 +194,44 @@ $("mCreateBtn").onclick = async () => {
   refreshMembers();
 };
 
+// ══════════ HERMÈS (chat) ══════════
+let chatLastId = 0, chatTimer = null;
+function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+function fmtTime(iso) { try { return new Date(iso).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }); } catch { return ""; } }
+function appendMessage(m) {
+  const box = $("chatMessages");
+  const mine = m.user_id === currentUserId;
+  const near = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+  const el = document.createElement("div");
+  el.className = "bubble " + (mine ? "me" : "them");
+  el.innerHTML = `${mine ? "" : `<div class="author">${escapeHtml(m.author_name || "?")}</div>`}<div>${escapeHtml(m.body)}</div><div class="time">${fmtTime(m.created_at)}</div>`;
+  box.appendChild(el);
+  if (mine || near) box.scrollTop = box.scrollHeight;
+}
+async function chatTick() {
+  const r = await window.olympus.chatList(chatLastId);
+  if (r.ok && r.messages && r.messages.length) {
+    r.messages.forEach(appendMessage);
+    chatLastId = r.messages[r.messages.length - 1].id;
+  }
+}
+function startChat() {
+  $("chatMessages").innerHTML = ""; chatLastId = 0;
+  chatTick();
+  if (chatTimer) clearInterval(chatTimer);
+  chatTimer = setInterval(chatTick, 3000);
+}
+async function sendMsg() {
+  const input = $("chatInput"), body = input.value.trim();
+  if (!body) return;
+  input.value = "";
+  const r = await window.olympus.chatSend(body);
+  if (r.ok && r.message) { appendMessage(r.message); chatLastId = Math.max(chatLastId, r.message.id); }
+  else if (!r.ok) { input.value = body; }
+}
+$("chatSend").onclick = sendMsg;
+$("chatInput").addEventListener("keydown", (e) => { if (e.key === "Enter") sendMsg(); });
+
 // ══════════ AUTH ══════════
 let pendingUser = null;
 
@@ -213,7 +251,7 @@ function enterHub(user) {
   $("accRole").textContent = user.role === "super_admin" ? "super admin" : "membre";
   $("accAvatar").textContent = (user.first_name || user.email || "?").charAt(0).toUpperCase();
   applyRole();
-  refreshLocks(); refreshEnv(); refreshTitan();
+  refreshLocks(); refreshEnv(); refreshTitan(); startChat();
   if (currentRole === "super_admin") refreshMembers();
   goTo("library");
 }
