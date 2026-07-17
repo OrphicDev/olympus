@@ -52,6 +52,11 @@ contextBridge.exposeInMainWorld("olympus", {
   claudeInstall: () => ipcRenderer.invoke("claude:install"),
   // Pegasus — clients connectés
   pegasusClients: () => ipcRenderer.invoke("pegasus:clients"),
+  // Métis (briefs)
+  metisList: () => ipcRenderer.invoke("metis:list"),
+  metisSave: (b) => ipcRenderer.invoke("metis:save", b),
+  metisDelete: (id) => ipcRenderer.invoke("metis:delete", id),
+  metisUpload: (folder) => ipcRenderer.invoke("metis:upload", folder),
   // Divers
   openExternal: (url) => ipcRenderer.invoke("open-external", url),
 });

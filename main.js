@@ -618,6 +618,64 @@ ipcMain.handle("pegasus:clients", async () => {
   } catch (e) { return { ok: false, error: e.message, clients: [] }; }
 });
 
+// ══════════ MÉTIS (briefs) ══════════
+ipcMain.handle("metis:list", async () => {
+  const r = await authedFetch(`/rest/v1/briefs?select=*&order=updated_at.desc&limit=200`);
+  return r.ok ? { ok: true, briefs: await r.json() } : { ok: false, briefs: [] };
+});
+// Crée / met à jour / supprime l'événement Chronos lié à une date de brief.
+async function syncBriefEvent(existingId, date, time, title, category, userId) {
+  if (!date) { if (existingId) await authedFetch(`/rest/v1/events?id=eq.${existingId}`, { method: "DELETE" }); return null; }
+  if (existingId) { await authedFetch(`/rest/v1/events?id=eq.${existingId}`, { method: "PATCH", body: JSON.stringify({ title, date, time: time || null, category }) }); return existingId; }
+  const r = await authedFetch(`/rest/v1/events`, { method: "POST", headers: { Prefer: "return=representation" }, body: JSON.stringify({ title, date, time: time || null, category, created_by: userId }) });
+  if (!r.ok) return null;
+  const a = await r.json(); return Array.isArray(a) ? a[0].id : a.id;
+}
+ipcMain.handle("metis:save", async (_e, b) => {
+  const s = loadSession();
+  const fields = ["title", "client", "shoot_date", "delivery_date", "start_time", "end_time", "shoot_type", "participants", "objectives", "moodboard", "location", "shotlist", "status", "attachments"];
+  const body = { updated_at: new Date().toISOString() };
+  for (const f of fields) if (b[f] !== undefined) body[f] = b[f] || null;
+  let r;
+  if (b.id) r = await authedFetch(`/rest/v1/briefs?id=eq.${b.id}`, { method: "PATCH", headers: { Prefer: "return=representation" }, body: JSON.stringify(body) });
+  else { body.created_by = s?.user?.id || null; r = await authedFetch(`/rest/v1/briefs`, { method: "POST", headers: { Prefer: "return=representation" }, body: JSON.stringify(body) }); }
+  if (!r.ok) return { ok: false, error: "Enregistrement impossible." };
+  const brief = (await r.json())[0] || {};
+  const uid = s?.user?.id || null;
+  const shootId = await syncBriefEvent(b.shoot_event_id, brief.shoot_date, brief.start_time, "Shoot — " + brief.title, "client", uid);
+  const deliveryId = await syncBriefEvent(b.delivery_event_id, brief.delivery_date, null, "Rendu — " + brief.title, "deadline", uid);
+  await authedFetch(`/rest/v1/briefs?id=eq.${brief.id}`, { method: "PATCH", body: JSON.stringify({ shoot_event_id: shootId, delivery_event_id: deliveryId }) });
+  return { ok: true, brief };
+});
+ipcMain.handle("metis:delete", async (_e, id) => {
+  const g = await authedFetch(`/rest/v1/briefs?select=shoot_event_id,delivery_event_id&id=eq.${id}`);
+  if (g.ok) { const b = (await g.json())[0]; if (b) for (const eid of [b.shoot_event_id, b.delivery_event_id]) if (eid) await authedFetch(`/rest/v1/events?id=eq.${eid}`, { method: "DELETE" }); }
+  const r = await authedFetch(`/rest/v1/briefs?id=eq.${id}`, { method: "DELETE" });
+  return r.ok ? { ok: true } : { ok: false, error: "Suppression impossible." };
+});
+ipcMain.handle("metis:upload", async (_e, folder) => {
+  const dlg = await dialog.showOpenDialog(win, {
+    title: "Ajouter des références / moodboard",
+    properties: ["openFile", "multiSelections"],
+    filters: [{ name: "Images & documents", extensions: ["jpg", "jpeg", "png", "gif", "webp", "heic", "pdf", "mp4", "mov"] }],
+  });
+  if (dlg.canceled || !dlg.filePaths.length) return { ok: true, files: [] };
+  const upload = (token, path, bytes) => fetch(`${AUTH_BASE}/storage/v1/object/moodboards/${path}`, {
+    method: "POST", headers: { apikey: AUTH_ANON, Authorization: `Bearer ${token}`, "Content-Type": "application/octet-stream", "x-upsert": "true" }, body: bytes,
+  });
+  const out = [];
+  for (const fp of dlg.filePaths) {
+    const name = fp.split("/").pop();
+    const path = encodeURI(`${folder || "misc"}/${Date.now()}-${name.replace(/[^a-zA-Z0-9._-]/g, "_")}`);
+    const bytes = readFileSync(fp);
+    let s = loadSession();
+    let up = await upload(s?.access_token, path, bytes);
+    if (up.status === 401 && (await refreshToken())) up = await upload(loadSession().access_token, path, bytes);
+    if (up.ok) out.push({ name, url: `${AUTH_BASE}/storage/v1/object/public/moodboards/${path}` });
+  }
+  return { ok: true, files: out };
+});
+
 app.whenReady().then(createWindow);
 app.on("window-all-closed", () => app.quit());
 app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });

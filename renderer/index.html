@@ -305,6 +305,19 @@
   .crm-open{margin-left:auto;font-size:11.5px;font-weight:600;padding:4px 11px;border-radius:20px;flex-shrink:0;white-space:nowrap;}
   .crm-open.yes{background:var(--card2);color:var(--txt);}
   .crm-open.no{background:transparent;color:var(--dim);border:1px solid var(--line);}
+  /* ── Connexions (profil) ── */
+  .conn-row{display:flex;align-items:center;gap:14px;padding:13px 0;border-bottom:1px solid var(--line);max-width:560px;}
+  .conn-row:last-of-type{border-bottom:none;}
+  .conn-ic{width:36px;height:36px;border-radius:10px;background:var(--card2);display:grid;place-items:center;font-size:16px;flex-shrink:0;filter:grayscale(1);}
+  .conn-row .nm{font-weight:550;font-size:14px;}
+  .conn-row .meta{color:var(--dim);font-size:12px;margin-top:1px;}
+  .conn-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
+  .conn-dot.on{background:#3fb950;} .conn-dot.off{background:var(--line2);}
+  /* ── Chips (participants) ── */
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:2px;}
+  .chip-toggle{padding:6px 13px;border-radius:20px;border:1px solid var(--line);background:var(--card);color:var(--muted);font-size:12.5px;cursor:pointer;transition:transform .15s,color .15s,background .15s,border-color .15s;}
+  .chip-toggle:hover{color:var(--txt);transform:translateY(-1px);}
+  .chip-toggle.selected{background:var(--card2);color:var(--txt);border-color:var(--line2);font-weight:550;}
 
   /* ── Boutons flottants (haut droite) ── */
   #floatBar{position:fixed;top:16px;right:288px;display:flex;gap:8px;z-index:60;-webkit-app-region:no-drag;}
@@ -552,12 +565,8 @@
 
         <div id="irisConnect" style="max-width:470px;">
           <div class="section">
-            <h3>Connecter Gmail</h3>
-            <p class="desc" style="margin-bottom:16px;">Iris envoie via ton Gmail avec un <b>mot de passe d'application</b> (pas ton mot de passe habituel). <span class="link" data-ext="https://myaccount.google.com/apppasswords">Générer un mot de passe d'application →</span></p>
-            <div class="auth-field"><label>Adresse Gmail</label><input class="auth-input" id="gmEmail" type="email" placeholder="toi@orphic-agency.com"></div>
-            <div class="auth-field"><label>Mot de passe d'application (16 caractères)</label><input class="auth-input" id="gmPass" type="password" placeholder="xxxx xxxx xxxx xxxx"></div>
-            <button class="btn" id="gmConnectBtn">Connecter</button>
-            <div class="msg" id="gmMsg"></div>
+            <h3>Gmail non connecté</h3>
+            <p class="desc">Pour envoyer et suivre tes mails, connecte ton Gmail dans <span class="link" id="irisGoProfile">ton profil → Comptes & connexions</span>.</p>
           </div>
         </div>
 
@@ -571,7 +580,7 @@
               </div>
               <div class="auth-field"><label>Sujet</label><input class="auth-input" id="mailSubject"></div>
               <div class="auth-field"><label>Message</label><textarea class="auth-input" id="mailBody" rows="6"></textarea></div>
-              <div class="ev-actions"><button class="btn" id="mailSendBtn">Envoyer</button><button class="btn sec" id="gmDisconnect" style="margin-left:auto;">Déconnecter Gmail</button></div>
+              <div class="ev-actions"><button class="btn" id="mailSendBtn">Envoyer</button></div>
               <div class="msg" id="mailMsg"></div>
             </div>
           </div>
@@ -599,19 +608,48 @@
       <!-- ═══ MÉTIS (briefs shooting) ═══ -->
       <section class="page" id="page-metis">
         <div class="page-head"><h1>Métis</h1><p>Les briefs — la préparation de vos shootings.</p></div>
-        <div class="section">
-          <h3>Ce que fera Métis</h3>
-          <p class="desc">Rédiger et stocker les <b>briefs de shooting</b> : objectifs, moodboard, lieux, matériel, plan de prises, équipe. Reliés à un client et à une date Chronos.</p>
-        </div>
-        <div class="section">
-          <h3>Structure d'un brief</h3>
-          <div class="env">
-            <div class="env-row"><div class="st">•</div><div><div class="nm">Client & projet</div><div class="meta">à qui, pour quoi</div></div></div>
-            <div class="env-row"><div class="st">•</div><div><div class="nm">Objectifs & références</div><div class="meta">moodboard, style</div></div></div>
-            <div class="env-row"><div class="st">•</div><div><div class="nm">Logistique</div><div class="meta">lieu, date, matériel, équipe</div></div></div>
-            <div class="env-row"><div class="st">•</div><div><div class="nm">Plan de prises</div><div class="meta">shotlist</div></div></div>
+
+        <div id="metisList">
+          <div class="ev-actions" style="margin-top:0;align-items:center;flex-wrap:wrap;">
+            <button class="btn" id="metisNewBtn">+ Nouveau brief</button>
+            <select class="auth-input" id="metisDatePick" style="max-width:340px;margin-left:14px;"><option value="">…ou depuis une date du calendrier</option></select>
           </div>
-          <button class="btn sec" disabled style="margin-top:14px;">Nouveau brief · bientôt</button>
+          <div id="briefsList" style="margin-top:10px;max-width:820px;"><div class="rb-empty">Aucun brief pour l'instant.</div></div>
+        </div>
+
+        <div id="metisEditor" style="display:none;max-width:720px;">
+          <div class="ev-actions" style="margin-top:0;"><button class="btn sec" id="briefBack">← Retour aux briefs</button></div>
+          <div class="auth-row2" style="margin-top:16px;">
+            <div class="auth-field" style="flex:2"><label>Titre du projet</label><input class="auth-input" id="brTitle" placeholder="Shooting collection été"></div>
+            <div class="auth-field" style="flex:1"><label>Client</label><input class="auth-input" id="brClient"></div>
+          </div>
+          <div class="auth-row2">
+            <div class="auth-field" style="flex:1"><label>Jour du shoot</label><input class="auth-input" id="brDate" type="date"></div>
+            <div class="auth-field" style="flex:1"><label>Premier rendu</label><input class="auth-input" id="brDelivery" type="date"></div>
+            <div class="auth-field" style="flex:1"><label>Statut</label><select class="auth-input" id="brStatus"><option value="draft">Brouillon</option><option value="ready">Prêt</option><option value="done">Terminé</option></select></div>
+          </div>
+          <div class="auth-field"><label>Ou choisir une date déjà au calendrier</label><select class="auth-input" id="brExistingDate"><option value="">— dates existantes dans Chronos —</option></select></div>
+          <p class="desc" style="margin:-4px 0 10px;font-size:12px;color:var(--dim);">Les dates créent/mettent à jour automatiquement des événements dans <b>Chronos</b> (Shoot + Rendu).</p>
+          <div class="auth-row2">
+            <div class="auth-field" style="flex:1"><label>Heure de début</label><input class="auth-input" id="brStart" type="time"></div>
+            <div class="auth-field" style="flex:1"><label>Heure de fin</label><input class="auth-input" id="brEnd" type="time"></div>
+            <div class="auth-field" style="flex:1"><label>Type de shoot</label><select class="auth-input" id="brType"><option value="photo">Photo</option><option value="video">Vidéo</option><option value="both">Photo + Vidéo</option></select></div>
+          </div>
+          <div class="auth-field"><label>Équipe — salariés participants</label><div class="chips" id="brParticipants"></div></div>
+          <div class="auth-field"><label>Le brief</label><textarea class="auth-input" id="brObjectives" rows="4" placeholder="Le brief : ce qu'on veut, le message, l'usage des visuels, les livrables attendus…"></textarea></div>
+          <div class="auth-field">
+            <label>Références & moodboard</label>
+            <textarea class="auth-input" id="brMoodboard" rows="2" placeholder="Liens, ambiances, notes de style…"></textarea>
+            <div class="ev-actions" style="margin-top:8px;"><button class="btn sec" id="brUploadBtn">+ Ajouter des fichiers</button></div>
+            <div id="brFiles" style="margin-top:8px;"></div>
+          </div>
+          <div class="auth-field">
+            <label>Lieu</label>
+            <div style="display:flex;gap:10px;align-items:center;"><input class="auth-input" id="brLocation" placeholder="Adresse du shoot" style="flex:1;"><span class="link" id="brMapsLink">Google Maps ↗</span></div>
+          </div>
+          <div class="auth-field"><label>Plan de prises (shotlist)</label><textarea class="auth-input" id="brShotlist" rows="4" placeholder="1. Plan large…&#10;2. Portrait serré…"></textarea></div>
+          <div class="ev-actions"><button class="btn" id="briefSave">Enregistrer</button><button class="btn sec" id="briefDelete" style="display:none;margin-left:auto;">Supprimer</button></div>
+          <div class="msg" id="briefMsg"></div>
         </div>
       </section>
 
@@ -690,6 +728,34 @@
           <div><h1 id="profName">—</h1><div class="tag" id="profEmail">—</div></div>
         </div>
         <div class="section"><h3>Rôle</h3><p class="desc" id="profRole">—</p></div>
+
+        <div class="section">
+          <h3>Comptes & connexions</h3>
+          <p class="desc" style="margin-bottom:14px;">Connecte tes comptes ici — ils alimentent tes apps (Iris, Atlas, Argos).</p>
+          <div class="conn-row">
+            <div class="conn-ic">✉️</div>
+            <div style="flex:1"><div class="nm">Gmail <span class="conn-dot off" id="connGmailDot"></span></div><div class="meta" id="connGmailStatus">non connecté</div></div>
+            <button class="btn sec" id="connGmailBtn">Connecter</button>
+          </div>
+          <div class="code-box" id="gmailForm" style="display:none;max-width:460px;">
+            <p class="desc" style="margin-bottom:12px;">Iris envoie via ton Gmail avec un <b>mot de passe d'application</b>. <span class="link" data-ext="https://myaccount.google.com/apppasswords">Générer un mot de passe →</span></p>
+            <div class="auth-field"><label>Adresse Gmail</label><input class="auth-input" id="gmEmail" type="email" placeholder="toi@orphic-agency.com"></div>
+            <div class="auth-field"><label>Mot de passe d'application (16 car.)</label><input class="auth-input" id="gmPass" type="password" placeholder="xxxx xxxx xxxx xxxx"></div>
+            <div class="ev-actions"><button class="btn" id="gmConnectBtn">Valider</button><button class="btn sec" id="gmDisconnect" style="display:none;margin-left:auto;">Déconnecter</button></div>
+            <div class="msg" id="gmMsg"></div>
+          </div>
+          <div class="conn-row">
+            <div class="conn-ic">🗂️</div>
+            <div style="flex:1"><div class="nm">Google Drive <span class="conn-dot off"></span></div><div class="meta">bientôt — OAuth (Atlas)</div></div>
+            <button class="btn sec" disabled>Connecter</button>
+          </div>
+          <div class="conn-row">
+            <div class="conn-ic">👁️</div>
+            <div style="flex:1"><div class="nm">Réseaux & Ads <span class="conn-dot off"></span></div><div class="meta">bientôt — Meta / Google Ads (Argos)</div></div>
+            <button class="btn sec" disabled>Connecter</button>
+          </div>
+        </div>
+
         <div class="section"><h3>Compte</h3><button class="btn sec" id="logoutBtn">Se déconnecter</button></div>
       </section>
 

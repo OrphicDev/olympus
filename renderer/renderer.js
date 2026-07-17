@@ -123,6 +123,139 @@ async function refreshPegClients() {
 }
 document.querySelector('.nav-item[data-app="pegasus"]').addEventListener("click", refreshPegClients);
 
+// ══════════ MÉTIS (briefs) ══════════
+let metisBriefs = [];
+const STATUS_LABEL = { draft: "Brouillon", ready: "Prêt", done: "Terminé" };
+async function refreshMetis() {
+  const r = await window.olympus.metisList();
+  metisBriefs = r.ok ? r.briefs : [];
+  const list = $("briefsList");
+  list.innerHTML = metisBriefs.length ? metisBriefs.map((b) => {
+    const fmt = (d) => new Date(d + "T00:00").toLocaleDateString("fr-FR");
+    const meta = [b.client, b.shoot_date ? "Shoot " + fmt(b.shoot_date) : null, b.delivery_date ? "Rendu " + fmt(b.delivery_date) : null].filter(Boolean).join(" · ");
+    return `<div class="crm-row" data-brief="${b.id}" style="cursor:pointer"><div style="flex:1;min-width:0"><div class="crm-to">${escapeHtml(b.title)}</div><div class="crm-meta">${escapeHtml(meta || "—")}</div></div><span class="crm-open ${b.status === "done" ? "yes" : "no"}">${escapeHtml(STATUS_LABEL[b.status] || "")}</span></div>`;
+  }).join("") : '<div class="rb-empty">Aucun brief pour l\'instant.</div>';
+  populateMetisDatePick();
+}
+function showMetisList() { $("metisEditor").style.display = "none"; $("metisList").style.display = ""; }
+function openBrief(b) {
+  const g = (id, v) => ($(id).value = v || "");
+  const ed = $("metisEditor");
+  ed.dataset.id = b?.id || "";
+  ed.dataset.shootEvent = b?.shoot_event_id || "";
+  ed.dataset.deliveryEvent = b?.delivery_event_id || "";
+  g("brTitle", b?.title); g("brClient", b?.client); g("brDate", b?.shoot_date); g("brDelivery", b?.delivery_date);
+  g("brStart", b?.start_time); g("brEnd", b?.end_time);
+  $("brStatus").value = b?.status || "draft";
+  $("brType").value = b?.shoot_type || "photo";
+  renderParticipantChips(b?.participants);
+  g("brObjectives", b?.objectives); g("brMoodboard", b?.moodboard); g("brLocation", b?.location); g("brShotlist", b?.shotlist);
+  ed.dataset.folder = b?.id ? String(b.id) : ("new-" + Math.random().toString(36).slice(2, 10));
+  currentAttachments = Array.isArray(b?.attachments) ? b.attachments.slice() : [];
+  renderBrFiles();
+  populateExistingDates();
+  $("briefDelete").style.display = b?.id ? "" : "none";
+  $("briefMsg").textContent = "";
+  $("metisList").style.display = "none"; $("metisEditor").style.display = "";
+  $("brTitle").focus();
+}
+$("metisNewBtn").onclick = () => openBrief(null);
+$("briefBack").onclick = () => showMetisList();
+$("briefsList").onclick = (e) => { const row = e.target.closest("[data-brief]"); if (row) { const b = metisBriefs.find((x) => String(x.id) === row.dataset.brief); if (b) openBrief(b); } };
+$("briefSave").onclick = async () => {
+  const ed = $("metisEditor");
+  const b = {
+    id: ed.dataset.id || undefined,
+    shoot_event_id: ed.dataset.shootEvent ? Number(ed.dataset.shootEvent) : null,
+    delivery_event_id: ed.dataset.deliveryEvent ? Number(ed.dataset.deliveryEvent) : null,
+    title: $("brTitle").value.trim(), client: $("brClient").value.trim(),
+    shoot_date: $("brDate").value || null, delivery_date: $("brDelivery").value || null,
+    start_time: $("brStart").value || null, end_time: $("brEnd").value || null,
+    shoot_type: $("brType").value, participants: collectParticipants(), attachments: currentAttachments,
+    status: $("brStatus").value, objectives: $("brObjectives").value, moodboard: $("brMoodboard").value,
+    location: $("brLocation").value, shotlist: $("brShotlist").value,
+  };
+  const msg = $("briefMsg");
+  if (!b.title) { msg.className = "msg err"; msg.textContent = "Le titre est requis."; return; }
+  const btn = $("briefSave"); btn.disabled = true; btn.innerHTML = '<span class="spin"></span>…';
+  const r = await window.olympus.metisSave(b);
+  btn.disabled = false; btn.textContent = "Enregistrer";
+  if (r.ok) { await refreshMetis(); showMetisList(); } else { msg.className = "msg err"; msg.textContent = r.error; }
+};
+$("briefDelete").onclick = async () => {
+  const id = $("metisEditor").dataset.id; if (!id) return;
+  const r = await window.olympus.metisDelete(id);
+  if (r.ok) { await refreshMetis(); showMetisList(); }
+};
+document.querySelector('.nav-item[data-page="metis"]').addEventListener("click", () => { showMetisList(); refreshMetis(); });
+
+// Équipe (chips de membres)
+async function renderParticipantChips(selectedCsv) {
+  const selected = new Set((selectedCsv || "").split(",").map((s) => s.trim()).filter(Boolean));
+  const p = await window.olympus.presenceOnline();
+  const names = [...new Set((p.users || []).map((u) => u.name).filter(Boolean))];
+  const box = $("brParticipants");
+  box.innerHTML = names.length
+    ? names.map((n) => `<span class="chip-toggle${selected.has(n) ? " selected" : ""}" data-name="${escapeHtml(n)}">${escapeHtml(n)}</span>`).join("")
+    : '<div class="rb-empty">Les membres apparaissent après leur 1re connexion.</div>';
+}
+function collectParticipants() { return [...$("brParticipants").querySelectorAll(".chip-toggle.selected")].map((c) => c.dataset.name).join(", "); }
+$("brParticipants").onclick = (e) => { const c = e.target.closest(".chip-toggle"); if (c) c.classList.toggle("selected"); };
+
+// Références & moodboard (upload de fichiers)
+let currentAttachments = [];
+function renderBrFiles() {
+  const box = $("brFiles");
+  box.innerHTML = currentAttachments.length
+    ? currentAttachments.map((f, i) => `<div class="crm-row" style="padding:8px 0"><div style="flex:1;min-width:0"><span class="link" data-file="${i}">${escapeHtml(f.name)}</span></div><span class="member-btn danger" data-rmfile="${i}">Retirer</span></div>`).join("")
+    : '<div class="rb-empty">Aucun fichier.</div>';
+}
+$("brFiles").onclick = (e) => {
+  const open = e.target.closest("[data-file]"); if (open) { const f = currentAttachments[+open.dataset.file]; if (f) window.olympus.openExternal(f.url); return; }
+  const rm = e.target.closest("[data-rmfile]"); if (rm) { currentAttachments.splice(+rm.dataset.rmfile, 1); renderBrFiles(); }
+};
+$("brUploadBtn").onclick = async () => {
+  const folder = $("metisEditor").dataset.folder || "misc";
+  const btn = $("brUploadBtn"); btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Envoi…';
+  const r = await window.olympus.metisUpload(folder);
+  btn.disabled = false; btn.textContent = "+ Ajouter des fichiers";
+  if (r.ok && r.files.length) { currentAttachments.push(...r.files); renderBrFiles(); }
+};
+
+// Dates déjà au calendrier
+async function populateExistingDates() {
+  const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const now = new Date(), to = new Date(Date.now() + 120 * 864e5);
+  const r = await window.olympus.chronosList(iso(now), iso(to));
+  const evs = r.ok ? r.events : [];
+  $("brExistingDate").innerHTML = '<option value="">— dates existantes dans Chronos —</option>' +
+    evs.map((e) => `<option value="${e.date}">${new Date(e.date + "T00:00").toLocaleDateString("fr-FR")} — ${escapeHtml(e.title)}</option>`).join("");
+}
+$("brExistingDate").onchange = () => { if ($("brExistingDate").value) $("brDate").value = $("brExistingDate").value; };
+
+// Lieu → Google Maps
+$("brMapsLink").onclick = () => { const a = $("brLocation").value.trim(); if (a) window.olympus.openExternal("https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(a)); };
+
+// Liste des dates du calendrier (écran des briefs) → créer un brief pour une date existante
+let metisDateEvents = [];
+async function populateMetisDatePick() {
+  const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const now = new Date(), to = new Date(Date.now() + 120 * 864e5);
+  const r = await window.olympus.chronosList(iso(now), iso(to));
+  metisDateEvents = r.ok ? r.events : [];
+  $("metisDatePick").innerHTML = '<option value="">…ou depuis une date du calendrier</option>' +
+    metisDateEvents.map((e) => `<option value="${e.id}">${new Date(e.date + "T00:00").toLocaleDateString("fr-FR")} — ${escapeHtml(e.title)}</option>`).join("");
+}
+$("metisDatePick").onchange = () => {
+  const ev = metisDateEvents.find((e) => String(e.id) === $("metisDatePick").value);
+  $("metisDatePick").value = "";
+  if (!ev) return;
+  openBrief(null);
+  $("brDate").value = ev.date;
+  $("metisEditor").dataset.shootEvent = ev.id;
+  if (ev.time) $("brStart").value = ev.time.slice(0, 5);
+};
+
 // ══════════ RÔLE (depuis la session) ══════════
 let currentRole = "classic";
 let currentUserId = null;
@@ -399,16 +532,28 @@ async function refreshCrm() {
     return `<div class="crm-row"><div style="flex:1;min-width:0"><div class="crm-to">${escapeHtml(e.to_name || e.to_email)}</div><div class="crm-sub">${escapeHtml(e.subject || "")}</div><div class="crm-meta">${escapeHtml(e.to_email)} · ${when}${e.sent_by_name ? " · " + escapeHtml(e.sent_by_name) : ""}</div></div><span class="crm-open ${opened ? "yes" : "no"}">${info}</span></div>`;
   }).join("") : '<div class="rb-empty">Aucun mail envoyé.</div>';
 }
+// Connexions (dans le profil)
+async function refreshConnections() {
+  const st = await window.olympus.irisStatus();
+  const dot = $("connGmailDot"), status = $("connGmailStatus"), btn = $("connGmailBtn"), dc = $("gmDisconnect");
+  if (st.connected) { dot.className = "conn-dot on"; status.textContent = "connecté · " + st.email; btn.textContent = "Gérer"; if (dc) dc.style.display = ""; }
+  else { dot.className = "conn-dot off"; status.textContent = "non connecté"; btn.textContent = "Connecter"; if (dc) dc.style.display = "none"; }
+}
+$("connGmailBtn").onclick = async () => {
+  const f = $("gmailForm"); const show = f.style.display === "none"; f.style.display = show ? "" : "none";
+  if (show) { const st = await window.olympus.irisStatus(); if (st.email) $("gmEmail").value = st.email; }
+};
 $("gmConnectBtn").onclick = async () => {
   const email = $("gmEmail").value.trim(), pass = $("gmPass").value.trim(), msg = $("gmMsg"), btn = $("gmConnectBtn");
   if (!email || !pass) { msg.className = "msg err"; msg.textContent = "Email et mot de passe requis."; return; }
   btn.disabled = true; msg.className = "msg"; msg.textContent = "Vérification…";
   const r = await window.olympus.irisConnect(email, pass);
   btn.disabled = false;
-  if (r.ok) { $("gmPass").value = ""; msg.textContent = ""; refreshIris(); }
+  if (r.ok) { $("gmPass").value = ""; msg.className = "msg ok"; msg.textContent = "✅ Gmail connecté."; $("gmailForm").style.display = "none"; refreshConnections(); refreshIris(); }
   else { msg.className = "msg err"; msg.textContent = r.error; }
 };
-$("gmDisconnect").onclick = async () => { await window.olympus.irisDisconnect(); refreshIris(); };
+$("gmDisconnect").onclick = async () => { await window.olympus.irisDisconnect(); refreshConnections(); refreshIris(); };
+$("irisGoProfile").onclick = () => $("profileCard").click();
 $("mailSendBtn").onclick = async () => {
   const d = { to: $("mailTo").value.trim(), toName: $("mailToName").value.trim(), subject: $("mailSubject").value.trim(), body: $("mailBody").value.trim() };
   const msg = $("mailMsg"), btn = $("mailSendBtn");
@@ -460,7 +605,7 @@ function enterHub(user) {
   $("profRole").textContent = user.role === "super_admin" ? "Super admin — accès complet + gestion des membres." : "Membre — accès aux apps de l'équipe.";
   $("profAvatar").textContent = initial;
   applyRole();
-  refreshLocks(); refreshEnv(); refreshTitan(); startChat(); renderChronos(); startPresence(); refreshIris(); refreshClaude();
+  refreshLocks(); refreshEnv(); refreshTitan(); startChat(); renderChronos(); startPresence(); refreshIris(); refreshClaude(); refreshConnections();
   if (currentRole === "super_admin") refreshMembers();
   goTo("hermes");
 }
