@@ -288,10 +288,14 @@ ipcMain.handle("titan:install", async () => {
   for (let i = 0; i < repos.length; i++) {
     const name = repos[i].split("/").pop();
     const dest = join(ws, name);
-    send("Clonage de " + name + "…", 12 + Math.round((i / repos.length) * 33));
+    const pct = 12 + Math.round((i / repos.length) * 33);
     if (!existsSync(dest)) {
+      send("Clonage de " + name + "…", pct);
       try { await shRun(`gh repo clone ${repos[i]} '${dest}'`); }
       catch (e) { return { ok: false, error: "Clone de " + name + " échoué : " + e.message }; }
+    } else {
+      send("Mise à jour de " + name + "…", pct);
+      try { await shRun(`git -C '${dest}' pull --ff-only`); } catch {}
     }
   }
 
@@ -345,6 +349,163 @@ ${list}
 });
 
 ipcMain.handle("open-external", (_e, url) => shell.openExternal(url));
+
+// ══════════ AUTHENTIFICATION + MEMBRES (Supabase Auth) ══════════
+const AUTH_BASE = PEG.supabase_url.replace(/\/$/, "");
+const AUTH_ANON = PEG.supabase_anon_key;
+
+// Clé service (opérations admin) — lue depuis la clé d'équipe Pegasus locale, jamais embarquée.
+function serviceKey() {
+  try {
+    const tk = readFileSync(join(homedir(), ".pegasus", "team-key"), "utf8").trim();
+    return JSON.parse(Buffer.from(tk, "base64").toString("utf8")).supabase_service_key || null;
+  } catch { return null; }
+}
+const svcHeaders = () => { const k = serviceKey(); return k ? { apikey: k, Authorization: `Bearer ${k}`, "Content-Type": "application/json" } : null; };
+
+// Session persistante (jeton) — fichier local protégé.
+function sessionPath() { return join(app.getPath("userData"), "olympus-session.json"); }
+function loadSession() { try { return JSON.parse(readFileSync(sessionPath(), "utf8")); } catch { return null; } }
+function saveSession(s) { try { writeFileSync(sessionPath(), JSON.stringify(s), { mode: 0o600 }); } catch {} }
+function clearSession() { try { writeFileSync(sessionPath(), "{}", { mode: 0o600 }); } catch {} }
+
+async function listUsers() {
+  const h = svcHeaders(); if (!h) return null;
+  const r = await fetch(`${AUTH_BASE}/auth/v1/admin/users?per_page=200`, { headers: h });
+  if (!r.ok) return null;
+  return (await r.json()).users || [];
+}
+
+ipcMain.handle("auth:session", () => {
+  const s = loadSession();
+  if (!s || !s.user) return null;
+  return { user: s.user, mustReset: !!s.mustReset };
+});
+
+ipcMain.handle("auth:login", async (_e, email, password) => {
+  email = String(email || "").trim().toLowerCase();
+  if (!email || !password) return { ok: false, error: "Email et mot de passe requis." };
+  let r;
+  try {
+    r = await fetch(`${AUTH_BASE}/auth/v1/token?grant_type=password`, {
+      method: "POST", headers: { apikey: AUTH_ANON, "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+  } catch (e) { return { ok: false, error: "Pas de connexion internet ? " + e.message }; }
+  const j = await r.json();
+  if (!r.ok || !j.access_token) return { ok: false, error: j.error_description || j.msg || "Email ou mot de passe incorrect." };
+  const m = j.user?.user_metadata || {};
+  const user = { id: j.user.id, email: j.user.email, first_name: m.first_name || "", last_name: m.last_name || "", role: m.role || "classic" };
+  saveSession({ user, mustReset: !!m.must_reset_password, access_token: j.access_token, refresh_token: j.refresh_token });
+  return { ok: true, user, mustReset: !!m.must_reset_password };
+});
+
+ipcMain.handle("auth:setPassword", async (_e, newPassword) => {
+  if (!newPassword || String(newPassword).length < 8) return { ok: false, error: "Mot de passe : 8 caractères minimum." };
+  const s = loadSession();
+  if (!s?.access_token) return { ok: false, error: "Session expirée, reconnecte-toi." };
+  let r;
+  try {
+    r = await fetch(`${AUTH_BASE}/auth/v1/user`, {
+      method: "PUT", headers: { apikey: AUTH_ANON, Authorization: `Bearer ${s.access_token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ password: newPassword, data: { must_reset_password: false } }),
+    });
+  } catch (e) { return { ok: false, error: e.message }; }
+  if (!r.ok) { const j = await r.json().catch(() => ({})); return { ok: false, error: j.msg || j.error_description || "Échec." }; }
+  s.mustReset = false; saveSession(s);
+  return { ok: true };
+});
+
+ipcMain.handle("auth:logout", () => { clearSession(); return { ok: true }; });
+
+// Bootstrap possible ? (aucun super admin encore)
+ipcMain.handle("auth:needsBootstrap", async () => {
+  const users = await listUsers();
+  if (users === null) return { possible: false, reason: "no-key" };
+  return { possible: !users.some((u) => u.user_metadata?.role === "super_admin") };
+});
+
+// Créer le premier super admin (uniquement si aucun n'existe)
+ipcMain.handle("auth:bootstrap", async (_e, d) => {
+  const h = svcHeaders();
+  if (!h) return { ok: false, error: "Clé admin absente. Installe d'abord Pegasus (clé d'équipe)." };
+  const users = await listUsers();
+  if (users && users.some((u) => u.user_metadata?.role === "super_admin")) return { ok: false, error: "Un super admin existe déjà. Demande-lui de créer ton compte." };
+  const { email, password, first_name, last_name } = d || {};
+  if (!email || !password || !first_name || !last_name) return { ok: false, error: "Tous les champs sont requis." };
+  if (String(password).length < 8) return { ok: false, error: "Mot de passe : 8 caractères minimum." };
+  const r = await fetch(`${AUTH_BASE}/auth/v1/admin/users`, {
+    method: "POST", headers: h,
+    body: JSON.stringify({ email: String(email).trim().toLowerCase(), password, email_confirm: true, user_metadata: { first_name, last_name, role: "super_admin", must_reset_password: false } }),
+  });
+  const j = await r.json();
+  if (!r.ok || !j.id) return { ok: false, error: j.msg || j.error_description || "Création échouée." };
+  return { ok: true };
+});
+
+// ── Membres (super admin)
+ipcMain.handle("members:list", async () => {
+  const users = await listUsers();
+  if (users === null) return { ok: false, error: "Clé admin absente (installe Pegasus)." };
+  const members = users.map((u) => ({
+    id: u.id, email: u.email,
+    first_name: u.user_metadata?.first_name || "", last_name: u.user_metadata?.last_name || "",
+    role: u.user_metadata?.role || "classic", last_sign_in: u.last_sign_in_at || null,
+  }));
+  return { ok: true, members };
+});
+
+ipcMain.handle("members:create", async (_e, d) => {
+  const h = svcHeaders();
+  if (!h) return { ok: false, error: "Clé admin absente (installe Pegasus)." };
+  const { email, password, first_name, last_name, role } = d || {};
+  if (!email || !password || !first_name || !last_name) return { ok: false, error: "Tous les champs sont requis." };
+  if (String(password).length < 8) return { ok: false, error: "Mot de passe temporaire : 8 caractères minimum." };
+  const r = await fetch(`${AUTH_BASE}/auth/v1/admin/users`, {
+    method: "POST", headers: h,
+    body: JSON.stringify({ email: String(email).trim().toLowerCase(), password, email_confirm: true, user_metadata: { first_name, last_name, role: role === "super_admin" ? "super_admin" : "classic", must_reset_password: true } }),
+  });
+  const j = await r.json();
+  if (!r.ok || !j.id) return { ok: false, error: j.msg || j.error_description || "Création échouée (email déjà utilisé ?)." };
+  return { ok: true };
+});
+
+async function getUserMeta(id) {
+  const h = svcHeaders(); if (!h) return null;
+  const r = await fetch(`${AUTH_BASE}/auth/v1/admin/users/${id}`, { headers: h });
+  if (!r.ok) return null;
+  return (await r.json()).user_metadata || {};
+}
+
+ipcMain.handle("members:delete", async (_e, id) => {
+  const h = svcHeaders(); if (!h) return { ok: false, error: "Clé admin absente." };
+  const r = await fetch(`${AUTH_BASE}/auth/v1/admin/users/${id}`, { method: "DELETE", headers: h });
+  if (!r.ok) return { ok: false, error: "Suppression échouée." };
+  return { ok: true };
+});
+
+ipcMain.handle("members:resetPassword", async (_e, id) => {
+  const h = svcHeaders(); if (!h) return { ok: false, error: "Clé admin absente." };
+  const meta = await getUserMeta(id); if (!meta) return { ok: false, error: "Membre introuvable." };
+  const temp = "Orphic-" + Math.random().toString(36).slice(2, 8).toUpperCase() + "!";
+  const r = await fetch(`${AUTH_BASE}/auth/v1/admin/users/${id}`, {
+    method: "PUT", headers: h,
+    body: JSON.stringify({ password: temp, user_metadata: { ...meta, must_reset_password: true } }),
+  });
+  if (!r.ok) { const j = await r.json().catch(() => ({})); return { ok: false, error: j.msg || "Échec." }; }
+  return { ok: true, tempPassword: temp };
+});
+
+ipcMain.handle("members:setRole", async (_e, id, role) => {
+  const h = svcHeaders(); if (!h) return { ok: false, error: "Clé admin absente." };
+  const meta = await getUserMeta(id); if (!meta) return { ok: false, error: "Membre introuvable." };
+  const r = await fetch(`${AUTH_BASE}/auth/v1/admin/users/${id}`, {
+    method: "PUT", headers: h,
+    body: JSON.stringify({ user_metadata: { ...meta, role: role === "super_admin" ? "super_admin" : "classic" } }),
+  });
+  if (!r.ok) return { ok: false, error: "Échec." };
+  return { ok: true };
+});
 
 app.whenReady().then(createWindow);
 app.on("window-all-closed", () => app.quit());

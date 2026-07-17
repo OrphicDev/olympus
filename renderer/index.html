@@ -22,6 +22,7 @@
   .nav-item{display:flex;align-items:center;gap:11px;padding:9px 12px;border-radius:10px;cursor:pointer;color:var(--muted);font-size:14px;font-weight:500;transition:background .12s,color .12s;-webkit-app-region:no-drag;}
   .nav-item .ic{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;font-size:15px;background:var(--card2);flex-shrink:0;}
   .nav-item .lbl{flex:1;}
+  .nav-item .lbl small{display:block;font-size:10.5px;color:var(--dim);font-weight:400;line-height:1.15;margin-top:1px;}
   .nav-item .lock{font-size:11px;opacity:.7;}
   .nav-item:hover:not(.locked){background:var(--card);color:var(--txt);}
   .nav-item.active{background:linear-gradient(90deg,rgba(139,99,255,.16),rgba(139,99,255,.04));color:var(--txt);}
@@ -73,6 +74,33 @@
   .zprog .bar{height:7px;border-radius:6px;background:var(--bg);overflow:hidden;border:1px solid var(--line);}
   .zprog .bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#ff9a5a,#c2410c);transition:width .2s;}
   .ztext{font-size:12px;color:var(--muted);margin-top:6px;}
+
+  /* ── Auth ── */
+  .hidden{display:none!important;}
+  #auth{height:100vh;display:flex;align-items:center;justify-content:center;background:radial-gradient(130% 100% at 50% -20%,#1b2033 0%,var(--bg) 60%);-webkit-app-region:drag;}
+  .auth-card{width:346px;text-align:center;-webkit-app-region:no-drag;}
+  .auth-brand{font-size:30px;letter-spacing:.16em;font-weight:300;}
+  .auth-brand b{font-weight:700;}
+  .auth-sub{color:var(--muted);font-size:13px;margin-top:6px;margin-bottom:26px;}
+  .auth-field{text-align:left;margin-bottom:11px;}
+  .auth-field label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px;}
+  .auth-input{width:100%;padding:12px 14px;border-radius:11px;background:var(--card);border:1px solid var(--line);color:var(--txt);font-size:15px;outline:none;}
+  .auth-input:focus{border-color:var(--accent2);}
+  select.auth-input{cursor:pointer;}
+  .auth-row2{display:flex;gap:10px;}
+  .auth-btn{width:100%;margin-top:8px;padding:12px;border:0;border-radius:11px;cursor:pointer;font-size:14.5px;font-weight:600;color:#fff;background:linear-gradient(180deg,var(--accent2),var(--accent3));}
+  .auth-btn:hover{filter:brightness(1.08);}
+  .auth-btn:disabled{opacity:.55;cursor:default;}
+  .auth-link{display:inline-block;margin-top:16px;color:var(--muted);font-size:12.5px;cursor:pointer;text-decoration:underline;}
+  .auth-link:hover{color:var(--txt);}
+  .auth-msg{margin-top:12px;font-size:13px;min-height:18px;}
+  .auth-msg.err{color:var(--err);}
+  .auth-msg.ok{color:var(--ok);}
+  .member-actions{display:flex;gap:6px;flex-shrink:0;}
+  .member-btn{padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:var(--card2);color:var(--muted);font-size:11.5px;font-weight:600;cursor:pointer;white-space:nowrap;}
+  .member-btn:hover{color:var(--txt);border-color:var(--line2);}
+  .member-btn.danger:hover{color:var(--err);border-color:var(--err);}
+  .member-self{font-size:11px;color:var(--dim);flex-shrink:0;}
   .spin{display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;border-radius:50%;animation:s .7s linear infinite;vertical-align:-2px;margin-right:6px;}
   @keyframes s{to{transform:rotate(360deg);}}
 
@@ -96,23 +124,60 @@
 </style>
 </head>
 <body>
-  <div id="hub">
+  <!-- ═══ AUTH ═══ -->
+  <div id="auth">
+    <!-- Connexion -->
+    <div class="auth-card" id="view-login">
+      <div class="auth-brand">OLYMP<b>US</b></div>
+      <div class="auth-sub">Connecte-toi à ton espace Orphic.</div>
+      <div class="auth-field"><label>Adresse e-mail</label><input class="auth-input" id="loginEmail" type="email" placeholder="prenom@orphic-agency.com" autocomplete="username"></div>
+      <div class="auth-field"><label>Mot de passe</label><input class="auth-input" id="loginPw" type="password" placeholder="••••••••" autocomplete="current-password"></div>
+      <button class="auth-btn" id="loginBtn">Se connecter</button>
+      <div class="auth-msg" id="loginMsg"></div>
+      <span class="auth-link hidden" id="bootstrapLink">Première installation ? Créer le compte super admin</span>
+    </div>
+    <!-- Première install : créer le super admin -->
+    <div class="auth-card hidden" id="view-bootstrap">
+      <div class="auth-brand">OLYMP<b>US</b></div>
+      <div class="auth-sub">Première installation — crée le compte super admin.</div>
+      <div class="auth-row2">
+        <div class="auth-field" style="flex:1"><label>Prénom</label><input class="auth-input" id="bsFirst"></div>
+        <div class="auth-field" style="flex:1"><label>Nom</label><input class="auth-input" id="bsLast"></div>
+      </div>
+      <div class="auth-field"><label>Adresse e-mail</label><input class="auth-input" id="bsEmail" type="email"></div>
+      <div class="auth-field"><label>Mot de passe</label><input class="auth-input" id="bsPw" type="password" placeholder="8 caractères min."></div>
+      <button class="auth-btn" id="bsBtn">Créer mon compte</button>
+      <div class="auth-msg" id="bsMsg"></div>
+      <span class="auth-link" id="bsBackLink">← Retour à la connexion</span>
+    </div>
+    <!-- Changement de mot de passe (1ʳᵉ connexion) -->
+    <div class="auth-card hidden" id="view-setpw">
+      <div class="auth-brand">OLYMP<b>US</b></div>
+      <div class="auth-sub">Choisis ton nouveau mot de passe.</div>
+      <div class="auth-field"><label>Nouveau mot de passe</label><input class="auth-input" id="spwNew" type="password" placeholder="8 caractères min."></div>
+      <div class="auth-field"><label>Confirme</label><input class="auth-input" id="spwConfirm" type="password"></div>
+      <button class="auth-btn" id="spwBtn">Enregistrer et continuer</button>
+      <div class="auth-msg" id="spwMsg"></div>
+    </div>
+  </div>
+
+  <div id="hub" class="hidden">
     <aside class="sidebar">
       <div class="side-brand">OLYMP<b>US</b></div>
-      <div class="nav-item active" data-page="library"><div class="ic">📚</div><span class="lbl">Bibliothèque</span></div>
+      <div class="nav-item active" data-page="library"><div class="ic">📚</div><span class="lbl">Alexandrie<small>bibliothèque</small></span></div>
       <div class="nav-label">Mes applications</div>
       <div class="nav-item locked" data-page="titan" data-app="titan" data-role="super_admin"><div class="ic ic-titan">🛠️</div><span class="lbl">Titan</span><span class="lock">🔒</span></div>
       <div class="nav-item locked" data-page="pegasus" data-app="pegasus"><div class="ic">🦄</div><span class="lbl">Pegasus</span><span class="lock">🔒</span></div>
       <div class="nav-item locked" data-page="zevs" data-app="zevs"><div class="ic">📸</div><span class="lbl">Zevs</span><span class="lock">🔒</span></div>
       <div class="nav-spacer"></div>
       <div class="nav-item" data-page="settings"><div class="ic">⚙️</div><span class="lbl">Réglages</span></div>
-      <div class="account"><div class="avatar">O</div><div class="who">Orphic Agency<br><small>connexion à venir</small></div></div>
+      <div class="account"><div class="avatar" id="accAvatar">O</div><div class="who" style="flex:1"><span id="accName">—</span><br><small id="accRole">—</small></div><span id="logoutBtn" title="Se déconnecter" style="cursor:pointer;color:var(--dim);font-size:16px;-webkit-app-region:no-drag;">⏻</span></div>
     </aside>
 
     <main class="content">
       <!-- ═══ BIBLIOTHÈQUE (store) ═══ -->
       <section class="page show" id="page-library">
-        <div class="page-head"><h1>Bibliothèque</h1><p>Télécharge et installe les applications d'Orphic.</p></div>
+        <div class="page-head"><h1>Alexandrie</h1><p>La bibliothèque — télécharge et installe les applications d'Orphic.</p></div>
         <div class="grid">
           <!-- Carte Pegasus -->
           <div class="card">
@@ -229,16 +294,28 @@
           <div class="app-icon" style="background:linear-gradient(145deg,#4b5563,#1f2937)">⚙️</div>
           <div><h1>Réglages</h1><div class="tag">Compte et environnement Olympus.</div></div>
         </div>
-        <div class="section">
-          <h3>Rôle — aperçu temporaire</h3>
-          <p class="desc" style="margin-bottom:12px;">Simule ton niveau pour tester le verrouillage de Titan. Sera remplacé par la vraie connexion (email / Google + rôle défini côté serveur).</p>
-          <div class="act" style="margin-top:0;">
-            <button class="btn sec" id="roleClassic">Utilisateur classic</button>
-            <button class="btn sec" id="roleAdmin">Super admin</button>
+        <div class="section" id="membersSection" style="display:none;">
+          <h3>Membres — super admin</h3>
+          <p class="desc" style="margin-bottom:14px;">Crée un membre : il recevra un mot de passe temporaire à changer à sa 1ʳᵉ connexion.</p>
+          <div style="max-width:540px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;">
+            <div class="auth-row2">
+              <div class="auth-field" style="flex:1"><label>Prénom</label><input class="auth-input" id="mFirst"></div>
+              <div class="auth-field" style="flex:1"><label>Nom</label><input class="auth-input" id="mLast"></div>
+            </div>
+            <div class="auth-field"><label>Adresse e-mail</label><input class="auth-input" id="mEmail" type="email" placeholder="prenom@orphic-agency.com"></div>
+            <div class="auth-row2">
+              <div class="auth-field" style="flex:1"><label>Mot de passe temporaire</label><input class="auth-input" id="mPw" placeholder="8 caractères min."></div>
+              <div class="auth-field" style="width:160px"><label>Rôle</label>
+                <select class="auth-input" id="mRole"><option value="classic">Classic</option><option value="super_admin">Super admin</option></select>
+              </div>
+            </div>
+            <button class="btn" id="mCreateBtn" style="margin-top:6px;">Créer le membre</button>
+            <div class="msg" id="mMsg"></div>
           </div>
-          <div class="msg" id="roleMsg"></div>
+          <h3 style="margin-top:26px;">Membres existants</h3>
+          <div id="membersList" class="env" style="max-width:640px;"></div>
         </div>
-        <div class="section"><h3>Version</h3><p class="desc">Olympus 0.1.0 — connexion par compte (email / Google) à venir.</p></div>
+        <div class="section"><h3>Version</h3><p class="desc">Olympus 0.1.0 — connexion par compte email + mot de passe.</p></div>
       </section>
     </main>
   </div>

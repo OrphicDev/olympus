@@ -17,6 +17,18 @@ contextBridge.exposeInMainWorld("olympus", {
   installTitan: () => ipcRenderer.invoke("titan:install"),
   openTitan: () => ipcRenderer.invoke("titan:open"),
   onTitanProgress: (cb) => ipcRenderer.on("titan:progress", (_e, d) => cb(d)),
+  // Auth + membres
+  authSession: () => ipcRenderer.invoke("auth:session"),
+  authLogin: (email, password) => ipcRenderer.invoke("auth:login", email, password),
+  authSetPassword: (pw) => ipcRenderer.invoke("auth:setPassword", pw),
+  authLogout: () => ipcRenderer.invoke("auth:logout"),
+  authNeedsBootstrap: () => ipcRenderer.invoke("auth:needsBootstrap"),
+  authBootstrap: (d) => ipcRenderer.invoke("auth:bootstrap", d),
+  membersList: () => ipcRenderer.invoke("members:list"),
+  membersCreate: (d) => ipcRenderer.invoke("members:create", d),
+  membersDelete: (id) => ipcRenderer.invoke("members:delete", id),
+  membersResetPassword: (id) => ipcRenderer.invoke("members:resetPassword", id),
+  membersSetRole: (id, role) => ipcRenderer.invoke("members:setRole", id, role),
   // Divers
   openExternal: (url) => ipcRenderer.invoke("open-external", url),
 });
