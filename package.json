@@ -22,7 +22,8 @@
       "main.js",
       "preload.js",
       "app-config.json",
-      "renderer/**"
+      "renderer/**",
+      "olympus-mcp/**"
     ],
     "mac": {
       "category": "public.app-category.developer-tools",

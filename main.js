@@ -587,6 +587,22 @@ ipcMain.handle("crm:contacts", async () => {
   return r.ok ? { ok: true, contacts: await r.json() } : { ok: false, contacts: [] };
 });
 
+// ══════════ CONTRÔLE PAR CLAUDE CODE (serveur MCP one-clic) ══════════
+function mcpDest() { return join(homedir(), ".olympus", "mcp-server.mjs"); }
+ipcMain.handle("claude:status", () => ({ installed: existsSync(mcpDest()) }));
+ipcMain.handle("claude:install", async () => {
+  if (!(await has("claude"))) return { ok: false, error: "Claude Code introuvable (commande `claude`). Ouvre/installe Claude Code puis réessaie." };
+  const dst = mcpDest();
+  try {
+    mkdirSync(join(homedir(), ".olympus"), { recursive: true });
+    writeFileSync(dst, readFileSync(join(__dirname, "olympus-mcp", "server.mjs"), "utf8"));
+  } catch (e) { return { ok: false, error: "Écriture du serveur impossible : " + e.message }; }
+  try {
+    await shRun(`claude mcp remove -s user olympus 2>/dev/null; claude mcp add -s user olympus -- node '${dst}'`);
+  } catch (e) { return { ok: false, error: "Enregistrement dans Claude Code échoué : " + e.message }; }
+  return { ok: true };
+});
+
 app.whenReady().then(createWindow);
 app.on("window-all-closed", () => app.quit());
 app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });

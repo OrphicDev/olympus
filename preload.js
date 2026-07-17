@@ -47,6 +47,9 @@ contextBridge.exposeInMainWorld("olympus", {
   irisSend: (d) => ipcRenderer.invoke("iris:send", d),
   crmEmails: () => ipcRenderer.invoke("crm:emails"),
   crmContacts: () => ipcRenderer.invoke("crm:contacts"),
+  // Contrôle par Claude Code (MCP)
+  claudeStatus: () => ipcRenderer.invoke("claude:status"),
+  claudeInstall: () => ipcRenderer.invoke("claude:install"),
   // Divers
   openExternal: (url) => ipcRenderer.invoke("open-external", url),
 });

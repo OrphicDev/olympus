@@ -406,6 +406,21 @@ $("mailSendBtn").onclick = async () => {
 };
 document.querySelector('.nav-item[data-page="iris"]').addEventListener("click", refreshIris);
 
+// ══════════ CONTRÔLE PAR CLAUDE CODE ══════════
+async function refreshClaude() {
+  const s = await window.olympus.claudeStatus();
+  $("claudeInstallBtn").textContent = s.installed ? "Réinstaller le contrôle Claude Code" : "Activer le contrôle par Claude Code";
+}
+$("claudeInstallBtn").onclick = async () => {
+  const btn = $("claudeInstallBtn"), msg = $("claudeMsg");
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Installation…'; msg.className = "msg"; msg.textContent = "";
+  const r = await window.olympus.claudeInstall();
+  btn.disabled = false;
+  if (r.ok) { msg.className = "msg ok"; msg.innerHTML = "✅ Activé. Redémarre Claude Code, puis demande-lui par ex. « montre l'équipe Olympus » ou « poste un message dans Hermès »."; }
+  else { msg.className = "msg err"; msg.textContent = r.error; }
+  refreshClaude();
+};
+
 // ══════════ AUTH ══════════
 let pendingUser = null;
 
@@ -430,7 +445,7 @@ function enterHub(user) {
   $("profRole").textContent = user.role === "super_admin" ? "Super admin — accès complet + gestion des membres." : "Membre — accès aux apps de l'équipe.";
   $("profAvatar").textContent = initial;
   applyRole();
-  refreshLocks(); refreshEnv(); refreshTitan(); startChat(); renderChronos(); startPresence(); refreshIris();
+  refreshLocks(); refreshEnv(); refreshTitan(); startChat(); renderChronos(); startPresence(); refreshIris(); refreshClaude();
   if (currentRole === "super_admin") refreshMembers();
   goTo("hermes");
 }
