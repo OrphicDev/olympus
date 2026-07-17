@@ -236,6 +236,8 @@
   .code-box{background:transparent;border:none;padding:16px 0 0;}
   .cal-form{background:transparent;border:none;box-shadow:none;backdrop-filter:none;-webkit-backdrop-filter:none;padding:8px 0 0;}
   .account{background:transparent;border:none;backdrop-filter:none;-webkit-backdrop-filter:none;}
+  #profileCard{cursor:pointer;margin:2px -6px 8px;padding:10px 12px;border-radius:12px;transition:background .12s;}
+  #profileCard:hover{background:var(--card);}
   .env-row{background:transparent;border:none;padding:11px 2px;}
   .cal-cell{background:transparent;}
 
@@ -355,20 +357,20 @@
   <div id="hub" class="hidden">
     <aside class="sidebar">
       <div class="side-brand">OLYMP<b>US</b></div>
-      <div class="nav-item active" data-page="library"><div class="ic">📚</div><span class="lbl">Alexandrie<small>bibliothèque</small></span></div>
+      <div class="account" id="profileCard"><div class="avatar" id="accAvatar">O</div><div class="who" style="flex:1"><span id="accName">—</span><br><small id="accRole">—</small></div></div>
       <div class="nav-label">Espace de travail</div>
-      <div class="nav-item" data-page="hermes"><div class="ic">🪽</div><span class="lbl">Hermès<small>chat</small></span></div>
+      <div class="nav-item active" data-page="hermes"><div class="ic">🪽</div><span class="lbl">Hermès<small>chat</small></span></div>
       <div class="nav-item" data-page="chronos"><div class="ic">📅</div><span class="lbl">Chronos<small>calendrier</small></span></div>
       <div class="nav-item" data-page="iris"><div class="ic">✉️</div><span class="lbl">Iris<small>email · CRM</small></span></div>
       <div class="nav-item" data-page="argos"><div class="ic">👁️</div><span class="lbl">Argos<small>analytics</small></span></div>
       <div class="nav-item" data-page="atlas"><div class="ic">🗂️</div><span class="lbl">Atlas<small>drive</small></span></div>
+      <div class="nav-spacer"></div>
       <div class="nav-label">Mes applications</div>
-      <div class="nav-item locked" data-page="titan" data-app="titan" data-role="super_admin"><div class="ic ic-titan">🛠️</div><span class="lbl">Titan</span><span class="lock">🔒</span></div>
+      <div class="nav-item" data-page="library"><div class="ic">📚</div><span class="lbl">Alexandrie<small>bibliothèque</small></span></div>
       <div class="nav-item locked" data-page="pegasus" data-app="pegasus"><div class="ic">🦄</div><span class="lbl">Pegasus</span><span class="lock">🔒</span></div>
       <div class="nav-item locked" data-page="zevs" data-app="zevs"><div class="ic">📸</div><span class="lbl">Zevs</span><span class="lock">🔒</span></div>
-      <div class="nav-spacer"></div>
+      <div class="nav-item locked" data-page="titan" data-app="titan" data-role="super_admin"><div class="ic ic-titan">🛠️</div><span class="lbl">Titan</span><span class="lock">🔒</span></div>
       <div class="nav-item" data-page="settings"><div class="ic">⚙️</div><span class="lbl">Réglages</span></div>
-      <div class="account"><div class="avatar" id="accAvatar">O</div><div class="who" style="flex:1"><span id="accName">—</span><br><small id="accRole">—</small></div></div>
     </aside>
 
     <main class="content">
@@ -603,6 +605,16 @@
         </div>
       </section>
 
+      <!-- ═══ PROFIL ═══ -->
+      <section class="page" id="page-profile">
+        <div class="app-hero">
+          <div class="avatar" id="profAvatar" style="width:74px;height:74px;font-size:28px;border-radius:50%;">O</div>
+          <div><h1 id="profName">—</h1><div class="tag" id="profEmail">—</div></div>
+        </div>
+        <div class="section"><h3>Rôle</h3><p class="desc" id="profRole">—</p></div>
+        <div class="section"><h3>Compte</h3><button class="btn sec" id="logoutBtn">Se déconnecter</button></div>
+      </section>
+
       <!-- ═══ RÉGLAGES ═══ -->
       <section class="page" id="page-settings">
         <div class="app-hero">
@@ -656,7 +668,6 @@
 
     <div id="floatBar">
       <span id="themeToggle" class="float-btn" title="Thème clair / sombre">◐</span>
-      <span id="logoutBtn" class="float-btn" title="Se déconnecter">⏻</span>
     </div>
   </div>
   <script src="renderer.js"></script>

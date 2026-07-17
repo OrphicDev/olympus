@@ -20,6 +20,12 @@ function goTo(page) {
   const it = document.querySelector(`.nav-item[data-page="${page}"]`);
   if (it && !it.classList.contains("locked")) it.click();
 }
+// Clic sur le profil (en haut) → page profil
+$("profileCard").onclick = () => {
+  document.querySelectorAll(".nav-item").forEach((x) => x.classList.remove("active"));
+  document.querySelectorAll(".page").forEach((p) => p.classList.remove("show"));
+  $("page-profile").classList.add("show");
+};
 document.querySelectorAll("[data-ext]").forEach((b) => { b.onclick = () => window.olympus.openExternal(b.dataset.ext); });
 
 // ══════════ APPS : verrouillage (Pegasus / Zevs) ══════════
@@ -415,13 +421,18 @@ function enterHub(user) {
   $("auth").classList.add("hidden");
   $("hub").classList.remove("hidden");
   const name = ((user.first_name || "") + " " + (user.last_name || "")).trim() || user.email;
+  const initial = (user.first_name || user.email || "?").charAt(0).toUpperCase();
   $("accName").textContent = name;
   $("accRole").textContent = user.role === "super_admin" ? "super admin" : "membre";
-  $("accAvatar").textContent = (user.first_name || user.email || "?").charAt(0).toUpperCase();
+  $("accAvatar").textContent = initial;
+  $("profName").textContent = name;
+  $("profEmail").textContent = user.email || "";
+  $("profRole").textContent = user.role === "super_admin" ? "Super admin — accès complet + gestion des membres." : "Membre — accès aux apps de l'équipe.";
+  $("profAvatar").textContent = initial;
   applyRole();
   refreshLocks(); refreshEnv(); refreshTitan(); startChat(); renderChronos(); startPresence(); refreshIris();
   if (currentRole === "super_admin") refreshMembers();
-  goTo("library");
+  goTo("hermes");
 }
 
 // Connexion
