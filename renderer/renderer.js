@@ -14,6 +14,7 @@ document.querySelectorAll(".nav-item").forEach((it) => {
     it.classList.add("active");
     document.querySelectorAll(".page").forEach((p) => p.classList.remove("show"));
     $("page-" + it.dataset.page).classList.add("show");
+    $("hub").classList.toggle("with-rail", it.dataset.page === "chronos"); // roue + agenda : Chronos uniquement
   };
 });
 function goTo(page) {
@@ -25,6 +26,7 @@ $("profileCard").onclick = () => {
   document.querySelectorAll(".nav-item").forEach((x) => x.classList.remove("active"));
   document.querySelectorAll(".page").forEach((p) => p.classList.remove("show"));
   $("page-profile").classList.add("show");
+  $("hub").classList.remove("with-rail");
 };
 document.querySelectorAll("[data-ext]").forEach((b) => { b.onclick = () => window.olympus.openExternal(b.dataset.ext); });
 
@@ -123,138 +125,40 @@ async function refreshPegClients() {
 }
 document.querySelector('.nav-item[data-app="pegasus"]').addEventListener("click", refreshPegClients);
 
-// ══════════ MÉTIS (briefs) ══════════
-let metisBriefs = [];
-const STATUS_LABEL = { draft: "Brouillon", ready: "Prêt", done: "Terminé" };
-async function refreshMetis() {
-  const r = await window.olympus.metisList();
-  metisBriefs = r.ok ? r.briefs : [];
-  const list = $("briefsList");
-  list.innerHTML = metisBriefs.length ? metisBriefs.map((b) => {
-    const fmt = (d) => new Date(d + "T00:00").toLocaleDateString("fr-FR");
-    const meta = [b.client, b.shoot_date ? "Shoot " + fmt(b.shoot_date) : null, b.delivery_date ? "Rendu " + fmt(b.delivery_date) : null].filter(Boolean).join(" · ");
-    return `<div class="crm-row" data-brief="${b.id}" style="cursor:pointer"><div style="flex:1;min-width:0"><div class="crm-to">${escapeHtml(b.title)}</div><div class="crm-meta">${escapeHtml(meta || "—")}</div></div><span class="crm-open ${b.status === "done" ? "yes" : "no"}">${escapeHtml(STATUS_LABEL[b.status] || "")}</span></div>`;
-  }).join("") : '<div class="rb-empty">Aucun brief pour l\'instant.</div>';
-  populateMetisDatePick();
-}
-function showMetisList() { $("metisEditor").style.display = "none"; $("metisList").style.display = ""; }
-function openBrief(b) {
-  const g = (id, v) => ($(id).value = v || "");
-  const ed = $("metisEditor");
-  ed.dataset.id = b?.id || "";
-  ed.dataset.shootEvent = b?.shoot_event_id || "";
-  ed.dataset.deliveryEvent = b?.delivery_event_id || "";
-  g("brTitle", b?.title); g("brClient", b?.client); g("brDate", b?.shoot_date); g("brDelivery", b?.delivery_date);
-  g("brStart", b?.start_time); g("brEnd", b?.end_time);
-  $("brStatus").value = b?.status || "draft";
-  $("brType").value = b?.shoot_type || "photo";
-  renderParticipantChips(b?.participants);
-  g("brObjectives", b?.objectives); g("brMoodboard", b?.moodboard); g("brLocation", b?.location); g("brShotlist", b?.shotlist);
-  ed.dataset.folder = b?.id ? String(b.id) : ("new-" + Math.random().toString(36).slice(2, 10));
-  currentAttachments = Array.isArray(b?.attachments) ? b.attachments.slice() : [];
-  renderBrFiles();
-  populateExistingDates();
-  $("briefDelete").style.display = b?.id ? "" : "none";
-  $("briefMsg").textContent = "";
-  $("metisList").style.display = "none"; $("metisEditor").style.display = "";
-  $("brTitle").focus();
-}
-$("metisNewBtn").onclick = () => openBrief(null);
-$("briefBack").onclick = () => showMetisList();
-$("briefsList").onclick = (e) => { const row = e.target.closest("[data-brief]"); if (row) { const b = metisBriefs.find((x) => String(x.id) === row.dataset.brief); if (b) openBrief(b); } };
-$("briefSave").onclick = async () => {
-  const ed = $("metisEditor");
-  const b = {
-    id: ed.dataset.id || undefined,
-    shoot_event_id: ed.dataset.shootEvent ? Number(ed.dataset.shootEvent) : null,
-    delivery_event_id: ed.dataset.deliveryEvent ? Number(ed.dataset.deliveryEvent) : null,
-    title: $("brTitle").value.trim(), client: $("brClient").value.trim(),
-    shoot_date: $("brDate").value || null, delivery_date: $("brDelivery").value || null,
-    start_time: $("brStart").value || null, end_time: $("brEnd").value || null,
-    shoot_type: $("brType").value, participants: collectParticipants(), attachments: currentAttachments,
-    status: $("brStatus").value, objectives: $("brObjectives").value, moodboard: $("brMoodboard").value,
-    location: $("brLocation").value, shotlist: $("brShotlist").value,
-  };
-  const msg = $("briefMsg");
-  if (!b.title) { msg.className = "msg err"; msg.textContent = "Le titre est requis."; return; }
-  const btn = $("briefSave"); btn.disabled = true; btn.innerHTML = '<span class="spin"></span>…';
-  const r = await window.olympus.metisSave(b);
-  btn.disabled = false; btn.textContent = "Enregistrer";
-  if (r.ok) { await refreshMetis(); showMetisList(); } else { msg.className = "msg err"; msg.textContent = r.error; }
-};
-$("briefDelete").onclick = async () => {
-  const id = $("metisEditor").dataset.id; if (!id) return;
-  const r = await window.olympus.metisDelete(id);
-  if (r.ok) { await refreshMetis(); showMetisList(); }
-};
-document.querySelector('.nav-item[data-page="metis"]').addEventListener("click", () => { showMetisList(); refreshMetis(); });
-
-// Équipe (chips de membres)
-async function renderParticipantChips(selectedCsv) {
-  const selected = new Set((selectedCsv || "").split(",").map((s) => s.trim()).filter(Boolean));
+// ══════════ CHRONOS — support de la modal (équipe · fichiers · lieu) ══════════
+async function renderParticipantChips(selected) {
+  const set = new Set((Array.isArray(selected) ? selected : (selected || "").split(",")).map((s) => String(s).trim()).filter(Boolean));
   const p = await window.olympus.presenceOnline();
-  const names = [...new Set((p.users || []).map((u) => u.name).filter(Boolean))];
-  const box = $("brParticipants");
+  const names = [...new Set((p.users || []).map((u) => u.name).filter(Boolean).concat(FAKE_MEMBERS.map((f) => f.name)))];
+  const box = $("evParticipants");
   box.innerHTML = names.length
-    ? names.map((n) => `<span class="chip-toggle${selected.has(n) ? " selected" : ""}" data-name="${escapeHtml(n)}">${escapeHtml(n)}</span>`).join("")
+    ? names.map((n) => `<span class="chip-toggle${set.has(n) ? " selected" : ""}" data-name="${escapeHtml(n)}">${escapeHtml(n)}</span>`).join("")
     : '<div class="rb-empty">Les membres apparaissent après leur 1re connexion.</div>';
 }
-function collectParticipants() { return [...$("brParticipants").querySelectorAll(".chip-toggle.selected")].map((c) => c.dataset.name).join(", "); }
-$("brParticipants").onclick = (e) => { const c = e.target.closest(".chip-toggle"); if (c) c.classList.toggle("selected"); };
+function collectParticipants() { return [...$("evParticipants").querySelectorAll(".chip-toggle.selected")].map((c) => c.dataset.name); }
+$("evParticipants").onclick = (e) => { const c = e.target.closest(".chip-toggle"); if (c) c.classList.toggle("selected"); };
 
-// Références & moodboard (upload de fichiers)
 let currentAttachments = [];
-function renderBrFiles() {
-  const box = $("brFiles");
+function renderEvFiles() {
+  const box = $("evFiles");
   box.innerHTML = currentAttachments.length
     ? currentAttachments.map((f, i) => `<div class="crm-row" style="padding:8px 0"><div style="flex:1;min-width:0"><span class="link" data-file="${i}">${escapeHtml(f.name)}</span></div><span class="member-btn danger" data-rmfile="${i}">Retirer</span></div>`).join("")
     : '<div class="rb-empty">Aucun fichier.</div>';
 }
-$("brFiles").onclick = (e) => {
+$("evFiles").onclick = (e) => {
   const open = e.target.closest("[data-file]"); if (open) { const f = currentAttachments[+open.dataset.file]; if (f) window.olympus.openExternal(f.url); return; }
-  const rm = e.target.closest("[data-rmfile]"); if (rm) { currentAttachments.splice(+rm.dataset.rmfile, 1); renderBrFiles(); }
+  const rm = e.target.closest("[data-rmfile]"); if (rm) { currentAttachments.splice(+rm.dataset.rmfile, 1); renderEvFiles(); }
 };
-$("brUploadBtn").onclick = async () => {
-  const folder = $("metisEditor").dataset.folder || "misc";
-  const btn = $("brUploadBtn"); btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Envoi…';
-  const r = await window.olympus.metisUpload(folder);
+$("evUploadBtn").onclick = async () => {
+  const folder = $("eventModal").dataset.folder || "misc";
+  const btn = $("evUploadBtn"); btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Envoi…';
+  const r = await window.olympus.chronosUpload(folder);
   btn.disabled = false; btn.textContent = "+ Ajouter des fichiers";
-  if (r.ok && r.files.length) { currentAttachments.push(...r.files); renderBrFiles(); }
+  if (r.ok && r.files.length) { currentAttachments.push(...r.files); renderEvFiles(); }
 };
-
-// Dates déjà au calendrier
-async function populateExistingDates() {
-  const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  const now = new Date(), to = new Date(Date.now() + 120 * 864e5);
-  const r = await window.olympus.chronosList(iso(now), iso(to));
-  const evs = r.ok ? r.events : [];
-  $("brExistingDate").innerHTML = '<option value="">— dates existantes dans Chronos —</option>' +
-    evs.map((e) => `<option value="${e.date}">${new Date(e.date + "T00:00").toLocaleDateString("fr-FR")} — ${escapeHtml(e.title)}</option>`).join("");
-}
-$("brExistingDate").onchange = () => { if ($("brExistingDate").value) $("brDate").value = $("brExistingDate").value; };
-
-// Lieu → Google Maps
-$("brMapsLink").onclick = () => { const a = $("brLocation").value.trim(); if (a) window.olympus.openExternal("https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(a)); };
-
-// Liste des dates du calendrier (écran des briefs) → créer un brief pour une date existante
-let metisDateEvents = [];
-async function populateMetisDatePick() {
-  const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  const now = new Date(), to = new Date(Date.now() + 120 * 864e5);
-  const r = await window.olympus.chronosList(iso(now), iso(to));
-  metisDateEvents = r.ok ? r.events : [];
-  $("metisDatePick").innerHTML = '<option value="">…ou depuis une date du calendrier</option>' +
-    metisDateEvents.map((e) => `<option value="${e.id}">${new Date(e.date + "T00:00").toLocaleDateString("fr-FR")} — ${escapeHtml(e.title)}</option>`).join("");
-}
-$("metisDatePick").onchange = () => {
-  const ev = metisDateEvents.find((e) => String(e.id) === $("metisDatePick").value);
-  $("metisDatePick").value = "";
-  if (!ev) return;
-  openBrief(null);
-  $("brDate").value = ev.date;
-  $("metisEditor").dataset.shootEvent = ev.id;
-  if (ev.time) $("brStart").value = ev.time.slice(0, 5);
-};
+$("evMapsLink").onclick = () => { const a = $("evLocation").value.trim(); if (a) window.olympus.openExternal("https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(a)); };
+$("evPerso").onclick = () => $("evPerso").classList.toggle("on");
+$("evBusy").onclick = () => $("evBusy").classList.toggle("on");
 
 // ══════════ RÔLE (depuis la session) ══════════
 let currentRole = "classic";
@@ -353,11 +257,108 @@ $("mCreateBtn").onclick = async () => {
   refreshMembers();
 };
 
-// ══════════ HERMÈS (chat) ══════════
+// ══════════ HERMÈS (conversations + chat) ══════════
+// Membres de démo (en attendant les vrais comptes) — fusionnés dans l'équipe, les chips, les partages.
+const FAKE_MEMBERS = [
+  { name: "Lucas Dubois", online: true },
+  { name: "Astrid Berges", online: false },
+];
+const initialsOf = (n) => String(n || "?").split(/\s+/).map((w) => w.charAt(0)).slice(0, 2).join("").toUpperCase();
 let chatLastId = 0, chatTimer = null;
 function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 function fmtTime(iso) { try { return new Date(iso).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }); } catch { return ""; } }
+
+// Barres d'onde d'un vocal (pseudo-aléatoires mais stables par seed)
+const vBars = (seed, n = 26) => [...Array(n)].map((_, i) => `<i style="height:${(6 + Math.abs(Math.sin(seed * 3.7 + i * 1.31)) * 17).toFixed(0)}px;--i:${i}"></i>`).join("");
+const phGrad = (i) => ["linear-gradient(135deg,#4a4a52,#232328)", "linear-gradient(135deg,#5c5c66,#2c2c31)", "linear-gradient(160deg,#3b3b42,#191920)", "linear-gradient(120deg,#6a6a74,#35353c)"][i % 4];
+
+// Conversations de démo (le canal Équipe est le vrai chat branché sur Supabase)
+let hmConvs = [
+  { id: "team", kind: "channel", name: "Équipe Orphic", sub: "Canal général — toute l'équipe", real: true, unread: 0, last: "", time: "" },
+  { id: "dm-lucas", kind: "dm", name: "Lucas Dubois", online: true, unread: 2, msgs: [
+    { d: "Hier", a: "Lucas Dubois", t: "14:12", kind: "text", body: "J'ai fini le montage du teaser, tu veux le voir ?" },
+    { d: "Hier", mine: true, t: "14:20", kind: "text", body: "Grave ! Envoie 🔥" },
+    { d: "Hier", a: "Lucas Dubois", t: "14:21", kind: "file", name: "teaser_v2.mp4", size: "148 Mo", icon: "🎬" },
+    { d: "Aujourd'hui", a: "Lucas Dubois", t: "09:02", kind: "voice", dur: "0:42", seed: 3 },
+    { d: "Aujourd'hui", a: "Lucas Dubois", t: "09:03", kind: "text", body: "Dis-moi ce que t'en penses avant le call de 10h" },
+  ] },
+  { id: "dm-astrid", kind: "dm", name: "Astrid Berges", online: false, unread: 0, msgs: [
+    { d: "Mardi", a: "Astrid Berges", t: "11:35", kind: "image", cap: "Moodboard — Maison Solène", g: 0 },
+    { d: "Mardi", mine: true, t: "11:48", kind: "text", body: "Canon. On part là-dessus pour la DA." },
+    { d: "Mardi", a: "Astrid Berges", t: "12:02", kind: "voice", dur: "1:17", seed: 8 },
+    { d: "Mardi", a: "Astrid Berges", t: "12:03", kind: "text", body: "Parfait, je prépare la shotlist ce soir ✨" },
+  ] },
+  { id: "g-solene", kind: "group", name: "Prod — Maison Solène", members: ["Sacha", "Lucas Dubois", "Astrid Berges"], unread: 1, msgs: [
+    { d: "Mercredi", a: "Astrid Berges", t: "10:04", kind: "text", body: "Le client a validé les 3 axes, on lock la date de shoot ?" },
+    { d: "Mercredi", mine: true, t: "10:11", kind: "text", body: "Oui — samedi 18, 9h au studio de Cannes. Je crée l'événement dans Chronos." },
+    { d: "Mercredi", a: "Lucas Dubois", t: "10:12", kind: "text", body: "Je réserve le matos lumière 👌" },
+    { d: "Aujourd'hui", a: "Lucas Dubois", t: "08:41", kind: "image", cap: "Repérage studio — fond 2.4m", g: 1 },
+    { d: "Aujourd'hui", a: "Astrid Berges", t: "08:55", kind: "file", name: "shotlist_solene.pdf", size: "1,2 Mo", icon: "📄" },
+  ] },
+  { id: "g-emotions", kind: "group", name: "Shoot Émotions Arts", members: ["Sacha", "Lucas Dubois"], unread: 0, msgs: [
+    { d: "Lundi", mine: true, t: "17:32", kind: "text", body: "Les rushs sont sur Atlas, dossier Shoots 2026 / Émotions Arts." },
+    { d: "Lundi", a: "Lucas Dubois", t: "17:40", kind: "text", body: "Reçu. Je fais la sélection demain matin et je pousse dans Apollon." },
+    { d: "Lundi", a: "Lucas Dubois", t: "17:41", kind: "voice", dur: "0:23", seed: 5 },
+  ] },
+];
+let hmCur = null;
+
+function convLast(c) {
+  if (c.real) return c.last || "Dis bonjour à l'équipe…";
+  const m = c.msgs[c.msgs.length - 1];
+  if (!m) return "";
+  const p = m.mine ? "Toi : " : (c.kind === "group" ? (m.a || "").split(" ")[0] + " : " : "");
+  return m.kind === "text" ? p + m.body : m.kind === "voice" ? p + "🎙 Message vocal" : m.kind === "image" ? p + "📷 Photo" : p + "📎 " + m.name;
+}
+function convTime(c) { if (c.real) return c.time || ""; const m = c.msgs[c.msgs.length - 1]; return m ? m.t : ""; }
+function convAvatar(c) {
+  const st = c.kind === "dm" ? `<span class="st ${c.online ? "on" : "off"}"></span>` : "";
+  const label = c.kind === "channel" ? "◎" : initialsOf(c.name);
+  return `<div class="hm-av">${label}${st}</div>`;
+}
+function convRow(c) {
+  const un = c.unread ? `<span class="hm-unread">${c.unread}</span>` : "";
+  return `<div class="hm-conv${hmCur && hmCur.id === c.id ? " active" : ""}" data-conv="${c.id}">${convAvatar(c)}<div class="hm-cinfo"><div class="hm-cname">${escapeHtml(c.name)}</div><div class="hm-clast">${escapeHtml(convLast(c))}</div></div><div class="hm-cmeta"><span class="hm-ctime">${convTime(c)}</span>${un}</div></div>`;
+}
+function renderConvList() {
+  const q = ($("hmSearch").value || "").toLowerCase();
+  const match = (c) => !q || c.name.toLowerCase().includes(q);
+  $("hmChannels").innerHTML = hmConvs.filter((c) => c.kind === "channel" && match(c)).map(convRow).join("");
+  $("hmDms").innerHTML = hmConvs.filter((c) => c.kind === "dm" && match(c)).map(convRow).join("");
+  $("hmGroups").innerHTML = hmConvs.filter((c) => c.kind === "group" && match(c)).map(convRow).join("");
+}
+function msgHtml(m, conv) {
+  const mine = !!m.mine;
+  const author = !mine && conv.kind !== "dm" ? `<div class="author">${escapeHtml(m.a || "?")}</div>` : "";
+  let inner = "";
+  if (m.kind === "voice") inner = `<div class="vmsg" data-voice><button class="vplay">▶</button><div class="vbars">${vBars(m.seed || 1)}</div><span class="vdur">${m.dur}</span></div>`;
+  else if (m.kind === "image") inner = `<div class="imsg"><div class="ph" style="background:${phGrad(m.g || 0)}">📷</div><div class="cap">${escapeHtml(m.cap || "")}</div></div>`;
+  else if (m.kind === "file") inner = `<div class="fmsg"><div class="ficon">${m.icon || "📄"}</div><div><div class="fname">${escapeHtml(m.name)}</div><div class="fsize">${m.size || ""}</div></div><span class="fdl" title="Télécharger">⤓</span></div>`;
+  else inner = `<div>${escapeHtml(m.body)}</div>`;
+  return `<div class="bubble ${mine ? "me" : "them"}">${author}${inner}<div class="time">${m.t || ""}</div></div>`;
+}
+function renderFakeMsgs(conv) {
+  const box = $("chatMessages");
+  let html = "", day = null;
+  for (const m of conv.msgs) {
+    if (m.d && m.d !== day) { day = m.d; html += `<div class="hm-day">${day}</div>`; }
+    html += msgHtml(m, conv);
+  }
+  box.innerHTML = html;
+  box.scrollTop = box.scrollHeight;
+}
+function openConv(id) {
+  const c = hmConvs.find((x) => x.id === id); if (!c) return;
+  hmCur = c; c.unread = 0;
+  $("hmHeadAv").textContent = c.kind === "channel" ? "◎" : initialsOf(c.name);
+  $("hmHeadName").textContent = c.name;
+  $("hmHeadSub").textContent = c.kind === "channel" ? c.sub : c.kind === "group" ? c.members.join(" · ") : (c.online ? "en ligne" : "hors ligne");
+  if (c.real) { $("chatMessages").innerHTML = ""; chatLastId = 0; chatTick(); }
+  else renderFakeMsgs(c);
+  renderConvList();
+}
 function appendMessage(m) {
+  if (!hmCur || !hmCur.real) return;
   const box = $("chatMessages");
   const mine = m.user_id === currentUserId;
   const near = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
@@ -368,28 +369,207 @@ function appendMessage(m) {
   if (mine || near) box.scrollTop = box.scrollHeight;
 }
 async function chatTick() {
+  if (!hmCur || !hmCur.real) return;
   const r = await window.olympus.chatList(chatLastId);
   if (r.ok && r.messages && r.messages.length) {
     r.messages.forEach(appendMessage);
-    chatLastId = r.messages[r.messages.length - 1].id;
+    const last = r.messages[r.messages.length - 1];
+    chatLastId = last.id;
+    const team = hmConvs.find((c) => c.id === "team");
+    team.last = last.body; team.time = fmtTime(last.created_at);
+    renderConvList();
   }
 }
 function startChat() {
-  $("chatMessages").innerHTML = ""; chatLastId = 0;
-  chatTick();
+  renderConvList();
+  openConv("team");
   if (chatTimer) clearInterval(chatTimer);
   chatTimer = setInterval(chatTick, 3000);
 }
+const nowT = () => new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+function pushLocal(m) {
+  m.d = "Aujourd'hui"; m.t = nowT(); m.mine = true;
+  hmCur.msgs.push(m);
+  renderFakeMsgs(hmCur);
+  renderConvList();
+}
 async function sendMsg() {
   const input = $("chatInput"), body = input.value.trim();
-  if (!body) return;
+  if (!body || !hmCur) return;
   input.value = "";
-  const r = await window.olympus.chatSend(body);
-  if (r.ok && r.message) { appendMessage(r.message); chatLastId = Math.max(chatLastId, r.message.id); }
-  else if (!r.ok) { input.value = body; }
+  if (hmCur.real) {
+    const r = await window.olympus.chatSend(body);
+    if (r.ok && r.message) { appendMessage(r.message); chatLastId = Math.max(chatLastId, r.message.id); }
+    else if (!r.ok) { input.value = body; }
+  } else pushLocal({ kind: "text", body });
 }
 $("chatSend").onclick = sendMsg;
 $("chatInput").addEventListener("keydown", (e) => { if (e.key === "Enter") sendMsg(); });
+$("hmSearch").addEventListener("input", renderConvList);
+document.querySelector(".hm-side").addEventListener("click", (e) => { const row = e.target.closest("[data-conv]"); if (row) openConv(row.dataset.conv); });
+// Lecture d'un vocal (démo) : les barres s'animent
+$("chatMessages").addEventListener("click", (e) => {
+  const v = e.target.closest("[data-voice]");
+  if (v) { v.classList.toggle("playing"); v.querySelector(".vplay").textContent = v.classList.contains("playing") ? "❚❚" : "▶"; }
+});
+// Joindre un fichier / média
+$("chatAttach").onclick = () => {
+  if (!hmCur) return;
+  const inp = document.createElement("input"); inp.type = "file";
+  inp.onchange = () => {
+    const f = inp.files[0]; if (!f) return;
+    const img = /\.(jpe?g|png|gif|webp|heic)$/i.test(f.name);
+    const size = f.size > 1048576 ? (f.size / 1048576).toFixed(1).replace(".", ",") + " Mo" : Math.max(1, Math.round(f.size / 1024)) + " Ko";
+    if (hmCur.real) { $("chatInput").value = "📎 " + f.name; sendMsg(); }
+    else pushLocal(img ? { kind: "image", cap: f.name, g: 2 } : { kind: "file", name: f.name, size, icon: /\.(mp4|mov)$/i.test(f.name) ? "🎬" : /\.(pdf)$/i.test(f.name) ? "📄" : "📁" });
+  };
+  inp.click();
+};
+// Message vocal (démo) : clic = enregistre, re-clic = envoie
+let recStart = null;
+$("chatMic").onclick = () => {
+  if (!hmCur) return;
+  const btn = $("chatMic");
+  if (!recStart) { recStart = Date.now(); btn.classList.add("rec"); $("chatInput").placeholder = "Enregistrement en cours… re-clique pour envoyer"; return; }
+  const sec = Math.max(1, Math.round((Date.now() - recStart) / 1000));
+  recStart = null; btn.classList.remove("rec"); $("chatInput").placeholder = "Écris un message…";
+  const dur = Math.floor(sec / 60) + ":" + String(sec % 60).padStart(2, "0");
+  if (hmCur.real) { $("chatInput").value = "🎙 Message vocal (" + dur + ")"; sendMsg(); }
+  else pushLocal({ kind: "voice", dur, seed: Math.floor(Math.random() * 40) });
+};
+// Nouveau groupe
+$("hmNewGroup").onclick = () => { const f = $("hmGroupForm"); f.style.display = f.style.display === "none" ? "" : "none"; if (f.style.display === "") $("hmGroupName").focus(); };
+$("hmGroupCreate").onclick = () => {
+  const name = $("hmGroupName").value.trim(); if (!name) return;
+  const id = "g-" + Date.now();
+  hmConvs.push({ id, kind: "group", name, members: ["Sacha", "Lucas Dubois", "Astrid Berges"], unread: 0, msgs: [] });
+  $("hmGroupName").value = ""; $("hmGroupForm").style.display = "none";
+  openConv(id);
+};
+
+// ══════════ HERMÈS — roue de date + agenda du jour ══════════
+let wheelDate = new Date();
+let wheelGran = "day";
+let zoneUnits = { left: "month", center: "day", right: "week" }; // unité modifiée par zone (survol + scroll)
+let hoverZone = null;
+const MON_ABBR = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."];
+const DOW_FULL = ["dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"];
+
+function isoWeek(d) {
+  const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  t.setUTCDate(t.getUTCDate() - ((t.getUTCDay() + 6) % 7) + 3);
+  const first = new Date(Date.UTC(t.getUTCFullYear(), 0, 4));
+  return 1 + Math.round(((t - first) / 864e5 - 3 + ((first.getUTCDay() + 6) % 7)) / 7);
+}
+// Graduations : arc fixe et symétrique, mais qui défile (tourne) au scroll grâce à `spin`.
+// Les traits sont réguliers → au repos l'image est toujours la même, seul le défilé anime.
+let spin = 0, spinTarget = 0, spinRAF = null;
+const TICK_STEP = 72 / 43;                     // espacement de base (2*half/(N-1))
+function renderTicks() {
+  const g = document.getElementById("wticks"); if (!g) return;
+  const cx = 307, cy = 135, Ri = 178, Ro = 196, half = 36, gap = 9;
+  const frac = ((spin % TICK_STEP) + TICK_STEP) % TICK_STEP; // défilé sur un pas
+  let s = "";
+  for (let ang = -half + frac; ang <= half + 1e-3; ang += TICK_STEP) {
+    const a = Math.abs(ang);
+    if (a < gap) continue;                      // petit trou pour le chiffre
+    const A = (180 + ang) * Math.PI / 180, c = Math.cos(A), sn = Math.sin(A);
+    const inFade = Math.min(1, (a - gap) / 13); // s'efface dans le halo près du chiffre
+    const outFade = Math.min(1, (half - a) / 12); // s'efface aux extrémités (les traits y apparaissent/disparaissent)
+    const op = Math.max(0.05, 0.72 * Math.min(inFade, outFade));
+    s += `<line class="wtick" x1="${(cx + Ri * c).toFixed(1)}" y1="${(cy + Ri * sn).toFixed(1)}" x2="${(cx + Ro * c).toFixed(1)}" y2="${(cy + Ro * sn).toFixed(1)}" style="opacity:${op.toFixed(2)}"/>`;
+  }
+  g.innerHTML = s;
+}
+function animateSpin() {
+  spin += (spinTarget - spin) * 0.18;
+  if (Math.abs(spinTarget - spin) < 0.04) { spin = spinTarget; spinRAF = null; renderTicks(); return; }
+  renderTicks();
+  spinRAF = requestAnimationFrame(animateSpin);
+}
+function kickSpin(dir) {
+  spinTarget += dir * 10;                       // élan par cran
+  const cap = 44;                               // évite l'emballement en scroll rapide
+  spinTarget = Math.max(spin - cap, Math.min(spin + cap, spinTarget));
+  if (!spinRAF) spinRAF = requestAnimationFrame(animateSpin);
+}
+function drawWheel() {
+  const d = wheelDate, y = d.getFullYear(), m = d.getMonth(), day = d.getDate();
+  const mx = 120, my = 135;                    // sélection = point le plus à gauche de l'arc
+  let s = '<defs><radialGradient id="wglow"><stop offset="0" class="wg0"/><stop offset=".55" class="wg1"/><stop offset="1" class="wg2"/></radialGradient></defs><g id="wticks"></g>';
+  const mon = MON_ABBR[m].replace(".", "");
+  let hero, left = "", right = "";
+  if (wheelGran === "day") { hero = String(day); left = mon; right = "S" + isoWeek(d); zoneUnits = { left: "month", center: "day", right: "week" }; }
+  else if (wheelGran === "week") { hero = "S" + isoWeek(d); left = mon; right = String(y); zoneUnits = { left: "month", center: "week", right: "year" }; }
+  else if (wheelGran === "month") { hero = mon; right = String(y); zoneUnits = { center: "month", right: "year" }; }
+  else { hero = String(y); zoneUnits = { center: "year" }; }
+  s += `<circle cx="${mx}" cy="${my}" r="31" fill="url(#wglow)"/>`;
+  s += `<text id="wHero" class="whero" x="${mx}" y="${my}">${hero}</text>`;
+  if (left) s += `<text id="wLeft" class="wctx" x="${mx - 28}" y="${my}">${left}</text>`;
+  if (right) s += `<text id="wRight" class="wctx r" x="${mx + 28}" y="${my}">${right}</text>`;
+  $("wheelSvg").innerHTML = s;
+  renderTicks();
+  applyHover();
+}
+let agendaEvents = [];
+async function renderWheel() {
+  const d = wheelDate;
+  drawWheel();
+  syncGridToWheel();                         // la grille suit le jour de la roue
+  $("agendaHead").textContent = DOW_FULL[d.getDay()] + " " + d.getDate() + " " + MONTHS[d.getMonth()];
+  const iso = isoD(d.getFullYear(), d.getMonth(), d.getDate());
+  const r = await window.olympus.chronosList(iso, iso);
+  agendaEvents = (r.ok ? r.events : []).sort((a, b) => (a.time || "").localeCompare(b.time || ""));
+  $("agendaDay").innerHTML = agendaEvents.length
+    ? agendaEvents.map((e) => {
+        const dot = e.is_personal ? "" : `<span class="ev-dot" style="background:${catColor(e.category)}"></span>`;
+        const who = e.is_personal && e.assignee ? `<span class="ev-name">${escapeHtml(e.assignee)}</span> · ` : "";
+        return `<div class="agenda-ev${e.is_personal ? " perso" : ""}" data-ev="${e.id}"><div>${dot}${who}${escapeHtml(e.title)}</div>${e.time ? `<div class="t">${e.time.slice(0, 5)}</div>` : ""}</div>`;
+      }).join("")
+    : '<div class="rb-empty">Rien de prévu ce jour-là.</div>';
+}
+function highlightSelected() {
+  document.querySelectorAll("#calScroll .cal-cell").forEach((c) => c.classList.toggle("sel", c.dataset.date === calSelected));
+}
+function syncGridToWheel() {
+  calSelected = isoD(wheelDate.getFullYear(), wheelDate.getMonth(), wheelDate.getDate());
+  if (calView !== "month") { renderChronos(); return; }   // semaine/jour : suivent le jour sélectionné
+  if (wheelDate.getFullYear() !== calDate.getFullYear() || wheelDate.getMonth() !== calDate.getMonth()) {
+    calDate = new Date(wheelDate.getFullYear(), wheelDate.getMonth(), 1);
+    renderChronos();                         // change de mois → regénère la grille (surligne calSelected)
+  } else {
+    highlightSelected();
+  }
+}
+$("agendaDay").onclick = (e) => {
+  const item = e.target.closest(".agenda-ev"); if (!item) return;
+  const ev = agendaEvents.find((x) => String(x.id) === item.dataset.ev);
+  if (ev) openEventForm(ev.date, ev);
+};
+function stepUnit(unit, dir) {
+  if (!unit) return;
+  const d = new Date(wheelDate);
+  if (unit === "day") d.setDate(d.getDate() + dir);
+  else if (unit === "week") d.setDate(d.getDate() + dir * 7);
+  else if (unit === "month") d.setMonth(d.getMonth() + dir);
+  else if (unit === "year") d.setFullYear(d.getFullYear() + dir);
+  wheelDate = d; renderWheel();
+}
+function applyHover() {
+  const map = { left: "wLeft", center: "wHero", right: "wRight" };
+  for (const id of ["wLeft", "wHero", "wRight"]) { const el = document.getElementById(id); if (el) el.classList.remove("hot"); }
+  const el = hoverZone && document.getElementById(map[hoverZone]); if (el) el.classList.add("hot");
+}
+function wheelZone(e) {
+  const r = e.currentTarget.getBoundingClientRect();
+  const vx = 46 + ((e.clientX - r.left) / r.width) * 144;   // repère viewBox (décalé)
+  let z = vx < 100 ? "left" : vx > 146 ? "right" : "center";
+  if (!zoneUnits[z]) z = "center";                     // repli si pas de libellé dans la zone
+  return z;
+}
+$("wheelSvg").addEventListener("wheel", (e) => { e.preventDefault(); const dir = e.deltaY > 0 ? 1 : -1; kickSpin(dir); stepUnit(zoneUnits[wheelZone(e)], dir); }, { passive: false });
+$("wheelSvg").addEventListener("mousemove", (e) => { const z = wheelZone(e); if (z !== hoverZone) { hoverZone = z; applyHover(); } });
+$("wheelSvg").addEventListener("mouseleave", () => { if (hoverZone) { hoverZone = null; applyHover(); } });
 
 // ══════════ CHRONOS (calendrier) ══════════
 let calDate = new Date();
@@ -401,85 +581,319 @@ const DOW = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
 const pad2 = (n) => String(n).padStart(2, "0");
 const isoD = (y, m, d) => `${y}-${pad2(m + 1)}-${pad2(d)}`;
 
-async function renderChronos() {
-  const y = calDate.getFullYear(), m = calDate.getMonth();
-  $("calMonth").textContent = MONTHS[m] + " " + y;
-  $("calDow").innerHTML = DOW.map((d) => `<div class="cal-dow">${d}</div>`).join("");
-
-  const startOffset = (new Date(y, m, 1).getDay() + 6) % 7; // Lundi = 0
-  const daysInMonth = new Date(y, m + 1, 0).getDate();
-  const totalCells = Math.ceil((startOffset + daysInMonth) / 7) * 7;
-  const startCell = new Date(y, m, 1 - startOffset);
-  const endCell = new Date(y, m, 1 - startOffset + totalCells - 1);
-  const from = isoD(startCell.getFullYear(), startCell.getMonth(), startCell.getDate());
-  const to = isoD(endCell.getFullYear(), endCell.getMonth(), endCell.getDate());
-
-  const r = await window.olympus.chronosList(from, to);
-  chronosEvents = r.ok ? r.events : [];
+let calMonths = [];                                        // 1er de chaque mois affiché (ascendant)
+let calLoading = false;
+const monthKey = (d) => d.getFullYear() * 12 + d.getMonth();
+const todayIsoNow = () => { const n = new Date(); return isoD(n.getFullYear(), n.getMonth(), n.getDate()); };
+// Couleur de pastille par catégorie d'événement.
+const CAT_COLOR = {
+  call: "#5b9bd5", rdv: "#45c4b0", reunion: "#a98bd6", shoot: "#e0a862",
+  rendu: "#6cc48f", campagne: "#d98cb0", client: "#8a93de", deadline: "#e0885a",
+  divers: "#8a8a90", general: "#8a8a90", client_meeting: "#8a93de",
+};
+const catColor = (c) => CAT_COLOR[c] || CAT_COLOR.general;
+const evEnd = (ev) => (ev.end_date && ev.end_date > ev.date ? ev.end_date : ev.date);
+// Étale chaque event sur tous les jours de sa plage (multi-jours) → { iso: [events] }.
+function groupByDate(events) {
   const byDate = {};
-  for (const ev of chronosEvents) (byDate[ev.date] = byDate[ev.date] || []).push(ev);
-
-  const now = new Date();
-  const todayIso = isoD(now.getFullYear(), now.getMonth(), now.getDate());
-  let html = "";
-  for (let i = 0; i < totalCells; i++) {
-    const d = new Date(y, m, 1 - startOffset + i);
-    const dIso = isoD(d.getFullYear(), d.getMonth(), d.getDate());
-    const cls = (d.getMonth() !== m ? " other" : "") + (dIso === todayIso ? " today" : "") + (dIso === calSelected ? " sel" : "");
-    const chips = (byDate[dIso] || []).map((ev) =>
-      `<div class="ev-chip cat-${ev.category || "general"}${ev.done ? " done" : ""}" data-ev="${ev.id}">${ev.time ? ev.time.slice(0, 5) + " " : ""}${escapeHtml(ev.title)}</div>`
-    ).join("");
-    html += `<div class="cal-cell${cls}" data-date="${dIso}"><div class="cal-daynum">${d.getDate()}</div>${chips}</div>`;
+  for (const ev of events) {
+    const end = evEnd(ev), [y, m, d] = ev.date.split("-").map(Number);
+    for (let cur = new Date(y, m - 1, d), i = 0; i < 90; i++) {
+      const iso = isoD(cur.getFullYear(), cur.getMonth(), cur.getDate());
+      (byDate[iso] = byDate[iso] || []).push(ev);
+      if (iso === end) break;
+      cur.setDate(cur.getDate() + 1);
+    }
   }
-  $("calGrid").innerHTML = html;
+  return byDate;
 }
-
-$("calPrev").onclick = () => { calDate = new Date(calDate.getFullYear(), calDate.getMonth() - 1, 1); renderChronos(); };
-$("calNext").onclick = () => { calDate = new Date(calDate.getFullYear(), calDate.getMonth() + 1, 1); renderChronos(); };
-$("calToday").onclick = () => { calDate = new Date(); renderChronos(); };
+// Puce : point coloré (catégorie), barre remplie si multi-jours, ou rouge + nom si perso.
+function chipHtml(ev, dayIso) {
+  const t = ev.time ? ev.time.slice(0, 5) + " " : "";
+  if (ev.is_personal) {
+    const who = ev.assignee ? `<span class="ev-name">${escapeHtml(ev.assignee)}</span> · ` : "";
+    return `<div class="ev-chip perso${ev.done ? " done" : ""}" data-ev="${ev.id}">${who}${t}${escapeHtml(ev.title)}</div>`;
+  }
+  const end = evEnd(ev);
+  if (end !== ev.date && dayIso) {                             // multi-jours : barre remplie
+    const isStart = dayIso === ev.date, isEnd = dayIso === end;
+    const [Y, M, D] = dayIso.split("-").map(Number);
+    const col = (new Date(Y, M - 1, D).getDay() + 6) % 7;      // Lun=0 … Dim=6
+    const rl = isStart || col === 0, rr = isEnd || col === 6;   // bords arrondis au début/fin/bord de semaine
+    return `<div class="ev-chip span${rl ? " rl" : ""}${rr ? " rr" : ""}${ev.done ? " done" : ""}" data-ev="${ev.id}" style="--c:${catColor(ev.category)}">${escapeHtml(ev.title)}</div>`;
+  }
+  return `<div class="ev-chip${ev.done ? " done" : ""}" data-ev="${ev.id}"><span class="ev-dot" style="background:${catColor(ev.category)}"></span>${t}${escapeHtml(ev.title)}</div>`;
+}
+function dayCell(y, m, day, byDate, todayIso, firstCol, isLast) {
+  const dIso = isoD(y, m, day);
+  const cls = (dIso === todayIso ? " today" : "") + (dIso === calSelected ? " sel" : "") + (day === 1 ? " mstart" : "") + (isLast ? " mend" : "");
+  const chips = (byDate[dIso] || []).map((ev) => chipHtml(ev, dIso)).join("");
+  const style = firstCol ? ` style="grid-column-start:${firstCol}"` : "";
+  const mark = day === 1 ? ` data-mstart="${monthKey(new Date(y, m, 1))}"` : "";
+  return `<div class="cal-cell${cls}" data-date="${dIso}"${style}${mark}><div class="cal-daynum">${day}</div>${chips}</div>`;
+}
+// Labels de mois (à droite) + traits glow, placés DANS le calendrier (offsetTop) → scroll natif, aucune désync.
+function positionCalMonths() {
+  const days = $("calDays"), labels = $("calLabels"), flow = days && days.parentElement;
+  if (!days || !labels || !flow) return;
+  flow.querySelectorAll(".cal-div").forEach((d) => d.remove());
+  let labHtml = "", divs = "";
+  calMonths.forEach((mo, mi) => {
+    const cell = days.querySelector(`[data-mstart="${monthKey(mo)}"]`);
+    if (!cell) return;
+    const top = cell.offsetTop;
+    labHtml += `<div class="cal-mlabel" style="top:${top}px">${MONTHS[mo.getMonth()]} ${mo.getFullYear()}</div>`;
+    if (mi !== 0) divs += `<div class="cal-div" style="top:${top - 8}px"></div>`;  // centré dans le gap (16px), pas de trait avant le 1er mois
+  });
+  labels.innerHTML = labHtml;
+  flow.insertAdjacentHTML("beforeend", divs);
+}
+// Grille continue : les jours s'enchaînent d'un mois à l'autre (seul le tout 1er jour est calé sur son jour de semaine).
+async function paintCal() {
+  const first = calMonths[0], last = calMonths[calMonths.length - 1];
+  const lastEnd = new Date(last.getFullYear(), last.getMonth() + 1, 0);
+  const r = await window.olympus.chronosList(isoD(first.getFullYear(), first.getMonth(), 1), isoD(lastEnd.getFullYear(), lastEnd.getMonth(), lastEnd.getDate()));
+  chronosEvents = r.ok ? r.events : [];
+  const byDate = groupByDate(chronosEvents);
+  const todayIso = todayIsoNow();
+  let cells = "";
+  calMonths.forEach((mo, mi) => {
+    const y = mo.getFullYear(), m = mo.getMonth(), days = new Date(y, m + 1, 0).getDate();
+    for (let day = 1; day <= days; day++) {
+      const firstCol = (mi === 0 && day === 1) ? ((new Date(y, m, 1).getDay() + 6) % 7) + 1 : 0;
+      cells += dayCell(y, m, day, byDate, todayIso, firstCol, day === days);
+    }
+  });
+  $("calScroll").innerHTML = `<div class="cal-flow"><div class="cal-days" id="calDays">${cells}</div><div class="cal-labels" id="calLabels"></div></div>`;
+  positionCalMonths();
+}
+let calView = "month";                                     // month | week | day
+async function renderChronos() {
+  $("calDow").style.display = calView === "month" ? "" : "none";
+  $("calScroll").dataset.view = calView;
+  document.querySelectorAll("#calViews button").forEach((b) => b.classList.toggle("active", b.dataset.view === calView));
+  if (calView === "week") return renderWeekView();
+  if (calView === "day") return renderDayView();
+  return renderMonthView();
+}
+async function renderMonthView() {
+  const cur = new Date(calDate.getFullYear(), calDate.getMonth(), 1);
+  calMonths = [-2, -1, 0, 1, 2].map((k) => new Date(cur.getFullYear(), cur.getMonth() + k, 1));
+  $("calDow").innerHTML = DOW.map((d) => `<div class="cal-dow">${d}</div>`).join("");
+  await paintCal();
+  const cell = $("calDays").querySelector(`[data-mstart="${monthKey(cur)}"]`);
+  if (cell) $("calScroll").scrollTop = Math.max(0, cell.offsetTop - 30);
+}
+// ── Timeline horaire (vues Semaine & Jour) ──
+let HPX = 60;                                                 // hauteur d'une heure (calculée au rendu pour remplir la page)
+const timeToMin = (t) => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
+function computeHPX() { HPX = Math.max(56, Math.min(82, Math.round(($("calScroll").clientHeight - 180) / 12))); } // ~12h visibles
+function earliestHour(events) {
+  const timed = events.filter((e) => e.time);
+  if (!timed.length) return 9;                                // pas d'event → démarre à 9h
+  return Math.max(0, Math.min(...timed.map((e) => Math.floor(timeToMin(e.time) / 60))));
+}
+function tlGutter() { let h = ""; for (let hr = 0; hr <= 24; hr++) h += `<div class="tl-hour" style="top:${hr * HPX}px">${String(hr % 24).padStart(2, "0")}:00</div>`; return h; }
+function tlLines() { let h = ""; for (let hr = 0; hr <= 24; hr++) h += `<div class="tl-line" style="top:${hr * HPX}px"></div>`; return h; }
+function tlEvent(ev) {
+  const s = timeToMin(ev.time), en = ev.end_time ? timeToMin(ev.end_time) : s + 60;
+  const top = s / 60 * HPX, height = Math.max(18, (en - s) / 60 * HPX - 2);
+  const color = ev.is_personal ? "var(--err)" : catColor(ev.category);
+  const who = ev.is_personal && ev.assignee ? `<span class="ev-name">${escapeHtml(ev.assignee)}</span> · ` : "";
+  const time = ev.time.slice(0, 5) + (ev.end_time ? "–" + ev.end_time.slice(0, 5) : "");
+  return `<div class="tl-ev${ev.is_personal ? " perso" : ""}" data-ev="${ev.id}" style="top:${top}px;height:${height}px;--c:${color}"><div class="tl-ev-t">${who}${escapeHtml(ev.title)}</div><div class="tl-ev-time">${time}</div></div>`;
+}
+// ── Bande horizontale infinie de jours (vues Semaine & Jour) ──
+let tlBuf = [], tlVis = 7, tlColW = 140, tlLoading = false;
+const isoOf = (x) => isoD(x.getFullYear(), x.getMonth(), x.getDate());
+function dayHeadCell(x, byDate, todayIso) {
+  const iso = isoOf(x), cls = (iso === todayIso ? " today" : "") + (iso === calSelected ? " sel" : "");
+  const ad = (byDate[iso] || []).filter((e) => !e.time).map((e) => chipHtml(e, iso)).join("");
+  return `<div class="tl-head${cls}" data-date="${iso}"><div class="tl-hd"><span class="wd">${DOW[(x.getDay() + 6) % 7]}</span><span class="wn">${x.getDate()}</span></div><div class="tl-had">${ad}</div></div>`;
+}
+function dayColCell(x, byDate, todayIso) {
+  const iso = isoOf(x), cls = iso === todayIso ? " today" : "";
+  const timed = (byDate[iso] || []).filter((e) => e.time).sort((a, b) => timeToMin(a.time) - timeToMin(b.time));
+  return `<div class="tl-col${cls}" data-date="${iso}">${tlLines()}${timed.map(tlEvent).join("")}</div>`;
+}
+let tlPan = 0, calDragPan = 0;
+function tlApplyPan() {
+  const h = $("tlHeads"), c = $("tlCols");
+  if (h) h.style.transform = `translateX(${tlPan}px)`;
+  if (c) c.style.transform = `translateX(${tlPan}px)`;
+}
+function tlPaint() {
+  const byDate = groupByDate(chronosEvents);
+  const todayIso = todayIsoNow(), bodyH = 24 * HPX;
+  const strip = `grid-template-columns:repeat(${tlBuf.length}, ${tlColW}px);transform:translateX(${tlPan}px)`;
+  const heads = tlBuf.map((x) => dayHeadCell(x, byDate, todayIso)).join("");
+  const cols = tlBuf.map((x) => dayColCell(x, byDate, todayIso)).join("");
+  $("calScroll").innerHTML = `<div class="cal-tl2 ${tlVis === 1 ? "day" : "week"}"><div class="tl-corner2"></div><div class="tl-headsclip"><div class="tl-heads" id="tlHeads" style="${strip}">${heads}</div></div><div class="tl-gutter2" style="height:${bodyH}px">${tlGutter()}</div><div class="tl-colsclip"><div class="tl-cols" id="tlCols" style="${strip};height:${bodyH}px">${cols}</div></div></div>`;
+}
+async function renderTimeline(vis) {
+  tlVis = vis;
+  const anchor = new Date(wheelDate), start = new Date(anchor);
+  if (vis === 7) start.setDate(anchor.getDate() - ((anchor.getDay() + 6) % 7));    // lundi
+  start.setDate(start.getDate() - vis);                                            // 1 fenêtre de marge avant
+  const total = vis * 5;
+  tlBuf = [...Array(total)].map((_, i) => { const d = new Date(start); d.setDate(start.getDate() + i); return d; });
+  const r = await window.olympus.chronosList(isoOf(tlBuf[0]), isoOf(tlBuf[total - 1]));
+  chronosEvents = r.ok ? r.events : [];
+  computeHPX();
+  tlColW = Math.max(100, Math.round(($("calScroll").clientWidth - 54 - 452) / vis));
+  tlPan = -vis * tlColW;                                                            // démarre sur wheelDate (index vis)
+  tlPaint();
+  $("calScroll").scrollTop = earliestHour(chronosEvents) * HPX;
+}
+// Pan infini : ajoute des jours en approchant des bords de la bande.
+async function tlMaybeWindow() {
+  if (tlLoading || calView === "month") return;
+  const clip = document.querySelector(".tl-colsclip"), clipW = clip ? clip.clientWidth : 400;
+  const stripW = tlBuf.length * tlColW, add = tlVis * 2;
+  if (tlPan > -tlColW) {                                     // proche du début → prépend
+    tlLoading = true;
+    const first = tlBuf[0];
+    const days = [...Array(add)].map((_, i) => { const d = new Date(first); d.setDate(first.getDate() - add + i); return d; });
+    const r = await window.olympus.chronosList(isoOf(days[0]), isoOf(days[add - 1]));
+    chronosEvents = chronosEvents.concat(r.ok ? r.events : []);
+    tlBuf = days.concat(tlBuf);
+    tlPan -= add * tlColW; calDragPan -= add * tlColW;       // garde la position visuelle
+    tlPaint();
+    tlLoading = false;
+  } else if (tlPan < -(stripW - clipW) + tlColW) {           // proche de la fin → append
+    tlLoading = true;
+    const last = tlBuf[tlBuf.length - 1];
+    const days = [...Array(add)].map((_, i) => { const d = new Date(last); d.setDate(last.getDate() + 1 + i); return d; });
+    const r = await window.olympus.chronosList(isoOf(days[0]), isoOf(days[add - 1]));
+    chronosEvents = chronosEvents.concat(r.ok ? r.events : []);
+    tlBuf = tlBuf.concat(days);
+    tlPaint();
+    tlLoading = false;
+  }
+}
+async function renderWeekView() { return renderTimeline(7); }
+async function renderDayView() { return renderTimeline(1); }
+$("calViews").onclick = (e) => {
+  const b = e.target.closest("button[data-view]"); if (!b) return;
+  calView = b.dataset.view;
+  renderChronos();
+};
+// Scroll infini : ajoute les mois adjacents en approchant des bords (re-render + maintien de position)
+$("calScroll").addEventListener("scroll", async () => {
+  if (calView !== "month") return;                        // scroll infini : vue Mois uniquement
+  const el = $("calScroll");
+  if (calLoading) return;
+  if (el.scrollTop < 200) {
+    calLoading = true;
+    const oldTop = el.scrollTop, oldH = el.scrollHeight;
+    calMonths.unshift(new Date(calMonths[0].getFullYear(), calMonths[0].getMonth() - 1, 1));
+    await paintCal();
+    el.scrollTop = oldTop + (el.scrollHeight - oldH);
+    calLoading = false;
+  } else if (el.scrollTop + el.clientHeight > el.scrollHeight - 200) {
+    calLoading = true;
+    const oldTop = el.scrollTop;
+    const lm = calMonths[calMonths.length - 1];
+    calMonths.push(new Date(lm.getFullYear(), lm.getMonth() + 1, 1));
+    await paintCal();
+    el.scrollTop = oldTop;
+    calLoading = false;
+  }
+});
 $("calAdd").onclick = () => { const n = new Date(); openEventForm(calSelected || isoD(n.getFullYear(), n.getMonth(), n.getDate())); };
 
-$("calGrid").onclick = (e) => {
-  const chip = e.target.closest(".ev-chip");
-  if (chip) { const ev = chronosEvents.find((x) => String(x.id) === chip.dataset.ev); if (ev) openEventForm(ev.date, ev); return; }
-  const cell = e.target.closest(".cal-cell");
-  if (cell) { calSelected = cell.dataset.date; openEventForm(cell.dataset.date); }
+$("calScroll").onclick = (e) => {
+  if (calDragged) { calDragged = false; return; }             // c'était un glissement, pas un clic
+  const evEl = e.target.closest(".ev-chip") || e.target.closest(".cal-devent") || e.target.closest(".tl-ev");
+  if (evEl && evEl.dataset.ev) { const ev = chronosEvents.find((x) => String(x.id) === evEl.dataset.ev); if (ev) openEventForm(ev.date, ev); return; }
+  const cell = e.target.closest("[data-date]");
+  if (cell) { const [Y, M, D] = cell.dataset.date.split("-").map(Number); wheelDate = new Date(Y, M - 1, D); renderWheel(); } // sélectionne le jour → roue + agenda
 };
+
+// Glisser le fond (vues semaine/jour) → défile les jours (X, translateX) ET les heures (Y, scrollTop), à l'infini.
+let calDragX = null, calDragY = 0, calDragTop = 0, calDragged = false;
+$("calScroll").addEventListener("mousedown", (e) => {
+  if (calView === "month") return;
+  if (e.target.closest(".tl-ev, .ev-chip, .tl-had, .tl-hd")) return;   // pas sur un event / une entête
+  calDragX = e.clientX; calDragY = e.clientY; calDragPan = tlPan; calDragTop = $("calScroll").scrollTop; calDragged = false;
+  e.preventDefault();
+});
+window.addEventListener("mousemove", (e) => {
+  if (calDragX === null) return;
+  const dx = e.clientX - calDragX, dy = e.clientY - calDragY;
+  if (Math.abs(dx) > 4 || Math.abs(dy) > 4) calDragged = true;
+  tlPan = calDragPan + dx;
+  tlApplyPan();
+  $("calScroll").scrollTop = calDragTop - dy;
+  tlMaybeWindow();
+});
+window.addEventListener("mouseup", () => { calDragX = null; });
 
 function openEventForm(date, ev) {
   editingEvent = ev || null;
-  $("evTitle").value = ev?.title || "";
-  $("evDate").value = date;
+  const g = (id, v) => ($(id).value = v || "");
+  g("evTitle", ev?.title); $("evDate").value = date;
+  g("evEndDate", ev?.end_date);
   $("evTime").value = ev?.time ? ev.time.slice(0, 5) : "";
+  $("evEnd").value = ev?.end_time ? ev.end_time.slice(0, 5) : "";
   $("evCat").value = ev?.category || "general";
-  $("evAssignee").value = ev?.assignee || "";
+  g("evAssignee", ev?.assignee);
+  $("evPerso").classList.toggle("on", !!ev?.is_personal);
+  $("evBusy").classList.toggle("on", ev ? ev.show_busy !== false : true);
+  g("evClient", ev?.client);
+  $("evType").value = ev?.shoot_type || "";
+  g("evDelivery", ev?.delivery_date);
+  renderParticipantChips(ev?.participants);
+  g("evObjectives", ev?.objectives); g("evMoodboard", ev?.moodboard); g("evLocation", ev?.location); g("evShotlist", ev?.shotlist);
+  $("eventModal").dataset.folder = ev?.id ? String(ev.id) : ("new-" + Math.random().toString(36).slice(2, 10));
+  currentAttachments = Array.isArray(ev?.attachments) ? ev.attachments.slice() : [];
+  renderEvFiles();
+  const locs = [...new Set(chronosEvents.map((e) => e.location).filter(Boolean))];
+  $("evLocList").innerHTML = locs.map((l) => `<option value="${escapeHtml(l)}">`).join("");
+  $("evModalTitle").textContent = ev ? "Modifier l'événement" : "Nouvel événement";
   $("evSave").textContent = ev ? "Enregistrer" : "Ajouter";
   $("evDelete").style.display = ev ? "" : "none";
   $("evDone").style.display = ev ? "" : "none";
   if (ev) $("evDone").textContent = ev.done ? "Marquer à faire" : "Marquer fait";
   $("evMsg").textContent = "";
-  $("calForm").classList.add("show");
+  $("eventModal").classList.add("show");
   $("evTitle").focus();
 }
-$("evCancel").onclick = () => $("calForm").classList.remove("show");
+function closeEventModal() { $("eventModal").classList.remove("show"); }
+$("evCancel").onclick = closeEventModal;
+$("eventModal").onclick = (e) => { if (e.target === $("eventModal")) closeEventModal(); };
 $("evSave").onclick = async () => {
-  const data = { title: $("evTitle").value.trim(), date: $("evDate").value, time: $("evTime").value || null, category: $("evCat").value, assignee: $("evAssignee").value.trim() || null };
+  const val = (id) => $(id).value.trim();
+  const data = {
+    title: val("evTitle"), date: $("evDate").value, end_date: $("evEndDate").value || null,
+    time: $("evTime").value || null, end_time: $("evEnd").value || null,
+    category: $("evCat").value, assignee: val("evAssignee") || null,
+    is_personal: $("evPerso").classList.contains("on"),
+    show_busy: $("evBusy").classList.contains("on"),
+    client: val("evClient") || null, shoot_type: $("evType").value || null,
+    delivery_date: $("evDelivery").value || null,
+    participants: collectParticipants(), attachments: currentAttachments,
+    objectives: val("evObjectives") || null, moodboard: val("evMoodboard") || null,
+    location: val("evLocation") || null, shotlist: val("evShotlist") || null,
+  };
   if (!data.title || !data.date) { $("evMsg").className = "msg err"; $("evMsg").textContent = "Titre et date requis."; return; }
+  const btn = $("evSave"), label = btn.textContent; btn.disabled = true; btn.innerHTML = '<span class="spin"></span>…';
   const r = editingEvent ? await window.olympus.chronosUpdate(editingEvent.id, data) : await window.olympus.chronosCreate(data);
-  if (r.ok) { $("calForm").classList.remove("show"); renderChronos(); refreshRightbar(); }
+  btn.disabled = false; btn.textContent = label;
+  if (r.ok) { closeEventModal(); renderChronos(); renderWheel(); refreshRightbar(); }
   else { $("evMsg").className = "msg err"; $("evMsg").textContent = r.error || "Échec."; }
 };
 $("evDelete").onclick = async () => {
   if (!editingEvent) return;
   const r = await window.olympus.chronosDelete(editingEvent.id);
-  if (r.ok) { $("calForm").classList.remove("show"); renderChronos(); refreshRightbar(); }
+  if (r.ok) { closeEventModal(); renderChronos(); renderWheel(); refreshRightbar(); }
 };
 $("evDone").onclick = async () => {
   if (!editingEvent) return;
   const r = await window.olympus.chronosUpdate(editingEvent.id, { done: !editingEvent.done });
-  if (r.ok) { $("calForm").classList.remove("show"); renderChronos(); refreshRightbar(); }
+  if (r.ok) { closeEventModal(); renderChronos(); renderWheel(); refreshRightbar(); }
 };
-document.querySelector('.nav-item[data-page="chronos"]').addEventListener("click", renderChronos);
+document.querySelector('.nav-item[data-page="chronos"]').addEventListener("click", () => { renderChronos(); renderWheel(); });
 
 // ══════════ COLONNE DROITE (infos) + présence ══════════
 let rbTimer = null;
@@ -501,6 +915,7 @@ async function refreshRightbar() {
   const p = await window.olympus.presenceOnline();
   const users = p.ok ? p.users : [];
   const nowMs = Date.now();
+  for (const f of FAKE_MEMBERS) if (!users.some((u) => u.name === f.name)) users.push({ name: f.name, last_seen: f.online ? new Date().toISOString() : new Date(nowMs - 36e5).toISOString() });
   const isOn = (u) => nowMs - new Date(u.last_seen).getTime() < 120000;
   users.sort((a, b) => (isOn(b) - isOn(a)) || (a.name || "").localeCompare(b.name || ""));
   $("rbOnline").innerHTML = users.length
@@ -514,24 +929,101 @@ function startPresence() {
   rbTimer = setInterval(() => { window.olympus.presenceBeat(); refreshRightbar(); }, 30000);
 }
 
-// ══════════ IRIS (email · CRM) ══════════
+// ══════════ IRIS (mailing + tracking) ══════════
+const IR_LBL = { sent: "Envoyé", open: "Ouvert", read: "Lu en entier", dl: "PJ téléchargée", click: "Lien cliqué" };
+// Mails de démo — chaque action (ouverture, lecture, téléchargement, clic) est tracée avec son heure.
+let irMails = [
+  { id: "m1", to: "claire@maisonsolene.fr", toName: "Claire Fontaine", client: "Maison Solène", by: "Sacha", when: "17 juil · 18:42", subject: "Devis campagne rentrée 2026", preview: "Comme convenu au téléphone, voici notre proposition pour la campagne…",
+    body: "Bonjour Claire,\n\nComme convenu au téléphone, voici notre proposition pour la campagne de rentrée : 2 journées de shooting, 25 visuels retouchés et 3 formats vidéo pour les réseaux.\n\nLe devis détaillé est en pièce jointe. Je reste dispo pour en parler cette semaine.\n\nSacha — Orphic Agency",
+    atts: [{ name: "devis_rentree_2026.pdf", size: "840 Ko", dl: 3 }, { name: "moodboard.pdf", size: "6,2 Mo", dl: 1 }],
+    events: [{ k: "sent", w: "17 juil · 18:42" }, { k: "open", w: "17 juil · 19:05" }, { k: "read", w: "17 juil · 19:06", x: "2 min 10 de lecture" }, { k: "dl", w: "17 juil · 19:08", x: "devis_rentree_2026.pdf" }, { k: "open", w: "18 juil · 08:31" }, { k: "dl", w: "18 juil · 08:33", x: "devis_rentree_2026.pdf" }, { k: "dl", w: "18 juil · 08:34", x: "moodboard.pdf" }, { k: "click", w: "18 juil · 08:36", x: "orphic-agency.com/portfolio" }, { k: "dl", w: "18 juil · 09:02", x: "devis_rentree_2026.pdf" }, { k: "open", w: "18 juil · 09:02" }] },
+  { id: "m2", to: "marc@villariviera.mc", toName: "Marc Aubert", client: "Villa Riviera", by: "Sacha", when: "17 juil · 11:20", subject: "Livraison — pack réseaux sociaux", preview: "Le pack complet est disponible : 18 visuels + 4 stories animées…",
+    body: "Bonjour Marc,\n\nLe pack complet est disponible : 18 visuels + 4 stories animées, aux formats Instagram et LinkedIn.\n\nLien de téléchargement dans le mail. Bonne diffusion !\n\nSacha",
+    atts: [{ name: "pack_reseaux_juillet.zip", size: "212 Mo", dl: 1 }],
+    events: [{ k: "sent", w: "17 juil · 11:20" }, { k: "open", w: "17 juil · 11:52" }, { k: "dl", w: "17 juil · 11:54", x: "pack_reseaux_juillet.zip" }] },
+  { id: "m3", to: "ines@solaris.fr", toName: "Inès Català", client: "Solaris", by: "Astrid Berges", when: "16 juil · 15:03", subject: "Sélection photos — validation", preview: "Voici la sélection resserrée de 40 images du shoot d'Èze…",
+    body: "Bonjour Inès,\n\nVoici la sélection resserrée de 40 images du shoot d'Èze. On attend ta validation pour lancer la retouche fine.\n\nAstrid — Orphic Agency",
+    atts: [{ name: "selection_solaris_v1.pdf", size: "18,4 Mo", dl: 0 }],
+    events: [{ k: "sent", w: "16 juil · 15:03" }, { k: "open", w: "16 juil · 16:10" }, { k: "open", w: "17 juil · 09:15" }] },
+  { id: "m4", to: "julie@emotions-arts.com", toName: "Julie Rey", client: "Émotions Arts", by: "Sacha", when: "15 juil · 20:15", subject: "Récap du shoot d'aujourd'hui", preview: "Merci pour l'accueil ! Le tournage s'est super bien passé…",
+    body: "Bonjour Julie,\n\nMerci pour l'accueil ! Le tournage s'est super bien passé. Premier rendu prévu le 22 : teaser 30 s + 12 photos.\n\nÀ très vite,\nSacha",
+    atts: [],
+    events: [{ k: "sent", w: "15 juil · 20:15" }, { k: "open", w: "15 juil · 21:40" }, { k: "read", w: "15 juil · 21:41", x: "1 min 05 de lecture" }, { k: "open", w: "16 juil · 07:58" }] },
+  { id: "m5", to: "contact@btp-azur.fr", toName: "Bureau BTP Azur", client: "BTP Azur", by: "Lucas Dubois", when: "15 juil · 09:30", subject: "Proposition — interview corporate", preview: "Suite à notre échange, voici le déroulé proposé pour l'interview…",
+    body: "Bonjour,\n\nSuite à notre échange, voici le déroulé proposé pour l'interview corporate du 22 juillet : 2 h de tournage dans vos locaux, format final 90 s.\n\nLucas — Orphic Agency",
+    atts: [{ name: "deroule_interview.pdf", size: "420 Ko", dl: 0 }],
+    events: [{ k: "sent", w: "15 juil · 09:30" }] },
+  { id: "m6", to: "nadia@atelier-n.fr", toName: "Nadia Belkacem", client: "Atelier N", by: "Sacha", when: "12 juil · 17:48", subject: "Relance — lookbook automne", preview: "Je me permets de relancer sur le devis lookbook envoyé la semaine…",
+    body: "Bonjour Nadia,\n\nJe me permets de relancer sur le devis lookbook envoyé la semaine dernière. On peut caler un call cette semaine si tu veux en discuter.\n\nSacha",
+    atts: [{ name: "devis_lookbook.pdf", size: "610 Ko", dl: 2 }],
+    events: [{ k: "sent", w: "12 juil · 17:48" }, { k: "open", w: "13 juil · 08:20" }, { k: "dl", w: "13 juil · 08:22", x: "devis_lookbook.pdf" }, { k: "open", w: "16 juil · 14:05" }, { k: "dl", w: "16 juil · 14:06", x: "devis_lookbook.pdf" }, { k: "click", w: "16 juil · 14:09", x: "orphic-agency.com/lookbooks" }] },
+];
+let irFilter = "all", irSel = null, irAtts = [];
+const irCount = (m, k) => m.events.filter((e) => e.k === k).length;
+function renderIrStats() {
+  const sent = irMails.length;
+  const opened = irMails.filter((m) => irCount(m, "open") > 0).length;
+  const rate = sent ? Math.round(opened / sent * 100) : 0;
+  const dls = irMails.reduce((s, m) => s + irCount(m, "dl"), 0);
+  const reads = irMails.reduce((s, m) => s + irCount(m, "read"), 0);
+  $("irStats").innerHTML = [[sent, "envoyés"], [rate + "%", "taux d'ouverture"], [reads, "lectures complètes"], [dls, "PJ téléchargées"]]
+    .map(([n, l]) => `<div class="ir-stat"><div class="n">${n}</div><div class="l">${l}</div></div>`).join("");
+}
+function irBadges(m) {
+  const o = irCount(m, "open"), r = irCount(m, "read"), d = irCount(m, "dl"), c = irCount(m, "click");
+  return `<span class="ir-b${o ? " on" : ""}">${o ? "Ouvert ×" + o : "Non ouvert"}</span>` +
+    (r ? `<span class="ir-b on">Lu</span>` : "") + (d ? `<span class="ir-b on">PJ ×${d}</span>` : "") + (c ? `<span class="ir-b on">Clic ×${c}</span>` : "");
+}
+function renderIrList() {
+  const q = ($("irSearch").value || "").toLowerCase();
+  const list = irMails.filter((m) => {
+    if (q && ![m.toName, m.to, m.client, m.subject].join(" ").toLowerCase().includes(q)) return false;
+    if (irFilter === "opened") return irCount(m, "open") > 0;
+    if (irFilter === "unopened") return irCount(m, "open") === 0;
+    if (irFilter === "attach") return irCount(m, "dl") > 0;
+    return true;
+  });
+  $("irList").innerHTML = list.length ? list.map((m) => `
+    <div class="ir-row${irSel === m.id ? " active" : ""}" data-mail="${m.id}">
+      <div class="ir-av">${initialsOf(m.toName)}</div>
+      <div class="ir-main">
+        <div class="ir-name">${escapeHtml(m.toName)}<span class="cl">${escapeHtml(m.client || "")}</span></div>
+        <div class="ir-sub">${escapeHtml(m.subject)}</div>
+        <div class="ir-prev">${escapeHtml(m.preview || "")}</div>
+      </div>
+      <div class="ir-meta"><span class="ir-when">${m.when}</span><div class="ir-badges">${irBadges(m)}</div></div>
+    </div>`).join("") : '<div class="rb-empty" style="padding:30px 10px;">Aucun mail ne correspond.</div>';
+}
+function renderIrDetail(id) {
+  const m = irMails.find((x) => x.id === id); if (!m) return;
+  irSel = id;
+  const kpi = [[irCount(m, "open"), "ouvertures"], [irCount(m, "read"), "lectures"], [irCount(m, "dl"), "PJ téléchargées"], [irCount(m, "click"), "clics"]]
+    .map(([n, l]) => `<div class="ir-kpi"><div class="n">${n}</div><div class="l">${l}</div></div>`).join("");
+  const atts = m.atts.length ? m.atts.map((a) => `<div class="ir-att"><span>📎</span><span>${escapeHtml(a.name)}</span><span style="color:var(--dim);font-size:11px;">${a.size}</span><span class="cnt${a.dl ? " hot" : ""}">${a.dl ? "téléchargée ×" + a.dl : "jamais téléchargée"}</span></div>`).join("") : "";
+  const tl = m.events.slice().reverse().map((e) => `<div class="ir-tli${e.k !== "sent" ? " hot" : ""}"><div class="k">${IR_LBL[e.k]}${e.x ? ` — <span style="color:var(--muted)">${escapeHtml(e.x)}</span>` : ""}</div><div class="w">${e.w}</div></div>`).join("");
+  $("irDetail").innerHTML = `
+    <div class="ir-dsubj">${escapeHtml(m.subject)}</div>
+    <div class="ir-dmeta">À ${escapeHtml(m.toName)} &lt;${escapeHtml(m.to)}&gt; · ${escapeHtml(m.client || "")} · envoyé par ${escapeHtml(m.by)} · ${m.when}</div>
+    <div class="ir-kpis">${kpi}</div>
+    <div class="ir-dbody">${escapeHtml(m.body || "")}</div>
+    ${atts ? `<div class="ir-sect">Pièces jointes</div>${atts}` : ""}
+    <div class="ir-sect">Activité</div><div class="ir-tl">${tl}</div>`;
+  renderIrList();
+}
 async function refreshIris() {
   const st = await window.olympus.irisStatus();
-  $("irisConnect").style.display = st.connected ? "none" : "";
-  $("irisMain").style.display = st.connected ? "" : "none";
-  if (st.connected) { $("irisFrom").textContent = "· " + st.email; refreshCrm(); }
+  $("irNotice").style.display = st.connected ? "none" : "";
+  renderIrStats(); renderIrList();
+  if (irSel) renderIrDetail(irSel);
 }
-async function refreshCrm() {
-  const r = await window.olympus.crmEmails();
-  const list = $("crmList");
-  const emails = r.ok ? r.emails : [];
-  list.innerHTML = emails.length ? emails.map((e) => {
-    const opened = (e.open_count || 0) > 0;
-    const when = new Date(e.sent_at).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
-    const info = opened ? `Ouvert ✓${e.open_count > 1 ? " ×" + e.open_count : ""}` : "Non ouvert";
-    return `<div class="crm-row"><div style="flex:1;min-width:0"><div class="crm-to">${escapeHtml(e.to_name || e.to_email)}</div><div class="crm-sub">${escapeHtml(e.subject || "")}</div><div class="crm-meta">${escapeHtml(e.to_email)} · ${when}${e.sent_by_name ? " · " + escapeHtml(e.sent_by_name) : ""}</div></div><span class="crm-open ${opened ? "yes" : "no"}">${info}</span></div>`;
-  }).join("") : '<div class="rb-empty">Aucun mail envoyé.</div>';
-}
+$("irSearch").addEventListener("input", renderIrList);
+$("irFilters").onclick = (e) => {
+  const s = e.target.closest("[data-f]"); if (!s) return;
+  irFilter = s.dataset.f;
+  $("irFilters").querySelectorAll("span").forEach((x) => x.classList.toggle("active", x === s));
+  renderIrList();
+};
+$("irList").onclick = (e) => { const row = e.target.closest("[data-mail]"); if (row) renderIrDetail(row.dataset.mail); };
 // Connexions (dans le profil)
 async function refreshConnections() {
   const st = await window.olympus.irisStatus();
@@ -554,17 +1046,377 @@ $("gmConnectBtn").onclick = async () => {
 };
 $("gmDisconnect").onclick = async () => { await window.olympus.irisDisconnect(); refreshConnections(); refreshIris(); };
 $("irisGoProfile").onclick = () => $("profileCard").click();
-$("mailSendBtn").onclick = async () => {
-  const d = { to: $("mailTo").value.trim(), toName: $("mailToName").value.trim(), subject: $("mailSubject").value.trim(), body: $("mailBody").value.trim() };
-  const msg = $("mailMsg"), btn = $("mailSendBtn");
+// Composition (modal)
+function renderIrAtts() {
+  $("irAttachList").innerHTML = irAtts.map((a, i) => `<div class="crm-row" style="padding:7px 0"><div style="flex:1;min-width:0"><span style="font-size:13px;">📎 ${escapeHtml(a.name)}</span> <span style="color:var(--dim);font-size:11px;">${a.size}</span></div><span class="member-btn danger" data-rmatt="${i}">Retirer</span></div>`).join("");
+}
+$("irComposeBtn").onclick = () => { irAtts = []; renderIrAtts(); ["irTo", "irToName", "irClient", "irSubject", "irBody"].forEach((id) => ($(id).value = "")); $("irMsg").textContent = ""; $("irModal").classList.add("show"); $("irTo").focus(); };
+$("irCancel").onclick = () => $("irModal").classList.remove("show");
+$("irModal").onclick = (e) => { if (e.target === $("irModal")) $("irModal").classList.remove("show"); };
+$("irTrack").onclick = () => $("irTrack").classList.toggle("on");
+$("irAttachBtn").onclick = () => {
+  const inp = document.createElement("input"); inp.type = "file"; inp.multiple = true;
+  inp.onchange = () => { for (const f of inp.files) irAtts.push({ name: f.name, size: f.size > 1048576 ? (f.size / 1048576).toFixed(1).replace(".", ",") + " Mo" : Math.max(1, Math.round(f.size / 1024)) + " Ko", dl: 0 }); renderIrAtts(); };
+  inp.click();
+};
+$("irAttachList").onclick = (e) => { const rm = e.target.closest("[data-rmatt]"); if (rm) { irAtts.splice(+rm.dataset.rmatt, 1); renderIrAtts(); } };
+$("irSend").onclick = async () => {
+  const d = { to: $("irTo").value.trim(), toName: $("irToName").value.trim(), subject: $("irSubject").value.trim(), body: $("irBody").value.trim() };
+  const msg = $("irMsg"), btn = $("irSend");
   if (!d.to || !d.subject || !d.body) { msg.className = "msg err"; msg.textContent = "Destinataire, sujet et message requis."; return; }
-  btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Envoi…'; msg.className = "msg"; msg.textContent = "";
-  const r = await window.olympus.irisSend(d);
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span>Envoi…';
+  const st = await window.olympus.irisStatus();
+  let sentReal = false;
+  if (st.connected) { const r = await window.olympus.irisSend(d); sentReal = r.ok; if (!r.ok) { btn.disabled = false; btn.textContent = "Envoyer"; msg.className = "msg err"; msg.textContent = r.error; return; } }
+  const now = new Date();
+  const when = now.getDate() + " " + MON_ABBR[now.getMonth()] + " · " + now.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+  irMails.unshift({ id: "m" + Date.now(), to: d.to, toName: d.toName || d.to, client: $("irClient").value.trim(), by: "Sacha", when, subject: d.subject, preview: d.body.slice(0, 90), body: d.body, atts: irAtts, events: [{ k: "sent", w: when }] });
   btn.disabled = false; btn.textContent = "Envoyer";
-  if (r.ok) { msg.className = "msg ok"; msg.textContent = "✅ Envoyé — suivi d'ouverture actif."; ["mailTo", "mailToName", "mailSubject", "mailBody"].forEach((id) => ($(id).value = "")); refreshCrm(); }
-  else { msg.className = "msg err"; msg.textContent = r.error; }
+  msg.className = "msg ok"; msg.textContent = sentReal ? "✅ Envoyé — suivi actif." : "✅ Ajouté (démo — Gmail non connecté).";
+  setTimeout(() => $("irModal").classList.remove("show"), 700);
+  renderIrStats(); renderIrList();
 };
 document.querySelector('.nav-item[data-page="iris"]').addEventListener("click", refreshIris);
+
+// ══════════ ARGOS (data clients — démo) ══════════
+const sparkSvg = (arr, w = 130, h = 34) => {
+  const mx = Math.max(...arr), mn = Math.min(...arr);
+  const pts = arr.map((v, i) => `${(i / (arr.length - 1) * w).toFixed(1)},${(h - 3 - (v - mn) / (mx - mn || 1) * (h - 8)).toFixed(1)}`).join(" ");
+  return `<svg class="spark" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><polyline points="${pts}"/></svg>`;
+};
+const AG_CLIENTS = [
+  { id: "solene", name: "Maison Solène",
+    kpis: [["128k", "portée 30 j", "+18%", [62, 71, 68, 80, 76, 88, 95, 91, 104, 112, 108, 128]], ["2 460 €", "dépense pubs", "+9%", [18, 20, 19, 22, 21, 24, 23, 25, 24, 26, 25, 27]], ["4,2", "ROAS moyen", "+0,4", [3.1, 3.3, 3.2, 3.6, 3.5, 3.8, 3.7, 4.0, 3.9, 4.1, 4.0, 4.2]], ["18 420", "visites site", "+12%", [9, 10, 11, 10, 12, 13, 12, 14, 15, 16, 17, 18]]],
+    social: [
+      { p: "Instagram", ic: "📷", h: "@maisonsolene", f: "24,8k", d: "+3,1%", er: "4,6% d'engagement · 12 posts" },
+      { p: "TikTok", ic: "🎵", h: "@maisonsolene", f: "11,2k", d: "+8,7%", er: "6,1% d'engagement · 8 vidéos" },
+      { p: "Facebook", ic: "👥", h: "Maison Solène", f: "9,4k", d: "+0,8%", er: "1,9% d'engagement · 6 posts" },
+    ],
+    ads: [
+      { n: "Conversions — collection été", plat: "Meta Ads", on: true, spend: "860 € / 1 200 €", roas: "ROAS 4,8 · CPC 0,38 €" },
+      { n: "Notoriété — vidéo teaser", plat: "Meta Ads", on: true, spend: "420 € / 600 €", roas: "CPM 2,10 € · 380k impr." },
+      { n: "Search — marque", plat: "Google Ads", on: false, spend: "180 € / 300 €", roas: "CTR 8,2% · terminée" },
+    ],
+    web: { s: [9, 10, 11, 10, 12, 13, 12, 14, 15, 16, 17, 18], conv: "2,4% de conversion · panier moyen 86 €", top: [["/collection-ete", "6 210"], ["/nouveautes", "3 480"], ["/lookbook-2026", "2 130"]] },
+    seo: [{ kw: "robe lin provence", pos: 3, d: "▲2" }, { kw: "maison solène avis", pos: 1, d: "＝" }, { kw: "mode éthique été", pos: 8, d: "▲5" }, { kw: "robe cérémonie lin", pos: 14, d: "▼1" }],
+    notes: [
+      { t: "Campagne été : créa vidéo > carrousels (+2,1 pts de CTR). Refaire 3 hooks vidéo pour août.", m: "Campagne · 16 juil · Astrid Berges" },
+      { t: "SEO : la page lookbook cannibalise /collection-ete sur « robe lin ». Fusionner les intentions.", m: "SEO · 12 juil · Lucas Dubois" },
+    ] },
+  { id: "riviera", name: "Villa Riviera",
+    kpis: [["86k", "portée 30 j", "+6%", [55, 58, 54, 60, 63, 61, 66, 64, 70, 74, 78, 86]], ["1 140 €", "dépense pubs", "−4%", [14, 13, 14, 12, 13, 12, 12, 11, 12, 11, 12, 11]], ["3,1", "ROAS moyen", "+0,2", [2.6, 2.7, 2.8, 2.7, 2.9, 3.0, 2.9, 3.0, 3.1, 3.0, 3.1, 3.1]], ["9 310", "visites site", "+21%", [4, 5, 5, 6, 6, 7, 7, 8, 8, 8, 9, 9.3]]],
+    social: [
+      { p: "Instagram", ic: "📷", h: "@villariviera.mc", f: "38,1k", d: "+1,9%", er: "3,2% d'engagement · 9 posts" },
+      { p: "LinkedIn", ic: "💼", h: "Villa Riviera", f: "4,6k", d: "+2,4%", er: "2,7% d'engagement · 4 posts" },
+    ],
+    ads: [
+      { n: "Réservations — saison", plat: "Meta Ads", on: true, spend: "640 € / 900 €", roas: "ROAS 3,4 · CPC 0,52 €" },
+      { n: "Display — luxe Riviera", plat: "Google Ads", on: true, spend: "500 € / 700 €", roas: "CPM 3,40 € · 210k impr." },
+    ],
+    web: { s: [4, 5, 5, 6, 6, 7, 7, 8, 8, 8, 9, 9.3], conv: "1,8% de conversion · réservation moyenne 410 €", top: [["/suites", "3 020"], ["/offres-ete", "1 890"], ["/spa", "1 260"]] },
+    seo: [{ kw: "villa luxe monaco", pos: 5, d: "▲1" }, { kw: "hôtel spa riviera", pos: 9, d: "▲3" }, { kw: "suite vue mer monaco", pos: 2, d: "＝" }],
+    notes: [
+      { t: "Les stories « coulisses » font ×2 de complétion vs posts produits. En caler 3/semaine.", m: "Campagne · 14 juil · Sacha" },
+      { t: "SEO : gagner la position 1 sur « suite vue mer monaco » = ~40 clics/j. Optimiser le title + FAQ.", m: "SEO · 9 juil · Lucas Dubois" },
+    ] },
+  { id: "solaris", name: "Solaris",
+    kpis: [["54k", "portée 30 j", "+32%", [20, 24, 22, 28, 30, 34, 33, 38, 42, 46, 50, 54]], ["780 €", "dépense pubs", "+15%", [5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11]], ["5,6", "ROAS moyen", "+1,1", [3.8, 4.0, 4.2, 4.1, 4.5, 4.7, 4.9, 5.0, 5.2, 5.4, 5.5, 5.6]], ["6 480", "visites site", "+40%", [2, 2.4, 2.8, 3, 3.4, 3.8, 4.1, 4.6, 5, 5.5, 6, 6.5]]],
+    social: [
+      { p: "Instagram", ic: "📷", h: "@solaris.eyewear", f: "8,9k", d: "+11,2%", er: "7,8% d'engagement · 14 posts" },
+      { p: "TikTok", ic: "🎵", h: "@solaris.eyewear", f: "21,4k", d: "+24,6%", er: "9,3% d'engagement · 11 vidéos" },
+    ],
+    ads: [
+      { n: "Lancement — solaires 2026", plat: "Meta Ads", on: true, spend: "540 € / 800 €", roas: "ROAS 6,1 · CPC 0,29 €" },
+      { n: "Retargeting — paniers", plat: "Meta Ads", on: true, spend: "240 € / 300 €", roas: "ROAS 8,4 · CPA 6,20 €" },
+    ],
+    web: { s: [2, 2.4, 2.8, 3, 3.4, 3.8, 4.1, 4.6, 5, 5.5, 6, 6.5], conv: "3,1% de conversion · panier moyen 129 €", top: [["/solaires-2026", "2 840"], ["/best-sellers", "1 410"], ["/e-shop", "980"]] },
+    seo: [{ kw: "lunettes soleil créateur", pos: 6, d: "▲4" }, { kw: "solaris eyewear", pos: 1, d: "＝" }, { kw: "lunettes bois france", pos: 11, d: "▲2" }],
+    notes: [
+      { t: "Le shoot d'Èze surperforme partout : 3 posts dans le top 5 all-time. Prévoir un shoot « lifestyle plage » en août.", m: "Campagne · 17 juil · Astrid Berges" },
+    ] },
+];
+let agCur = "solene";
+function renderArgos() {
+  $("agClients").innerHTML = AG_CLIENTS.map((c) => `<span data-cl="${c.id}" class="${agCur === c.id ? "active" : ""}">${escapeHtml(c.name)}</span>`).join("");
+  const c = AG_CLIENTS.find((x) => x.id === agCur); if (!c) return;
+  const hero = c.kpis.map(([n, l, d, s]) => {
+    const up = !d.startsWith("−") && !d.startsWith("▼");
+    return `<div class="ag-kpi"><div class="n">${n}</div><div class="l">${l} <span class="${up ? "ag-up" : "ag-down"}">${up ? "▲" : "▼"} ${d.replace("−", "")}</span></div>${sparkSvg(s)}</div>`;
+  }).join("");
+  const social = c.social.map((s) => `<div class="ag-row"><div class="ic">${s.ic}</div><div><div class="nm">${s.p} <span style="color:var(--dim);font-weight:400;font-size:11.5px;">${escapeHtml(s.h)}</span></div><div class="sub">${s.er}</div></div><div class="val"><div class="b">${s.f}</div><div class="s ag-up">▲ ${s.d}</div></div></div>`).join("");
+  const ads = c.ads.map((a) => `<div class="ag-row"><span class="ag-state${a.on ? "" : " off"}">${a.on ? "active" : "finie"}</span><div><div class="nm">${escapeHtml(a.n)}</div><div class="sub">${a.plat} · ${a.roas}</div></div><div class="val"><div class="b">${a.spend}</div><div class="s">dépensé / budget</div></div></div>`).join("");
+  const top = c.web.top.map(([p, v]) => `<div class="ag-row" style="padding:8px 0;"><div style="font-size:12.5px;color:var(--muted);">${p}</div><div class="val"><div class="b" style="font-size:12.5px;">${v}</div></div></div>`).join("");
+  const seo = c.seo.map((s) => `<div class="ag-row"><span class="ag-pos${s.pos <= 3 ? " top" : ""}">${s.pos}</span><div><div class="nm" style="font-weight:500;">${escapeHtml(s.kw)}</div></div><div class="val"><div class="s ${s.d.startsWith("▼") ? "ag-down" : "ag-up"}">${s.d}</div></div></div>`).join("");
+  const notes = c.notes.map((n) => `<div class="ag-note"><div class="t">${escapeHtml(n.t)}</div><div class="m">${n.m}</div></div>`).join("");
+  $("agBody").innerHTML = `
+    <div class="ag-hero">${hero}</div>
+    <div class="ag-grid">
+      <div><div class="ag-sect">Réseaux sociaux</div>${social}<div class="ag-sect">Publicité</div>${ads}</div>
+      <div><div class="ag-sect">Site web</div><div style="display:flex;align-items:center;gap:18px;padding:10px 0 4px;">${sparkSvg(c.web.s, 190, 44)}<div style="font-size:11.5px;color:var(--dim);">${c.web.conv}</div></div>${top}<div class="ag-sect">Positions SEO</div>${seo}<div class="ag-sect">Notes campagnes & SEO</div>${notes}</div>
+    </div>`;
+}
+$("agClients").onclick = (e) => { const s = e.target.closest("[data-cl]"); if (s) { agCur = s.dataset.cl; renderArgos(); } };
+document.querySelector('.nav-item[data-page="argos"]').addEventListener("click", renderArgos);
+
+// ══════════ ATLAS (drive — démo) ══════════
+const atIcon = (n) => /\.(jpe?g|png|gif|webp|heic|tiff?)$/i.test(n) ? "🖼️" : /\.(mp4|mov|avi)$/i.test(n) ? "🎬" : /\.(pdf)$/i.test(n) ? "📄" : /\.(docx?|pages)$/i.test(n) ? "📝" : /\.(xlsx?|numbers|csv)$/i.test(n) ? "📊" : /\.(zip|rar)$/i.test(n) ? "📦" : /\.(psd|ai|indd|afphoto)$/i.test(n) ? "🎨" : /\.(key|pptx?)$/i.test(n) ? "📽️" : "📁";
+const F = (name, size, when) => ({ t: "f", name, size, when });
+const D = (name, when, children) => ({ t: "d", name, when, children });
+const AT_ROOT = D("Atlas", "", [
+  D("Clients", "12 juil 2026", [
+    D("Maison Solène", "17 juil 2026", [F("brief_rentree_2026.pdf", "840 Ko", "17 juil"), F("devis_signe.pdf", "610 Ko", "10 juil"), F("moodboard_v3.pdf", "6,2 Mo", "8 juil"), D("Logos & charte", "2 mai", [F("logo_solene.ai", "4,1 Mo", "2 mai"), F("charte_solene.pdf", "12 Mo", "2 mai")])]),
+    D("Villa Riviera", "17 juil 2026", [F("pack_reseaux_juillet.zip", "212 Mo", "17 juil"), F("planning_publications.xlsx", "84 Ko", "15 juil")]),
+    D("Solaris", "16 juil 2026", [F("selection_eze_v1.pdf", "18,4 Mo", "16 juil"), F("contrat_2026.pdf", "390 Ko", "1 juin")]),
+  ]),
+  D("Shoots 2026", "15 juil 2026", [
+    D("Émotions Arts — 15 juil", "15 juil 2026", [F("rushs_jour1.zip", "48,2 Go", "15 juil"), F("selection_lucas.xmp", "1,1 Mo", "16 juil"), F("teaser_v2.mp4", "148 Mo", "17 juil")]),
+    D("Solaris — Èze", "3 juil 2026", [F("raw_eze.zip", "36,8 Go", "3 juil"), F("retouches_finales.zip", "2,4 Go", "9 juil")]),
+    D("Mariage — Villa Ephrussi", "25 juil 2026", []),
+  ]),
+  D("Admin", "1 juil 2026", [
+    D("Factures", "1 juil 2026", [F("facture_2026-041.pdf", "120 Ko", "1 juil"), F("facture_2026-040.pdf", "118 Ko", "24 juin"), F("facture_2026-039.pdf", "122 Ko", "18 juin")]),
+    D("Contrats", "12 juin 2026", [F("contrat_solaris.pdf", "390 Ko", "1 juin"), F("contrat_riviera.pdf", "410 Ko", "12 mai")]),
+  ]),
+  D("Templates", "20 mai 2026", [F("devis_template.docx", "96 Ko", "20 mai"), F("planning_shoot.xlsx", "72 Ko", "20 mai"), F("call_sheet.pages", "204 Ko", "20 mai")]),
+  F("charte_orphic.pdf", "9,8 Mo", "14 avr"),
+  F("presentation_agence.key", "84 Mo", "2 juin"),
+]);
+let atPath = [];                                            // pile de dossiers depuis la racine
+const atCwd = () => atPath.reduce((d, i) => d.children[i], AT_ROOT);
+let atToastT = null;
+function atToast(msg) {
+  const t = $("atToast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(atToastT); atToastT = setTimeout(() => t.classList.remove("show"), 2400);
+}
+function renderAtlas() {
+  const cwd = atCwd();
+  let crumbs = `<span class="${atPath.length ? "" : "cur"}" data-cr="-1">Atlas</span>`;
+  let d = AT_ROOT;
+  atPath.forEach((idx, i) => { d = d.children[idx]; crumbs += `<i>›</i><span class="${i === atPath.length - 1 ? "cur" : ""}" data-cr="${i}">${escapeHtml(d.name)}</span>`; });
+  $("atCrumbs").innerHTML = crumbs;
+  const q = ($("atSearch").value || "").toLowerCase();
+  const items = cwd.children
+    .map((c, i) => ({ ...c, i }))
+    .filter((c) => !q || c.name.toLowerCase().includes(q))
+    .sort((a, b) => (a.t === b.t ? a.name.localeCompare(b.name) : a.t === "d" ? -1 : 1));
+  $("atList").innerHTML = items.length ? items.map((c) => c.t === "d"
+    ? `<div class="at-row" data-dir="${c.i}"><div class="ic">📁</div><div><div class="nm">${escapeHtml(c.name)}</div><div class="sub">${c.children.length} élément${c.children.length > 1 ? "s" : ""}</div></div><div class="meta">${c.when || ""}</div></div>`
+    : `<div class="at-row" data-file="${c.i}"><div class="ic">${atIcon(c.name)}</div><div><div class="nm">${escapeHtml(c.name)}</div><div class="sub">${c.size || ""}</div></div><div class="meta">${c.when || ""}</div><span class="act" data-dl="${c.i}" title="Télécharger">⤓</span></div>`
+  ).join("") : '<div class="rb-empty" style="padding:40px 10px;">Dossier vide — glisse ou uploade des fichiers.</div>';
+  const used = 62;                                          // % de stockage (démo)
+  $("atUsageBar").style.width = used + "%";
+  $("atUsageTxt").textContent = "124 Go utilisés sur 200 Go";
+}
+$("atList").onclick = (e) => {
+  const dl = e.target.closest("[data-dl]");
+  if (dl) { atToast("⤓ Téléchargement de « " + atCwd().children[+dl.dataset.dl].name + " »… (démo)"); return; }
+  const dir = e.target.closest("[data-dir]");
+  if (dir) { atPath.push(+dir.dataset.dir); $("atSearch").value = ""; renderAtlas(); return; }
+  const f = e.target.closest("[data-file]");
+  if (f) atToast("Aperçu de « " + atCwd().children[+f.dataset.file].name + " » (démo)");
+};
+$("atCrumbs").onclick = (e) => { const c = e.target.closest("[data-cr]"); if (!c) return; const i = +c.dataset.cr; atPath = i < 0 ? [] : atPath.slice(0, i + 1); renderAtlas(); };
+$("atSearch").addEventListener("input", renderAtlas);
+$("atUpload").onclick = () => {
+  const inp = document.createElement("input"); inp.type = "file"; inp.multiple = true;
+  inp.onchange = () => {
+    const now = new Date(), when = now.getDate() + " " + MON_ABBR[now.getMonth()].replace(".", "");
+    for (const f of inp.files) atCwd().children.push(F(f.name, f.size > 1048576 ? (f.size / 1048576).toFixed(1).replace(".", ",") + " Mo" : Math.max(1, Math.round(f.size / 1024)) + " Ko", when));
+    renderAtlas(); atToast("⤒ " + inp.files.length + " fichier(s) uploadé(s) (démo)");
+  };
+  inp.click();
+};
+$("atNewFolder").onclick = () => { const f = $("atFolderForm"); f.style.display = f.style.display === "none" ? "" : "none"; if (f.style.display === "") $("atFolderName").focus(); };
+$("atFolderCreate").onclick = () => {
+  const name = $("atFolderName").value.trim(); if (!name) return;
+  const now = new Date();
+  atCwd().children.push(D(name, now.getDate() + " " + MON_ABBR[now.getMonth()].replace(".", ""), []));
+  $("atFolderName").value = ""; $("atFolderForm").style.display = "none";
+  renderAtlas();
+};
+document.querySelector('.nav-item[data-page="atlas"]').addEventListener("click", renderAtlas);
+
+// ══════════ APOLLON (galerie des shoots — démo) ══════════
+const AP_TINT = { warm: ["#6b5642", "#241d16"], gold: ["#7a6a4a", "#28231b"], sage: ["#5c665a", "#1f231f"], slate: ["#4e5a68", "#1b2026"], mauve: ["#665667", "#211c24"], steel: ["#5a5e66", "#1f2124"] };
+function apBg(tint, seed) {
+  const [a, b] = AP_TINT[tint] || AP_TINT.steel;
+  const ang = 100 + (seed * 47) % 140, px = 15 + (seed * 31) % 70, py = 10 + (seed * 53) % 45;
+  return `background:radial-gradient(circle at ${px}% ${py}%, rgba(255,255,255,.12), transparent 55%),linear-gradient(${ang}deg,${a},${b});`;
+}
+// Chaque shoot porte ses métadonnées (client, date, lieu, équipe, type, livrables) — la base Olympus stockera tout ça.
+const AP_SHOOTS = [
+  { id: "emotions", title: "Émotions Arts — tournage & portraits", client: "Émotions Arts", date: "15 juillet 2026", type: "both", lieu: "Studio, Nice", team: "Sacha · Lucas Dubois", photos: 124, videos: 6, deliv: "Teaser 30 s · 12 portraits retouchés", tint: "warm" },
+  { id: "solaris-eze", title: "Solaris — campagne Èze", client: "Solaris", date: "3 juillet 2026", type: "photo", lieu: "Èze village", team: "Astrid Berges · Sacha", photos: 210, videos: 0, deliv: "25 visuels e-shop · 6 verticaux réseaux", tint: "gold" },
+  { id: "riviera-suites", title: "Villa Riviera — architecture & suites", client: "Villa Riviera", date: "28 juin 2026", type: "both", lieu: "Monaco", team: "Sacha · Lucas Dubois", photos: 96, videos: 4, deliv: "Visite 60 s · 18 photos presse", tint: "slate" },
+  { id: "solene-lookbook", title: "Maison Solène — lookbook printemps", client: "Maison Solène", date: "12 mai 2026", type: "photo", lieu: "Villa, Cannes", team: "Astrid Berges · Sacha", photos: 168, videos: 0, deliv: "Lookbook 48 pages · pack réseaux", tint: "sage" },
+  { id: "btp-corporate", title: "BTP Azur — film corporate", client: "BTP Azur", date: "10 juin 2026", type: "video", lieu: "Sophia Antipolis", team: "Lucas Dubois", photos: 40, videos: 3, deliv: "Film 90 s · 2 cutdowns", tint: "steel" },
+  { id: "ateliern", title: "Atelier N — lookbook automne", client: "Atelier N", date: "22 avril 2026", type: "photo", lieu: "Paris 3ᵉ", team: "Sacha", photos: 142, videos: 0, deliv: "Lookbook · 30 visuels presse", tint: "mauve" },
+];
+function apItems(s) {
+  const n = Math.min(18, s.photos ? 14 : 6) + (s.videos ? Math.min(4, s.videos) : 0);
+  const items = [];
+  for (let i = 0; i < n; i++) {
+    const seed = s.id.length * 7 + i * 13;
+    const isVid = s.videos > 0 && i % 6 === 4 && items.filter((x) => x.v).length < s.videos;
+    items.push({ v: isVid, h: 1 + (seed % 4), seed, dur: isVid ? `0:${String(12 + (seed % 45)).padStart(2, "0")}` : null });
+  }
+  return items;
+}
+const AP_TYPE = { photo: "Photo", video: "Vidéo", both: "Photo + Vidéo" };
+let apFilter = "all", apAlbum = null, apLightIdx = 0;
+function renderApollon() {
+  const q = ($("apSearch").value || "").toLowerCase();
+  if (apAlbum) {
+    const s = AP_SHOOTS.find((x) => x.id === apAlbum); if (!s) { apAlbum = null; return renderApollon(); }
+    const items = apItems(s);
+    $("apBody").innerHTML = `
+      <div class="ap-back" data-back>‹ Tous les shoots</div>
+      <div class="ap-ahead">
+        <div><div class="ap-atitle">${escapeHtml(s.title)}</div>
+        <div class="ap-ameta">${escapeHtml(s.client)} · ${s.date} · ${escapeHtml(s.lieu)} · ${AP_TYPE[s.type]} · ${escapeHtml(s.team)}<br>Livrables : ${escapeHtml(s.deliv)}</div></div>
+        <div class="ap-astats"><div class="ap-astat"><div class="n">${s.photos}</div><div class="l">photos</div></div><div class="ap-astat"><div class="n">${s.videos}</div><div class="l">vidéos</div></div></div>
+      </div>
+      <div class="ap-masonry">${items.map((it, i) => `<div class="ap-item h${it.h}" data-it="${i}"><div class="bg" style="${apBg(s.tint, it.seed)}"></div>${it.v ? `<div class="vplay2">▶</div><span class="dur">${it.dur}</span>` : ""}</div>`).join("")}</div>`;
+    return;
+  }
+  const list = AP_SHOOTS.filter((s) => (apFilter === "all" || s.type === apFilter) && (!q || [s.title, s.client, s.lieu].join(" ").toLowerCase().includes(q)));
+  $("apBody").innerHTML = list.length
+    ? `<div class="ap-grid">${list.map((s, i) => `
+        <div class="ap-card" data-album="${s.id}">
+          <div class="bg" style="${apBg(s.tint, i * 17 + 5)}"></div>
+          <span class="badge">${AP_TYPE[s.type]}</span>
+          <div class="scrim"></div>
+          <div class="info"><div class="t">${escapeHtml(s.title)}</div><div class="m">${escapeHtml(s.client)} · ${s.date} · ${s.photos} photos${s.videos ? " · " + s.videos + " vidéos" : ""}</div></div>
+        </div>`).join("")}</div>`
+    : '<div class="rb-empty" style="padding:40px 10px;">Aucun shoot ne correspond.</div>';
+}
+function apOpenLight(i) {
+  const s = AP_SHOOTS.find((x) => x.id === apAlbum); if (!s) return;
+  const items = apItems(s);
+  apLightIdx = (i + items.length) % items.length;
+  const it = items[apLightIdx];
+  $("apLight").innerHTML = `
+    <div class="ap-lbox"><div style="position:absolute;inset:0;${apBg(s.tint, it.seed)}"></div>${it.v ? `<div class="vplay2" style="position:absolute;inset:0;display:grid;place-items:center;font-size:44px;color:rgba(255,255,255,.92);">▶</div>` : ""}
+      <div class="ap-lcap">${escapeHtml(s.title)}<div class="s">${it.v ? "Vidéo · " + it.dur : "Photo"} · ${apLightIdx + 1} / ${items.length} · ${escapeHtml(s.lieu)}</div></div></div>
+    <button class="ap-lnav" style="left:26px;" data-lprev>‹</button>
+    <button class="ap-lnav" style="right:26px;" data-lnext>›</button>
+    <button class="ap-lclose" data-lclose>✕</button>`;
+  $("apLight").classList.add("show");
+}
+$("apBody").onclick = (e) => {
+  if (e.target.closest("[data-back]")) { apAlbum = null; renderApollon(); return; }
+  const al = e.target.closest("[data-album]");
+  if (al) { apAlbum = al.dataset.album; renderApollon(); return; }
+  const it = e.target.closest("[data-it]");
+  if (it) apOpenLight(+it.dataset.it);
+};
+$("apLight").onclick = (e) => {
+  if (e.target.closest("[data-lprev]")) return apOpenLight(apLightIdx - 1);
+  if (e.target.closest("[data-lnext]")) return apOpenLight(apLightIdx + 1);
+  if (e.target.closest("[data-lclose]") || e.target === $("apLight")) $("apLight").classList.remove("show");
+};
+$("apFilters").onclick = (e) => {
+  const s = e.target.closest("[data-t]"); if (!s) return;
+  apFilter = s.dataset.t;
+  $("apFilters").querySelectorAll("span").forEach((x) => x.classList.toggle("active", x === s));
+  apAlbum = null; renderApollon();
+};
+$("apSearch").addEventListener("input", () => { apAlbum = null; renderApollon(); });
+$("apImport").onclick = () => atToast("＋ Import à venir — les médias et leurs métadonnées vivront dans la base Olympus.");
+document.querySelector('.nav-item[data-page="apollon"]').addEventListener("click", renderApollon);
+
+// ══════════ MNÉMOSYNE (notes — démo persistée en local) ══════════
+const MN_KEY = "mnemosyne-notes";
+function mnSeed() {
+  const now = Date.now(), d = (days) => new Date(now - days * 864e5).toISOString();
+  return [
+    { id: "n1", title: "CR — réunion équipe du 14", body: "Points clés :\n\n— Maison Solène : shoot validé samedi 18, studio Cannes. Astrid cale la shotlist.\n— Villa Riviera : pack réseaux livré, attente retour Marc.\n— Solaris : la campagne Èze surperforme, prévoir un shoot lifestyle plage en août.\n— Recrutement : on relance l'annonce assistant·e prod en septembre.", when: d(4), pinned: true, people: ["Lucas Dubois", "Astrid Berges"], event: null },
+    { id: "n2", title: "Checklist matériel — shoot Solène", body: "Boîtiers :\n— A7 IV ×2 + FX6\n— 24-70 GM II, 85 1.4, 35 1.4\n\nLumière :\n— 2× Aputure 600d + softbox 120\n— Réflecteurs, drapeaux\n\nDivers :\n— Fond 2,4 m (blanc + sable)\n— Batteries ×8, CFexpress ×6\n— Steamer pour les vêtements !", when: d(1), pinned: true, people: ["Lucas Dubois"], event: { title: "Shoot produit — Maison Solène", date: "2026-07-18" } },
+    { id: "n3", title: "Idées contenu — Solaris août", body: "1. Série « golden hour » sur la plage de la Mala\n2. Macro sur les charnières bois — process artisanal\n3. Duo avec créateur local (cross-post)\n4. UGC : reprendre les 3 meilleurs posts clients\n5. Teaser collection automne fin août", when: d(2), pinned: false, people: ["Astrid Berges"], event: null },
+    { id: "n4", title: "Process livraison client", body: "1. Sélection dans Apollon (48 h après le shoot)\n2. Retouche fine (5 j ouvrés)\n3. Upload Atlas → dossier client\n4. Mail Iris avec lien + suivi d'ouverture\n5. Événement « Rendu » dans Chronos\n6. Facture à J+3 après livraison", when: d(9), pinned: false, people: ["Lucas Dubois", "Astrid Berges"], event: null },
+    { id: "n5", title: "Idées perso", body: "— Nouveau boîtier : attendre l'annonce de septembre\n— Formation colorimétrie DaVinci (Lucas intéressé aussi)\n— Regarder les studios plus grands à Sophia", when: d(6), pinned: false, people: [], event: null },
+  ];
+}
+let mnNotes = [], mnSel = null, mnEvts = [];
+function mnLoad() { try { mnNotes = JSON.parse(localStorage.getItem(MN_KEY)) || null; } catch { mnNotes = null; } if (!mnNotes) { mnNotes = mnSeed(); mnSave(); } }
+function mnSave() { localStorage.setItem(MN_KEY, JSON.stringify(mnNotes)); }
+const mnWhen = (iso) => { const dd = new Date(iso), n = new Date(); const same = dd.toDateString() === n.toDateString(); return same ? "Aujourd'hui · " + dd.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }) : dd.getDate() + " " + MONTHS[dd.getMonth()] + " " + dd.getFullYear(); };
+function mnMembers() { const me = ($("accName").textContent || "Sacha").trim(); return [...new Set([me, ...FAKE_MEMBERS.map((f) => f.name)])]; }
+function mnRow(n) {
+  const avs = n.people.length ? `<span class="mn-avs">${n.people.map((p) => `<i>${initialsOf(p)}</i>`).join("")}</span>` : `<span>🔒 privée</span>`;
+  const ev = n.event ? `<span>📅 ${escapeHtml(n.event.title)}</span>` : "";
+  return `<div class="mn-row${mnSel === n.id ? " active" : ""}" data-note="${n.id}">
+    <div class="t">${escapeHtml(n.title || "Sans titre")}</div>
+    <div class="p">${escapeHtml((n.body || "").replace(/\n+/g, " ").slice(0, 64) || "Note vide")}</div>
+    <div class="m"><span class="mn-pin${n.pinned ? " on" : ""}" data-pin="${n.id}" title="Épingler">${n.pinned ? "★" : "☆"}</span>${avs}${ev}</div>
+  </div>`;
+}
+function renderMnList() {
+  const q = ($("mnSearch").value || "").toLowerCase();
+  const match = (n) => !q || (n.title + " " + n.body).toLowerCase().includes(q);
+  const sorted = mnNotes.slice().sort((a, b) => new Date(b.when) - new Date(a.when));
+  const pinned = sorted.filter((n) => n.pinned && match(n)), rest = sorted.filter((n) => !n.pinned && match(n));
+  $("mnList").innerHTML = (pinned.length ? `<div class="mn-sec">Épinglées</div>` + pinned.map(mnRow).join("") : "") +
+    (rest.length ? `<div class="mn-sec">Notes</div>` + rest.map(mnRow).join("") : "") +
+    (!pinned.length && !rest.length ? '<div class="rb-empty" style="padding:24px 4px;">Aucune note.</div>' : "");
+}
+function renderMnPeople(n) {
+  $("mnPeople").innerHTML = mnMembers().map((p) => `<span class="mn-person${n.people.includes(p) ? " on" : ""}" data-p="${escapeHtml(p)}"><span class="av">${initialsOf(p)}</span>${escapeHtml(p)}</span>`).join("");
+}
+async function mnLoadEvents() {
+  const from = new Date(Date.now() - 30 * 864e5), to = new Date(Date.now() + 120 * 864e5);
+  const r = await window.olympus.chronosList(isoD(from.getFullYear(), from.getMonth(), from.getDate()), isoD(to.getFullYear(), to.getMonth(), to.getDate()));
+  mnEvts = (r.ok ? r.events : []).filter((e) => !e.title.startsWith("Rendu — "));
+  const n = mnNotes.find((x) => x.id === mnSel);
+  $("mnEvent").innerHTML = '<option value="">— aucun —</option>' + mnEvts.map((e) => `<option value="${e.id}"${n && n.event && n.event.title === e.title ? " selected" : ""}>${new Date(e.date + "T00:00").toLocaleDateString("fr-FR")} — ${escapeHtml(e.title)}</option>`).join("");
+}
+function openNote(id) {
+  const n = mnNotes.find((x) => x.id === id); if (!n) return;
+  mnSel = id;
+  $("mnTitle").value = n.title; $("mnBody").value = n.body;
+  $("mnWhen").textContent = mnWhen(n.when);
+  renderMnPeople(n); renderMnList(); mnLoadEvents();
+}
+function renderMnemosyne() { mnLoad(); if (!mnSel && mnNotes.length) mnSel = mnNotes.slice().sort((a, b) => new Date(b.when) - new Date(a.when))[0].id; renderMnList(); if (mnSel) openNote(mnSel); }
+let mnT = null;
+function mnEdited() {
+  const n = mnNotes.find((x) => x.id === mnSel); if (!n) return;
+  n.title = $("mnTitle").value; n.body = $("mnBody").value; n.when = new Date().toISOString();
+  $("mnWhen").textContent = mnWhen(n.when);
+  mnSave();
+  clearTimeout(mnT); mnT = setTimeout(renderMnList, 350);
+}
+$("mnTitle").addEventListener("input", mnEdited);
+$("mnBody").addEventListener("input", mnEdited);
+$("mnSearch").addEventListener("input", renderMnList);
+$("mnNew").onclick = () => {
+  const n = { id: "n" + Date.now(), title: "", body: "", when: new Date().toISOString(), pinned: false, people: [], event: null };
+  mnNotes.push(n); mnSave(); openNote(n.id); $("mnTitle").focus();
+};
+$("mnDelete").onclick = () => {
+  if (!mnSel) return;
+  mnNotes = mnNotes.filter((x) => x.id !== mnSel); mnSave();
+  mnSel = null; renderMnemosyne(); atToast("Note supprimée.");
+};
+$("mnList").onclick = (e) => {
+  const pin = e.target.closest("[data-pin]");
+  if (pin) { const n = mnNotes.find((x) => x.id === pin.dataset.pin); if (n) { n.pinned = !n.pinned; mnSave(); renderMnList(); } return; }
+  const row = e.target.closest("[data-note]"); if (row) openNote(row.dataset.note);
+};
+$("mnPeople").onclick = (e) => {
+  const p = e.target.closest("[data-p]"); if (!p) return;
+  const n = mnNotes.find((x) => x.id === mnSel); if (!n) return;
+  const name = p.dataset.p;
+  n.people = n.people.includes(name) ? n.people.filter((x) => x !== name) : [...n.people, name];
+  mnSave(); renderMnPeople(n); renderMnList();
+};
+$("mnEvent").onchange = () => {
+  const n = mnNotes.find((x) => x.id === mnSel); if (!n) return;
+  const ev = mnEvts.find((e) => String(e.id) === $("mnEvent").value);
+  n.event = ev ? { title: ev.title, date: ev.date } : null;
+  mnSave(); renderMnList();
+};
+document.querySelector('.nav-item[data-page="mnemosyne"]').addEventListener("click", renderMnemosyne);
 
 // ══════════ CONTRÔLE PAR CLAUDE CODE ══════════
 async function refreshClaude() {
@@ -605,7 +1457,9 @@ function enterHub(user) {
   $("profRole").textContent = user.role === "super_admin" ? "Super admin — accès complet + gestion des membres." : "Membre — accès aux apps de l'équipe.";
   $("profAvatar").textContent = initial;
   applyRole();
-  refreshLocks(); refreshEnv(); refreshTitan(); startChat(); renderChronos(); startPresence(); refreshIris(); refreshClaude(); refreshConnections();
+  wheelDate = new Date(); calSelected = isoD(wheelDate.getFullYear(), wheelDate.getMonth(), wheelDate.getDate()); // jour sélectionné = aujourd'hui
+  refreshLocks(); refreshEnv(); refreshTitan(); startChat(); renderChronos(); renderWheel(); startPresence(); refreshIris(); refreshClaude(); refreshConnections();
+  renderArgos(); renderAtlas(); renderApollon(); renderMnemosyne();   // pré-rendu des apps de l'espace de travail
   if (currentRole === "super_admin") refreshMembers();
   goTo("hermes");
 }

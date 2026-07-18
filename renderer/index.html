@@ -52,7 +52,11 @@
     color:var(--txt);font:14.5px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
     -webkit-font-smoothing:antialiased;overflow:hidden;user-select:none;
   }
-  #hub{display:grid;grid-template-columns:236px 1fr 268px;height:100vh;}
+  #hub{display:grid;grid-template-columns:236px 1fr 268px;height:100vh;position:relative;}
+  .cal-div{position:absolute;left:0;right:0;height:1px;color:var(--txt);background:currentColor;opacity:.55;box-shadow:0 0 10px 0 currentColor,0 0 3px 0 currentColor;z-index:2;}
+  /* Fondu couleur du fond sous la roue (masque le calendrier derrière les overlays) */
+  #calFade{display:none;position:absolute;top:calc(50% - 220px);right:447px;width:240px;height:440px;z-index:5;pointer-events:none;background:radial-gradient(1100px 600px at 12% -12%, var(--bg-accent), transparent 62%),linear-gradient(160deg, var(--bg1), var(--bg2));background-attachment:fixed;-webkit-mask-image:radial-gradient(ellipse 48% 50% at 50% 50%, #000 62%, transparent 100%);mask-image:radial-gradient(ellipse 48% 50% at 50% 50%, #000 62%, transparent 100%);}
+  #hub.with-rail #calFade{display:block;}
 
   .sidebar{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;padding:22px 14px;-webkit-app-region:drag;}
   .side-brand{font-size:17px;letter-spacing:.16em;font-weight:300;padding:26px 12px 18px;}
@@ -142,9 +146,108 @@
   .member-self{font-size:11px;color:var(--dim);flex-shrink:0;}
 
   /* ── Hermès (chat) ── */
-  #page-hermes.show{display:flex;flex-direction:column;height:100%;max-width:none;padding-bottom:0;}
-  #page-hermes .page-head{flex-shrink:0;max-width:none;}
-  #chatMessages{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding-right:8px;}
+  #page-hermes.show{display:flex;height:100%;max-width:none;padding:0 30px 0 0;}
+  /* ── Chronos (grille + roue/agenda) ── */
+  .chronos-wrap{display:flex;gap:28px;align-items:flex-start;}
+  .chronos-main{flex:1;min-width:0;}
+  .chronos-side{width:250px;flex-shrink:0;display:flex;flex-direction:column;gap:16px;padding-top:4px;}
+  .wheel{display:flex;justify-content:center;user-select:none;}
+  #wheelSvg{width:144px;height:270px;cursor:ns-resize;touch-action:none;}
+  .wtick{stroke:var(--txt);stroke-width:1.4;stroke-linecap:round;}
+  .whero{fill:var(--txt);font-size:21px;font-weight:300;text-anchor:middle;dominant-baseline:central;letter-spacing:-.01em;text-transform:capitalize;}
+  .wctx{fill:var(--muted);font-size:21px;font-weight:300;text-anchor:end;dominant-baseline:central;letter-spacing:-.01em;text-transform:capitalize;}
+  .wctx.r{text-anchor:start;}
+  .whero,.wctx{transition:fill .12s;}
+  .wctx.hot{fill:var(--txt);}
+  .wg0{stop-color:var(--txt);stop-opacity:.2;}
+  .wg1{stop-color:var(--txt);stop-opacity:.06;}
+  .wg2{stop-color:var(--txt);stop-opacity:0;}
+  .wheel-nav-row{display:flex;justify-content:center;gap:16px;margin-top:-8px;}
+  .wheel-nav{width:26px;height:26px;border-radius:50%;background:var(--card);border:1px solid var(--line);color:var(--muted);cursor:pointer;font-size:14px;flex-shrink:0;box-shadow:var(--neu);transition:color .12s;}
+  .wheel-nav:hover{color:var(--txt);}
+  .wheel-gran{display:flex;justify-content:center;gap:4px;flex-wrap:wrap;}
+  .wheel-gran span{font-size:11.5px;color:var(--dim);cursor:pointer;padding:4px 10px;border-radius:20px;transition:color .12s,background .12s;}
+  .wheel-gran span:hover{color:var(--muted);}
+  .wheel-gran span.active{color:var(--txt);background:var(--card2);}
+  .agenda-head{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);text-align:center;}
+  .agenda-ev{padding:9px 0;font-size:13px;border-bottom:1px solid var(--line);color:var(--txt);}
+  .agenda-ev:last-child{border-bottom:none;}
+  .agenda-ev{cursor:pointer;transition:color .12s;}
+  .agenda-ev:hover .t,.agenda-ev:hover{color:var(--txt);}
+  .agenda-ev .t{color:var(--dim);font-size:11.5px;margin-top:2px;}
+  .agenda-ev.perso,.agenda-ev.perso .t{color:var(--err);}
+  /* ── Modal événement / brief ── */
+  .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;z-index:300;padding:24px;}
+  .modal-overlay.show{display:flex;animation:modalFade .18s ease;}
+  @keyframes modalFade{from{opacity:0}to{opacity:1}}
+  .modal-panel{background:var(--bg1);border:1px solid var(--line);border-radius:16px;width:560px;max-width:100%;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 24px 70px rgba(0,0,0,.5);animation:modalRise .2s cubic-bezier(.2,.8,.2,1);}
+  @keyframes modalRise{from{transform:translateY(14px);opacity:0}to{transform:translateY(0);opacity:1}}
+  .modal-head{display:flex;align-items:center;justify-content:space-between;padding:17px 22px;border-bottom:1px solid var(--line);flex-shrink:0;}
+  .modal-head h2{font-size:16px;font-weight:550;}
+  .modal-x{background:none;border:none;color:var(--muted);cursor:pointer;font-size:15px;line-height:1;padding:4px;transition:color .12s;}
+  .modal-x:hover{color:var(--txt);}
+  .modal-body{padding:18px 22px;overflow-y:auto;}
+  .modal-sep{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin:20px 0 12px;border-top:1px solid var(--line);padding-top:15px;}
+  .modal-foot{display:flex;align-items:center;gap:10px;padding:15px 22px;border-top:1px solid var(--line);flex-shrink:0;flex-wrap:wrap;}
+  .toggle-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px;}
+  .toggle{display:inline-flex;align-items:center;gap:9px;padding:8px 15px;border:1px solid var(--line);border-radius:22px;background:transparent;color:var(--muted);cursor:pointer;font-size:12.5px;transition:color .14s,border-color .14s;}
+  .toggle:hover{color:var(--txt);}
+  .toggle .dot{width:8px;height:8px;border-radius:50%;background:var(--line2);transition:background .14s;}
+  .toggle.on{color:var(--txt);border-color:var(--txt);}
+  .toggle.on .dot{background:var(--txt);}
+  /* ── Hermès (conversations + chat) ── */
+  .hm-wrap{display:flex;flex:1;min-width:0;height:100%;}
+  .hm-side{width:252px;flex-shrink:0;display:flex;flex-direction:column;padding:24px 18px 14px 40px;border-right:1px solid var(--line);}
+  .hm-search{width:100%;padding:9px 13px;border-radius:20px;background:var(--card);border:1px solid var(--line);color:var(--txt);font-size:13px;outline:none;margin-bottom:6px;}
+  .hm-search:focus{border-color:var(--line2);}
+  .hm-scroll{flex:1;overflow-y:auto;scrollbar-width:none;padding-bottom:30px;-webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 40px),transparent);mask-image:linear-gradient(to bottom,#000 calc(100% - 40px),transparent);}
+  .hm-scroll::-webkit-scrollbar{display:none;}
+  .hm-sec{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);margin:18px 2px 8px;display:flex;align-items:center;}
+  .hm-addg{margin-left:auto;cursor:pointer;font-size:13px;color:var(--dim);transition:color .12s,text-shadow .12s;}
+  .hm-addg:hover{color:var(--txt);text-shadow:0 0 9px var(--accent2);}
+  .hm-conv{display:flex;align-items:center;gap:11px;padding:8px 8px;margin:0 -8px;border-radius:10px;cursor:pointer;transition:background .12s;}
+  .hm-conv:hover{background:var(--card);}
+  .hm-conv.active{background:var(--card2);}
+  .hm-av{width:34px;height:34px;border-radius:50%;background:var(--card2);display:grid;place-items:center;font-size:12.5px;font-weight:600;color:var(--txt);position:relative;flex-shrink:0;}
+  .hm-av .st{position:absolute;bottom:-1px;right:-1px;width:9px;height:9px;border-radius:50%;border:2px solid var(--bg1);}
+  .hm-av .st.on{background:var(--ok);}
+  .hm-av .st.off{background:var(--err);}
+  .hm-cinfo{flex:1;min-width:0;}
+  .hm-cname{font-size:13.5px;font-weight:550;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .hm-clast{font-size:11.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;}
+  .hm-cmeta{display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0;}
+  .hm-ctime{font-size:10px;color:var(--dim);}
+  .hm-unread{min-width:17px;height:17px;border-radius:9px;background:var(--accent2);color:var(--accent-fg);font-size:10.5px;font-weight:700;display:grid;place-items:center;padding:0 5px;box-shadow:0 0 10px var(--accent2);}
+  .hm-chat{flex:1;min-width:0;display:flex;flex-direction:column;padding-left:26px;}
+  .hm-head{display:flex;align-items:center;gap:12px;padding:20px 0 12px;flex-shrink:0;}
+  .hm-hav{width:38px;height:38px;border-radius:50%;background:var(--card2);display:grid;place-items:center;font-weight:600;font-size:13.5px;flex-shrink:0;}
+  .hm-hname{font-size:15.5px;font-weight:650;}
+  .hm-hsub{font-size:11.5px;color:var(--dim);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .hm-day{align-self:center;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);margin:14px 0 4px;}
+  .hm-icbtn{width:44px;flex-shrink:0;border:1px solid var(--line);background:var(--card);color:var(--muted);border-radius:11px;font-size:16px;cursor:pointer;transition:color .12s,border-color .12s;}
+  .hm-icbtn:hover{color:var(--txt);border-color:var(--line2);}
+  .hm-icbtn.rec{color:var(--err);border-color:var(--err);animation:recPulse 1.1s infinite;}
+  @keyframes recPulse{50%{box-shadow:0 0 14px rgba(214,90,100,.45);}}
+  .vmsg{display:flex;align-items:center;gap:10px;padding:2px 0;}
+  .vplay{width:30px;height:30px;border-radius:50%;background:var(--card2);border:none;color:var(--txt);cursor:pointer;font-size:10px;display:grid;place-items:center;flex-shrink:0;}
+  .bubble.me .vplay{background:rgba(255,255,255,.22);color:#fff;}
+  .vbars{display:flex;align-items:center;gap:2px;height:26px;}
+  .vbars i{width:2.5px;border-radius:2px;background:currentColor;opacity:.6;}
+  .vmsg.playing .vbars i{animation:vjump .9s ease-in-out infinite;animation-delay:calc(var(--i)*.045s);}
+  @keyframes vjump{50%{transform:scaleY(1.55);}}
+  .vdur{font-size:11px;opacity:.7;}
+  .imsg{width:232px;border-radius:10px;overflow:hidden;margin:2px 0 4px;cursor:pointer;}
+  .imsg .ph{height:150px;display:grid;place-items:center;font-size:24px;color:rgba(255,255,255,.55);}
+  .imsg .cap{font-size:11px;opacity:.65;padding:5px 2px 1px;}
+  .fmsg{display:flex;align-items:center;gap:10px;padding:3px 0;}
+  .ficon{width:34px;height:34px;border-radius:9px;background:var(--card2);display:grid;place-items:center;font-size:15px;flex-shrink:0;}
+  .bubble.me .ficon{background:rgba(255,255,255,.18);}
+  .fname{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:190px;}
+  .fsize{font-size:10.5px;opacity:.6;}
+  .fdl{margin-left:6px;cursor:pointer;opacity:.65;font-size:15px;}
+  .fdl:hover{opacity:1;}
+  #chatMessages{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding:10px 8px 26px 0;scrollbar-width:none;-webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 26px,#000 calc(100% - 20px),transparent);mask-image:linear-gradient(to bottom,transparent 0,#000 26px,#000 calc(100% - 20px),transparent);}
+  #chatMessages::-webkit-scrollbar{display:none;}
   .bubble{max-width:70%;padding:9px 13px;border-radius:14px;font-size:14px;line-height:1.5;word-wrap:break-word;}
   .bubble .author{font-size:11px;color:var(--dim);margin-bottom:3px;font-weight:600;}
   .bubble.them{align-self:flex-start;background:var(--card);border:1px solid var(--line);border-bottom-left-radius:4px;}
@@ -157,9 +260,249 @@
   #chatSend{padding:12px 22px;border:0;border-radius:11px;background:linear-gradient(180deg,var(--accent2),var(--accent3));color:#fff;font-weight:600;cursor:pointer;}
   #chatSend:hover{filter:brightness(1.08);}
 
+  /* ── Iris (mailing + tracking) ── */
+  #page-iris.show{display:flex;flex-direction:column;height:100%;max-width:none;padding-bottom:0;}
+  .ir-topbar{display:flex;align-items:flex-end;gap:20px;flex-shrink:0;}
+  .ir-notice{font-size:12px;color:var(--muted);margin-top:12px;flex-shrink:0;}
+  .ir-stats{display:flex;gap:48px;margin:22px 0 4px;flex-shrink:0;}
+  .ir-stat .n{font-size:30px;font-weight:200;letter-spacing:-.02em;text-shadow:0 0 16px var(--accent2);}
+  .ir-stat .l{font-size:10px;letter-spacing:.11em;text-transform:uppercase;color:var(--dim);margin-top:3px;}
+  .ir-toolbar{display:flex;align-items:center;gap:16px;margin:14px 0 2px;flex-shrink:0;}
+  .ir-filters{display:flex;gap:4px;}
+  .ir-filters span{font-size:11.5px;color:var(--dim);cursor:pointer;padding:5px 12px;border-radius:20px;transition:color .12s,background .12s;}
+  .ir-filters span:hover{color:var(--muted);}
+  .ir-filters span.active{color:var(--txt);background:var(--card2);}
+  .ir-split{flex:1;display:flex;gap:0;min-height:0;}
+  .ir-list{flex:1.25;overflow-y:auto;scrollbar-width:none;padding:6px 22px 60px 0;-webkit-mask-image:linear-gradient(to bottom,transparent,#000 14px,#000 calc(100% - 40px),transparent);mask-image:linear-gradient(to bottom,transparent,#000 14px,#000 calc(100% - 40px),transparent);}
+  .ir-list::-webkit-scrollbar,.ir-detail::-webkit-scrollbar{display:none;}
+  .ir-row{display:flex;gap:13px;padding:13px 10px;border-bottom:1px solid var(--line);cursor:pointer;transition:background .12s;border-radius:10px;}
+  .ir-row:hover{background:var(--card);}
+  .ir-row.active{background:var(--card2);}
+  .ir-av{width:36px;height:36px;border-radius:50%;background:var(--card2);display:grid;place-items:center;font-weight:600;font-size:12.5px;flex-shrink:0;}
+  .ir-main{flex:1;min-width:0;}
+  .ir-name{font-size:13.5px;font-weight:600;}
+  .ir-name .cl{color:var(--dim);font-weight:400;font-size:11px;margin-left:8px;}
+  .ir-sub{font-size:12.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;}
+  .ir-prev{font-size:11.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;}
+  .ir-meta{display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0;}
+  .ir-when{font-size:10.5px;color:var(--dim);}
+  .ir-badges{display:flex;gap:5px;}
+  .ir-b{font-size:9.5px;padding:2px 8px;border-radius:10px;border:1px solid var(--line);color:var(--dim);white-space:nowrap;}
+  .ir-b.on{color:var(--txt);border-color:var(--line2);text-shadow:0 0 8px var(--accent2);}
+  .ir-detail{flex:1;overflow-y:auto;scrollbar-width:none;border-left:1px solid var(--line);padding:14px 4px 60px 28px;-webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 40px),transparent);mask-image:linear-gradient(to bottom,#000 calc(100% - 40px),transparent);}
+  .ir-dsubj{font-size:20px;font-weight:300;letter-spacing:-.01em;}
+  .ir-dmeta{font-size:12px;color:var(--dim);margin-top:5px;}
+  .ir-dbody{font-size:13px;color:var(--muted);line-height:1.65;margin-top:16px;padding:14px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);white-space:pre-line;}
+  .ir-kpis{display:flex;gap:34px;margin-top:18px;}
+  .ir-kpi .n{font-size:22px;font-weight:250;text-shadow:0 0 12px var(--accent2);}
+  .ir-kpi .l{font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin-top:2px;}
+  .ir-sect{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);margin:22px 0 6px;}
+  .ir-att{display:flex;align-items:center;gap:11px;padding:9px 0;border-bottom:1px solid var(--line);font-size:13px;}
+  .ir-att .cnt{margin-left:auto;font-size:11px;color:var(--muted);}
+  .ir-att .cnt.hot{color:var(--txt);text-shadow:0 0 8px var(--accent2);}
+  .ir-tl{position:relative;margin:12px 0 0 4px;padding-left:24px;}
+  .ir-tl::before{content:"";position:absolute;left:3px;top:8px;bottom:8px;width:1px;background:var(--line2);}
+  .ir-tli{position:relative;padding:7px 0;}
+  .ir-tli::before{content:"";position:absolute;left:-24px;top:13px;width:7px;height:7px;border-radius:50%;background:var(--dim);}
+  .ir-tli.hot::before{background:var(--txt);box-shadow:0 0 10px var(--accent2);}
+  .ir-tli .k{font-size:13px;}
+  .ir-tli .w{font-size:10.5px;color:var(--dim);margin-top:1px;}
+
+  /* ── Argos (data clients) ── */
+  #page-argos.show{display:flex;flex-direction:column;height:100%;max-width:none;padding-bottom:0;}
+  .ag-clients{display:flex;gap:6px;flex-wrap:wrap;flex-shrink:0;margin-top:2px;}
+  .ag-clients span{font-size:12.5px;color:var(--dim);cursor:pointer;padding:6px 15px;border-radius:20px;transition:color .12s,background .12s;}
+  .ag-clients span:hover{color:var(--muted);}
+  .ag-clients span.active{color:var(--txt);background:var(--card2);text-shadow:0 0 10px var(--accent2);}
+  .ag-scroll{flex:1;overflow-y:auto;scrollbar-width:none;padding:8px 10px 70px 0;-webkit-mask-image:linear-gradient(to bottom,transparent,#000 16px,#000 calc(100% - 50px),transparent);mask-image:linear-gradient(to bottom,transparent,#000 16px,#000 calc(100% - 50px),transparent);}
+  .ag-scroll::-webkit-scrollbar{display:none;}
+  .ag-hero{display:flex;gap:56px;flex-wrap:wrap;margin:18px 0 8px;}
+  .ag-kpi .n{font-size:34px;font-weight:200;letter-spacing:-.02em;text-shadow:0 0 18px var(--accent2);}
+  .ag-kpi .n small{font-size:15px;color:var(--muted);font-weight:300;margin-left:2px;}
+  .ag-kpi .l{font-size:10px;letter-spacing:.11em;text-transform:uppercase;color:var(--dim);margin:4px 0 6px;}
+  .ag-up{color:var(--txt);font-size:11px;} .ag-down{color:var(--dim);font-size:11px;}
+  .spark{display:block;}
+  .spark polyline{fill:none;stroke:var(--txt);stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round;opacity:.8;filter:drop-shadow(0 0 4px var(--accent2));}
+  .ag-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 60px;margin-top:20px;}
+  .ag-sect{font-size:10px;letter-spacing:.13em;text-transform:uppercase;color:var(--dim);margin:22px 0 4px;}
+  .ag-row{display:flex;align-items:center;gap:14px;padding:11px 0;border-bottom:1px solid var(--line);font-size:13px;}
+  .ag-row .ic{width:30px;height:30px;border-radius:9px;background:var(--card2);display:grid;place-items:center;font-size:13px;flex-shrink:0;}
+  .ag-row .nm{font-weight:600;}
+  .ag-row .sub{font-size:11px;color:var(--dim);margin-top:1px;}
+  .ag-row .val{margin-left:auto;text-align:right;font-variant-numeric:tabular-nums;}
+  .ag-row .val .b{font-size:14.5px;font-weight:550;}
+  .ag-row .val .s{font-size:10.5px;color:var(--dim);margin-top:1px;}
+  .ag-state{font-size:9.5px;padding:2px 9px;border-radius:10px;border:1px solid var(--line2);color:var(--txt);text-shadow:0 0 8px var(--accent2);}
+  .ag-state.off{border-color:var(--line);color:var(--dim);text-shadow:none;}
+  .ag-note{padding:11px 0;border-bottom:1px solid var(--line);}
+  .ag-note .t{font-size:13px;line-height:1.55;}
+  .ag-note .m{font-size:10.5px;color:var(--dim);margin-top:3px;}
+  .ag-pos{display:inline-grid;place-items:center;min-width:26px;height:26px;border-radius:8px;background:var(--card2);font-size:12.5px;font-weight:650;}
+  .ag-pos.top{box-shadow:inset 0 0 0 1px var(--line2);text-shadow:0 0 8px var(--accent2);}
+
+  /* ── Atlas (drive) ── */
+  #page-atlas.show{display:flex;flex-direction:column;height:100%;max-width:none;padding-bottom:0;}
+  .at-bar{display:flex;align-items:center;gap:10px;flex-shrink:0;}
+  .at-crumbs{display:flex;align-items:center;gap:7px;font-size:13px;color:var(--dim);flex-wrap:wrap;}
+  .at-crumbs span{cursor:pointer;transition:color .12s,text-shadow .12s;}
+  .at-crumbs span:hover{color:var(--txt);}
+  .at-crumbs span.cur{color:var(--txt);text-shadow:0 0 10px var(--accent2);cursor:default;}
+  .at-crumbs i{font-style:normal;color:var(--line2);}
+  .at-scroll{flex:1;overflow-y:auto;scrollbar-width:none;margin-top:10px;padding-bottom:60px;-webkit-mask-image:linear-gradient(to bottom,transparent,#000 12px,#000 calc(100% - 44px),transparent);mask-image:linear-gradient(to bottom,transparent,#000 12px,#000 calc(100% - 44px),transparent);}
+  .at-scroll::-webkit-scrollbar{display:none;}
+  .at-row{display:flex;align-items:center;gap:14px;padding:11px 10px;border-bottom:1px solid var(--line);cursor:pointer;border-radius:10px;transition:background .12s;}
+  .at-row:hover{background:var(--card);}
+  .at-row .ic{width:34px;height:34px;border-radius:9px;background:var(--card2);display:grid;place-items:center;font-size:15px;flex-shrink:0;}
+  .at-row .nm{font-size:13.5px;font-weight:550;}
+  .at-row .sub{font-size:11px;color:var(--dim);margin-top:1px;}
+  .at-row .meta{margin-left:auto;text-align:right;font-size:11px;color:var(--dim);font-variant-numeric:tabular-nums;flex-shrink:0;}
+  .at-row .act{opacity:0;margin-left:14px;font-size:15px;color:var(--muted);transition:opacity .12s,color .12s;flex-shrink:0;}
+  .at-row:hover .act{opacity:1;}
+  .at-row .act:hover{color:var(--txt);text-shadow:0 0 9px var(--accent2);}
+  .at-foot{flex-shrink:0;display:flex;align-items:center;gap:14px;padding:12px 4px 20px;font-size:11px;color:var(--dim);}
+  .at-usage{flex:0 0 190px;height:3px;border-radius:2px;background:var(--card2);overflow:hidden;}
+  .at-usage i{display:block;height:100%;background:var(--txt);box-shadow:0 0 8px var(--accent2);border-radius:2px;}
+  .at-toast{position:fixed;bottom:34px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--card2);border:1px solid var(--line2);color:var(--txt);font-size:12.5px;padding:10px 22px;border-radius:22px;opacity:0;pointer-events:none;transition:opacity .25s,transform .25s;z-index:200;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);}
+  .at-toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+
+  /* ── Apollon (galerie des shoots) ── */
+  #page-apollon.show{display:flex;flex-direction:column;height:100%;max-width:none;padding-bottom:0;}
+  .ap-top{display:flex;align-items:flex-end;gap:20px;flex-shrink:0;}
+  .ap-toolbar{display:flex;align-items:center;gap:14px;margin:16px 0 4px;flex-shrink:0;}
+  .ap-scroll{flex:1;overflow-y:auto;scrollbar-width:none;padding:10px 6px 70px 0;-webkit-mask-image:linear-gradient(to bottom,transparent,#000 16px,#000 calc(100% - 50px),transparent);mask-image:linear-gradient(to bottom,transparent,#000 16px,#000 calc(100% - 50px),transparent);}
+  .ap-scroll::-webkit-scrollbar{display:none;}
+  .ap-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:18px;}
+  .ap-card{position:relative;height:190px;border-radius:14px;overflow:hidden;cursor:pointer;transition:transform .18s,box-shadow .18s;}
+  .ap-card:hover{transform:translateY(-3px);box-shadow:0 10px 32px rgba(0,0,0,.4),0 0 0 1px var(--line2);}
+  .ap-card .bg{position:absolute;inset:0;}
+  .ap-card .scrim{position:absolute;inset:0;background:linear-gradient(to top,rgba(0,0,0,.72),transparent 60%);}
+  .ap-card .info{position:absolute;left:15px;right:15px;bottom:12px;color:#fff;}
+  .ap-card .t{font-size:15px;font-weight:650;text-shadow:0 1px 8px rgba(0,0,0,.6);}
+  .ap-card .m{font-size:11px;opacity:.75;margin-top:2px;}
+  .ap-card .badge{position:absolute;top:11px;right:11px;font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;background:rgba(0,0,0,.45);color:#fff;padding:3px 10px;border-radius:11px;backdrop-filter:blur(6px);}
+  .ap-back{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:var(--muted);cursor:pointer;margin-bottom:12px;transition:color .12s,text-shadow .12s;}
+  .ap-back:hover{color:var(--txt);text-shadow:0 0 9px var(--accent2);}
+  .ap-ahead{display:flex;align-items:flex-start;gap:26px;flex-wrap:wrap;margin-bottom:16px;}
+  .ap-atitle{font-size:24px;font-weight:250;letter-spacing:-.01em;text-shadow:0 0 16px var(--accent2);}
+  .ap-ameta{font-size:12px;color:var(--dim);margin-top:5px;}
+  .ap-astats{display:flex;gap:30px;margin-left:auto;}
+  .ap-astat .n{font-size:20px;font-weight:250;text-shadow:0 0 12px var(--accent2);}
+  .ap-astat .l{font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin-top:2px;}
+  .ap-masonry{columns:4 210px;column-gap:14px;}
+  .ap-item{position:relative;border-radius:11px;overflow:hidden;margin-bottom:14px;cursor:pointer;break-inside:avoid;transition:box-shadow .15s;}
+  .ap-item:hover{box-shadow:0 0 0 1px var(--line2),0 8px 22px rgba(0,0,0,.35);}
+  .ap-item .bg{width:100%;}
+  .ap-item.h1 .bg{height:150px;} .ap-item.h2 .bg{height:210px;} .ap-item.h3 .bg{height:270px;} .ap-item.h4 .bg{height:120px;}
+  .ap-item .vplay2{position:absolute;inset:0;display:grid;place-items:center;font-size:26px;color:rgba(255,255,255,.9);text-shadow:0 0 18px rgba(0,0,0,.7);}
+  .ap-item .dur{position:absolute;bottom:8px;right:9px;font-size:10px;background:rgba(0,0,0,.55);color:#fff;padding:2px 7px;border-radius:9px;}
+  .ap-light{position:fixed;inset:0;background:rgba(0,0,0,.86);display:none;align-items:center;justify-content:center;z-index:400;backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);}
+  .ap-light.show{display:flex;animation:modalFade .18s ease;}
+  .ap-lbox{width:min(76vw,980px);height:min(74vh,640px);border-radius:16px;position:relative;overflow:hidden;box-shadow:0 30px 90px rgba(0,0,0,.6);}
+  .ap-lcap{position:absolute;left:0;right:0;bottom:0;padding:16px 22px;background:linear-gradient(to top,rgba(0,0,0,.75),transparent);color:#fff;font-size:13px;}
+  .ap-lcap .s{opacity:.65;font-size:11px;margin-top:2px;}
+  .ap-lnav{position:fixed;top:50%;transform:translateY(-50%);width:44px;height:44px;border-radius:50%;border:1px solid rgba(255,255,255,.25);background:rgba(0,0,0,.35);color:#fff;font-size:18px;cursor:pointer;transition:background .12s;}
+  .ap-lnav:hover{background:rgba(0,0,0,.6);}
+  .ap-lclose{position:fixed;top:26px;right:30px;width:38px;height:38px;border-radius:50%;border:1px solid rgba(255,255,255,.25);background:rgba(0,0,0,.35);color:#fff;font-size:15px;cursor:pointer;}
+
+  /* ── Mnémosyne (notes) ── */
+  #page-mnemosyne.show{display:flex;height:100%;max-width:none;padding:0 30px 0 0;}
+  .mn-wrap{display:flex;flex:1;min-width:0;height:100%;}
+  .mn-side{width:284px;flex-shrink:0;display:flex;flex-direction:column;padding:24px 18px 14px 40px;border-right:1px solid var(--line);}
+  .mn-sidetop{display:flex;gap:8px;flex-shrink:0;margin-bottom:10px;}
+  .mn-sidetop .hm-icbtn{height:38px;border-radius:19px;}
+  .mn-scroll{flex:1;overflow-y:auto;scrollbar-width:none;padding-bottom:36px;-webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 36px),transparent);mask-image:linear-gradient(to bottom,#000 calc(100% - 36px),transparent);}
+  .mn-scroll::-webkit-scrollbar{display:none;}
+  .mn-sec{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);margin:16px 2px 6px;}
+  .mn-row{padding:10px 10px;margin:0 -10px;border-radius:10px;cursor:pointer;transition:background .12s;}
+  .mn-row:hover{background:var(--card);}
+  .mn-row.active{background:var(--card2);}
+  .mn-row .t{font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .mn-row .p{font-size:11.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;}
+  .mn-row .m{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--dim);margin-top:5px;}
+  .mn-avs{display:flex;}
+  .mn-avs i{font-style:normal;width:16px;height:16px;border-radius:50%;background:var(--card2);border:1.5px solid var(--bg1);display:grid;place-items:center;font-size:8px;font-weight:700;color:var(--txt);margin-left:-5px;}
+  .mn-avs i:first-child{margin-left:0;}
+  .mn-pin{cursor:pointer;opacity:.5;transition:opacity .12s,text-shadow .12s;}
+  .mn-row:hover .mn-pin{opacity:.9;}
+  .mn-pin.on{opacity:1;text-shadow:0 0 8px var(--accent2);}
+  .mn-main{flex:1;min-width:0;display:flex;flex-direction:column;padding:26px 0 0 30px;}
+  .mn-editorhead{display:flex;align-items:center;gap:16px;flex-shrink:0;}
+  .mn-title{flex:1;background:none;border:none;outline:none;color:var(--txt);font-size:23px;font-weight:300;letter-spacing:-.01em;font-family:inherit;text-shadow:0 0 14px var(--accent2);}
+  .mn-title::placeholder{color:var(--dim);text-shadow:none;}
+  .mn-when{font-size:11px;color:var(--dim);white-space:nowrap;}
+  .mn-sharebar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:14px 0;border-bottom:1px solid var(--line);flex-shrink:0;}
+  .mn-sharelbl{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);}
+  .mn-people{display:flex;gap:6px;flex-wrap:wrap;}
+  .mn-person{display:inline-flex;align-items:center;gap:7px;padding:4px 12px 4px 5px;border-radius:16px;border:1px solid var(--line);color:var(--dim);font-size:11.5px;cursor:pointer;transition:color .12s,border-color .12s;}
+  .mn-person .av{width:20px;height:20px;border-radius:50%;background:var(--card2);display:grid;place-items:center;font-size:9px;font-weight:700;}
+  .mn-person:hover{color:var(--muted);}
+  .mn-person.on{color:var(--txt);border-color:var(--txt);}
+  .mn-evsel{background:var(--card);border:1px solid var(--line);color:var(--muted);font-size:11.5px;border-radius:16px;padding:5px 10px;outline:none;max-width:250px;}
+  .mn-body{flex:1;background:none;border:none;outline:none;resize:none;color:var(--txt);font-size:14px;line-height:1.75;font-family:inherit;padding:18px 4px 40px 0;scrollbar-width:none;-webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 40px),transparent);mask-image:linear-gradient(to bottom,#000 calc(100% - 40px),transparent);}
+  .mn-body::-webkit-scrollbar{display:none;}
+  .mn-body::placeholder{color:var(--dim);}
+
   /* ── Chronos (calendrier) ── */
-  #page-chronos.show{max-width:1000px;}
-  .cal-head{display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap;}
+  #page-chronos.show{max-width:none;padding:0 12px 0 0;display:flex;flex-direction:column;height:100%;overflow:hidden;position:relative;}
+  #page-chronos #calDow{flex-shrink:0;}
+  #calScroll{flex:1;overflow-y:auto;padding-bottom:92px;scrollbar-width:none;}
+  #calScroll[data-view="month"]{-webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 34px,#000 calc(100% - 92px),transparent 100%);mask-image:linear-gradient(to bottom,transparent 0,#000 34px,#000 calc(100% - 92px),transparent 100%);}
+  #calScroll[data-view="week"],#calScroll[data-view="day"]{-webkit-mask-image:linear-gradient(to right,transparent,#000 44px,#000 calc(100% - 44px),transparent),linear-gradient(to bottom,transparent,#000 30px,#000 calc(100% - 66px),transparent);-webkit-mask-composite:source-in;mask-image:linear-gradient(to right,transparent,#000 44px,#000 calc(100% - 44px),transparent),linear-gradient(to bottom,transparent,#000 30px,#000 calc(100% - 66px),transparent);mask-composite:intersect;}
+  /* Boutons de vue (flottants, à côté de la colonne events) */
+  #calViews{display:none;position:absolute;top:46px;right:502px;z-index:9;flex-direction:column;gap:6px;-webkit-app-region:no-drag;}
+  #hub.with-rail #calViews{display:flex;}
+  #calViews button{padding:6px 15px;border-radius:20px;border:1px solid var(--line);background:var(--card2);color:var(--muted);font-size:12px;font-weight:600;cursor:pointer;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);transition:color .12s,border-color .12s,background .12s;}
+  #calViews button:hover{color:var(--txt);}
+  #calViews button.active{color:var(--accent-fg);background:var(--accent2);border-color:var(--accent2);}
+  /* Vues semaine & jour — timeline horaire */
+  .cal-tl{margin-left:0;padding-right:20px;}
+  .tl-top{position:sticky;top:0;z-index:4;background:radial-gradient(1100px 600px at 12% -12%, var(--bg-accent), transparent 62%),linear-gradient(160deg, var(--bg1), var(--bg2));background-attachment:fixed;padding-top:6px;}
+  .cal-tl.week .wk-headrow,.cal-tl.week .wk-adrow,.cal-tl.week .tl-body{display:grid;grid-template-columns:54px repeat(7,1fr);}
+  .cal-tl.day .tl-body{display:grid;grid-template-columns:54px 1fr;}
+  .tl-corner{font-size:9px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em;display:flex;align-items:flex-end;justify-content:center;padding-bottom:6px;}
+  .wk-head{text-align:center;padding:4px 0 8px;}
+  .wk-head .wd{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);font-weight:700;margin-bottom:4px;}
+  .wk-head .wn{display:inline-flex;align-items:center;justify-content:center;min-width:30px;height:30px;font-size:16px;font-weight:400;border-radius:50%;cursor:pointer;}
+  .wk-head.today .wn{background:var(--accent2);color:var(--accent-fg);}
+  .wk-head.sel:not(.today) .wn{box-shadow:inset 0 0 0 1.5px var(--accent2);}
+  .wk-adrow{border-bottom:1px solid var(--line);min-height:10px;}
+  .wk-ad{display:flex;flex-direction:column;gap:3px;padding:2px 5px 6px;border-left:1px solid var(--line);}
+  .tl-gutter{position:relative;}
+  .tl-hour{position:absolute;right:9px;top:0;transform:translateY(-50%);font-size:10.5px;color:var(--dim);font-variant-numeric:tabular-nums;}
+  .wk-col{position:relative;border-left:1px solid var(--line);cursor:grab;}
+  .tl-line{position:absolute;left:0;right:0;border-top:1px solid var(--line);opacity:.55;}
+  .tl-ev{position:absolute;left:3px;right:3px;background:color-mix(in srgb, var(--c) 22%, transparent);border-left:2px solid var(--c);border-radius:5px;padding:3px 7px;overflow:hidden;cursor:pointer;}
+  .tl-ev.perso{border-left-color:var(--err);}
+  .tl-ev-t{font-size:11.5px;font-weight:600;color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.3;}
+  .tl-ev.perso .tl-ev-t{color:var(--err);}
+  .tl-ev-time{font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;}
+  .day-head{font-size:23px;font-weight:300;text-transform:capitalize;padding:2px 0 12px;}
+  .day-ad{display:flex;flex-direction:column;gap:4px;padding-bottom:10px;border-bottom:1px solid var(--line);max-width:560px;}
+  /* Bande horizontale infinie (semaine/jour) — pan par translateX, en-tête collant */
+  .cal-tl2{display:grid;grid-template-columns:54px 1fr;width:calc(100% - 452px);cursor:grab;user-select:none;}
+  .cal-tl2 .tl-corner2{grid-row:1;grid-column:1;position:sticky;top:0;z-index:6;background:radial-gradient(1100px 600px at 12% -12%, var(--bg-accent), transparent 62%),linear-gradient(160deg, var(--bg1), var(--bg2));background-attachment:fixed;}
+  .tl-headsclip{grid-row:1;grid-column:2;position:sticky;top:0;z-index:4;overflow:hidden;background:radial-gradient(1100px 600px at 12% -12%, var(--bg-accent), transparent 62%),linear-gradient(160deg, var(--bg1), var(--bg2));background-attachment:fixed;}
+  .tl-gutter2{grid-row:2;grid-column:1;position:relative;}
+  .tl-colsclip{grid-row:2;grid-column:2;overflow:hidden;}
+  .tl-heads,.tl-cols{display:grid;}
+  .tl-head{border-left:1px solid var(--line);padding:6px 6px 8px;}
+  .tl-hd{display:flex;align-items:baseline;justify-content:center;gap:7px;}
+  .tl-hd .wd{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);font-weight:700;}
+  .tl-hd .wn{display:inline-flex;align-items:center;justify-content:center;min-width:26px;height:26px;border-radius:50%;font-size:16px;font-weight:400;}
+  .tl-head.today .wn{background:var(--accent2);color:var(--accent-fg);}
+  .tl-head.sel:not(.today) .wn{box-shadow:inset 0 0 0 1.5px var(--accent2);}
+  .tl-had{display:flex;flex-direction:column;gap:3px;margin-top:5px;}
+  .tl-col{position:relative;border-left:1px solid var(--line);}
+  #calScroll[data-view="week"] .cal-tl2:active,#calScroll[data-view="day"] .cal-tl2:active{cursor:grabbing;}
+  #calScroll::-webkit-scrollbar{display:none;width:0;}
+  .cal-add-float{position:absolute;bottom:26px;left:50%;transform:translateX(-50%);z-index:6;padding:11px 26px;border-radius:24px;border:1px solid var(--line2);background:var(--card2);color:var(--txt);font-size:14px;font-weight:600;cursor:pointer;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);box-shadow:0 8px 24px rgba(0,0,0,.35);transition:transform .14s,border-color .14s;}
+  .cal-add-float:hover{transform:translateX(-50%) translateY(-2px);border-color:var(--txt);}
+  .cal-flow{position:relative;display:flex;align-items:flex-start;gap:18px;padding-top:8px;padding-right:452px;}
+  .cal-days{flex:1;min-width:0;margin-left:40px;display:grid;grid-template-columns:repeat(7,1fr);gap:16px;grid-auto-rows:minmax(104px,auto);}
+  .cal-labels{flex-shrink:0;width:132px;position:relative;align-self:stretch;}
+  .cal-mlabel{position:absolute;left:0;right:0;font-size:13px;color:var(--txt);text-transform:capitalize;letter-spacing:.04em;font-weight:600;text-shadow:0 0 10px var(--accent2),0 0 4px var(--accent2);}
+  #calDow{padding-left:40px;padding-right:602px;gap:16px;margin-top:18px;}
+  .cal-head{display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;}
   .cal-head h2{font-size:18px;font-weight:650;text-transform:capitalize;min-width:190px;}
   .cal-nav{display:flex;gap:6px;}
   .cal-btn{padding:7px 12px;border:1px solid var(--line);border-radius:9px;background:var(--card);color:var(--txt);font-size:13px;cursor:pointer;font-weight:500;}
@@ -167,15 +510,28 @@
   .cal-btn.primary{background:linear-gradient(180deg,var(--accent2),var(--accent3));border:0;color:#fff;font-weight:600;}
   .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;}
   .cal-dow{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em;text-align:center;padding-bottom:2px;font-weight:600;}
-  .cal-cell{min-height:88px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:6px 7px;cursor:pointer;display:flex;flex-direction:column;gap:3px;transition:border-color .12s;overflow:hidden;}
+  .cal-cell{min-height:104px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:6px 7px;cursor:pointer;display:flex;flex-direction:column;gap:3px;transition:border-color .12s;overflow:hidden;}
   .cal-cell:hover{border-color:var(--accent2);}
   .cal-cell.other{opacity:.35;}
-  .cal-cell.today{box-shadow:inset 0 0 0 1.5px var(--accent2);}
-  .cal-cell.sel{border-color:var(--gold);}
+  .cal-cell.today{background:var(--accent2);border-color:var(--accent2);color:var(--accent-fg);}
+  .cal-cell.sel{box-shadow:inset 0 0 0 1.5px var(--accent2);}
+  .cal-cell.mstart,.cal-cell.mend{position:relative;overflow:visible;}
+  .cal-cell.mstart::before,.cal-cell.mend::after{content:"";position:absolute;top:8px;bottom:8px;width:1px;background:linear-gradient(to bottom,transparent,var(--accent2) 25%,var(--accent2) 75%,transparent);opacity:.55;box-shadow:0 0 7px -1px var(--accent2);pointer-events:none;}
+  .cal-cell.mstart::before{left:-1px;}
+  .cal-cell.mend::after{right:-1px;}
   .cal-daynum{font-size:12px;color:var(--muted);font-weight:600;}
-  .cal-cell.today .cal-daynum{color:var(--accent);}
-  .ev-chip{font-size:11px;padding:2px 6px;border-radius:6px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;line-height:1.5;}
+  .cal-cell.today .cal-daynum{color:var(--accent-fg);}
+  .cal-cell.today .ev-chip{color:var(--accent-fg);}
+  .ev-chip{font-size:11px;padding:2px 6px;border-radius:6px;color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;line-height:1.5;}
   .ev-chip.done{opacity:.5;text-decoration:line-through;}
+  .ev-dot{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:6px;vertical-align:middle;flex-shrink:0;}
+  .ev-chip.perso{color:var(--err);}
+  .ev-chip.perso .ev-name{font-weight:700;}
+  .ev-chip.span{background:color-mix(in srgb, var(--c) 28%, transparent);color:var(--txt);border-radius:0;font-weight:500;}
+  .ev-chip.span.rl{border-top-left-radius:6px;border-bottom-left-radius:6px;}
+  .ev-chip.span.rr{border-top-right-radius:6px;border-bottom-right-radius:6px;}
+  .cal-cell .ev-chip.span:not(.rl){margin-left:-7px;padding-left:13px;}
+  .cal-cell .ev-chip.span:not(.rr){margin-right:-7px;padding-right:13px;}
   .cat-general{background:#6a7688;} .cat-client{background:#8b63ff;} .cat-interne{background:#0ea5e9;}
   .cat-deadline{background:#ef4444;} .cat-perso{background:#22c55e;}
   .cal-form{display:none;margin-top:18px;padding:16px 18px;background:var(--card);border:1px solid var(--line);border-radius:14px;max-width:660px;}
@@ -278,6 +634,11 @@
 
   /* ── Colonne droite (infos) ── */
   #rightbar{background:var(--panel);backdrop-filter:blur(var(--glass-blur)) saturate(1.3);-webkit-backdrop-filter:blur(var(--glass-blur)) saturate(1.3);padding:58px 20px 24px;overflow-y:auto;display:flex;flex-direction:column;gap:28px;-webkit-app-region:drag;}
+  #rbWheel{display:none;position:absolute;top:0;bottom:0;right:492px;width:150px;z-index:7;flex-direction:column;justify-content:center;align-items:flex-end;padding:0;overflow:hidden;-webkit-app-region:no-drag;}
+  #hub.with-rail #rbWheel{display:flex;}
+  #rbBlank{display:none;position:absolute;top:0;bottom:0;right:268px;width:224px;z-index:7;background:linear-gradient(var(--panel),var(--panel)),var(--bg2);padding:44px 22px 24px;overflow-y:auto;flex-direction:column;gap:12px;-webkit-app-region:no-drag;}
+  #hub.with-rail #rbBlank{display:flex;}
+  #rbBlank .agenda-head{text-align:left;margin:4px 0 2px;}
   .rb-sec{-webkit-app-region:no-drag;animation:fadeUp .4s ease;}
   .rb-sec h4{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin-bottom:12px;}
   .rb-title{color:var(--txt);font-weight:550;font-size:14px;}
@@ -331,7 +692,7 @@
   @keyframes popIn{0%{opacity:0;transform:scale(.92);}60%{transform:scale(1.015);}100%{opacity:1;transform:scale(1);}}
   @keyframes floatIn{from{opacity:0;transform:translateY(-10px);}to{opacity:1;transform:none;}}
   /* Transition douce des couleurs au changement de thème */
-  body,.sidebar,#rightbar{transition:background .35s ease,color .3s ease;}
+  body,.sidebar,#rightbar,#rbBlank{transition:background .35s ease,color .3s ease;}
   /* Micro-interactions (survol / clic) */
   .nav-item,.float-btn,.btn,.btn-lg,.cal-btn,.member-btn,.crm-row,.env-row,.cal-cell,#profileCard,.card-icon,.app-icon,.ev-chip,.card,.avatar-sm{transition:transform .2s cubic-bezier(.2,.7,.3,1),color .15s,background .16s,box-shadow .2s,opacity .16s,filter .16s;}
   .nav-item:hover:not(.locked):not(.active){transform:translateX(3px);}
@@ -413,7 +774,8 @@
       <div class="nav-item" data-page="argos"><div class="ic">👁️</div><span class="lbl">Argos<small>analytics</small></span></div>
       <div class="nav-item" data-page="atlas"><div class="ic">🗂️</div><span class="lbl">Atlas<small>drive</small></span></div>
       <div class="nav-item" data-page="apollon"><div class="ic">🖼️</div><span class="lbl">Apollon<small>galerie</small></span></div>
-      <div class="nav-item" data-page="metis"><div class="ic">📋</div><span class="lbl">Métis<small>briefs</small></span></div>
+      <div class="nav-item" data-page="ploutos"><div class="ic">🧾</div><span class="lbl">Ploutos<small>devis</small></span></div>
+      <div class="nav-item" data-page="mnemosyne"><div class="ic">📝</div><span class="lbl">Mnémosyne<small>notes</small></span></div>
       <div class="nav-spacer"></div>
       <div class="nav-label">Mes applications</div>
       <div class="nav-item" data-page="library"><div class="ic">📚</div><span class="lbl">Alexandrie<small>bibliothèque</small></span></div>
@@ -509,179 +871,242 @@
         <div class="section"><h3>À propos</h3><p class="desc">Tri et sélection photo : culling, recadrage intelligent, export vers Lightroom Classic.</p></div>
       </section>
 
-      <!-- ═══ HERMÈS (chat) ═══ -->
+      <!-- ═══ HERMÈS (chat + agenda) ═══ -->
       <section class="page" id="page-hermes">
-        <div class="page-head"><h1>Hermès</h1><p>Le chat de l'équipe Orphic.</p></div>
-        <div id="chatMessages"></div>
-        <div id="chatComposer">
-          <input id="chatInput" placeholder="Écris un message…" autocomplete="off" spellcheck="true">
-          <button id="chatSend">Envoyer</button>
-        </div>
-      </section>
-
-      <!-- ═══ CHRONOS (calendrier) ═══ -->
-      <section class="page" id="page-chronos">
-        <div class="page-head"><h1>Chronos</h1><p>Le calendrier & les tâches de l'équipe.</p></div>
-        <div class="cal-head">
-          <div class="cal-nav"><button class="cal-btn" id="calPrev">‹</button><button class="cal-btn" id="calNext">›</button></div>
-          <h2 id="calMonth">—</h2>
-          <button class="cal-btn" id="calToday">Aujourd'hui</button>
-          <button class="cal-btn primary" id="calAdd" style="margin-left:auto;">+ Ajouter</button>
-        </div>
-        <div class="cal-grid" id="calDow"></div>
-        <div class="cal-grid" id="calGrid" style="margin-top:6px;"></div>
-
-        <div class="cal-form" id="calForm">
-          <div class="auth-field" style="margin-bottom:10px;"><label>Titre</label><input class="auth-input" id="evTitle" placeholder="Réunion client, deadline…"></div>
-          <div class="row">
-            <div class="auth-field"><label>Date</label><input class="auth-input" id="evDate" type="date"></div>
-            <div class="auth-field"><label>Heure (optionnel)</label><input class="auth-input" id="evTime" type="time"></div>
-          </div>
-          <div class="row">
-            <div class="auth-field"><label>Catégorie</label>
-              <select class="auth-input" id="evCat">
-                <option value="general">Général</option>
-                <option value="client">Client</option>
-                <option value="interne">Interne</option>
-                <option value="deadline">Deadline</option>
-                <option value="perso">Perso</option>
-              </select>
-            </div>
-            <div class="auth-field"><label>Assigné à (optionnel)</label><input class="auth-input" id="evAssignee" placeholder="Prénom"></div>
-          </div>
-          <div class="ev-actions">
-            <button class="cal-btn primary" id="evSave">Ajouter</button>
-            <button class="cal-btn" id="evCancel">Annuler</button>
-            <button class="cal-btn" id="evDone" style="display:none;">Marquer fait</button>
-            <button class="cal-btn" id="evDelete" style="display:none;margin-left:auto;">Supprimer</button>
-          </div>
-          <div class="msg" id="evMsg"></div>
-        </div>
-      </section>
-
-      <!-- ═══ IRIS (email · CRM) ═══ -->
-      <section class="page" id="page-iris">
-        <div class="page-head"><h1>Iris</h1><p>Email & CRM — envoie tes mails et suis leurs ouvertures.</p></div>
-
-        <div id="irisConnect" style="max-width:470px;">
-          <div class="section">
-            <h3>Gmail non connecté</h3>
-            <p class="desc">Pour envoyer et suivre tes mails, connecte ton Gmail dans <span class="link" id="irisGoProfile">ton profil → Comptes & connexions</span>.</p>
-          </div>
-        </div>
-
-        <div id="irisMain" style="display:none;">
-          <div class="section">
-            <h3>Nouveau message <span id="irisFrom" style="color:var(--dim);font-weight:400;text-transform:none;letter-spacing:0;"></span></h3>
-            <div style="max-width:660px;">
-              <div class="auth-row2">
-                <div class="auth-field" style="flex:2"><label>Destinataire</label><input class="auth-input" id="mailTo" type="email" placeholder="client@exemple.com"></div>
-                <div class="auth-field" style="flex:1"><label>Nom (optionnel)</label><input class="auth-input" id="mailToName"></div>
+        <div class="hm-wrap">
+          <aside class="hm-side">
+            <input class="hm-search" id="hmSearch" placeholder="Rechercher…" autocomplete="off">
+            <div class="hm-scroll">
+              <div class="hm-sec">Canaux</div>
+              <div id="hmChannels"></div>
+              <div class="hm-sec">Messages directs</div>
+              <div id="hmDms"></div>
+              <div class="hm-sec">Groupes<span class="hm-addg" id="hmNewGroup" title="Nouveau groupe">＋</span></div>
+              <div id="hmGroups"></div>
+              <div id="hmGroupForm" style="display:none;padding:8px 2px;">
+                <input class="hm-search" id="hmGroupName" placeholder="Nom du groupe…" style="margin:0 0 6px;">
+                <div class="ev-actions" style="margin:0;"><button class="btn sec" id="hmGroupCreate" style="padding:6px 14px;font-size:12px;">Créer</button></div>
               </div>
-              <div class="auth-field"><label>Sujet</label><input class="auth-input" id="mailSubject"></div>
-              <div class="auth-field"><label>Message</label><textarea class="auth-input" id="mailBody" rows="6"></textarea></div>
-              <div class="ev-actions"><button class="btn" id="mailSendBtn">Envoyer</button></div>
-              <div class="msg" id="mailMsg"></div>
+            </div>
+          </aside>
+          <div class="hm-chat">
+            <div class="hm-head">
+              <div class="hm-hav" id="hmHeadAv">—</div>
+              <div style="min-width:0;">
+                <div class="hm-hname" id="hmHeadName">—</div>
+                <div class="hm-hsub" id="hmHeadSub"></div>
+              </div>
+            </div>
+            <div id="chatMessages"></div>
+            <div id="chatComposer">
+              <button class="hm-icbtn" id="chatAttach" title="Envoyer un fichier ou un média">＋</button>
+              <input id="chatInput" placeholder="Écris un message…" autocomplete="off" spellcheck="true">
+              <button class="hm-icbtn" id="chatMic" title="Message vocal">◉</button>
+              <button id="chatSend">Envoyer</button>
             </div>
           </div>
-          <div class="section">
-            <h3>Mails envoyés</h3>
-            <div id="crmList"><div class="rb-empty">Aucun mail envoyé.</div></div>
+        </div>
+      </section>
+
+      <!-- ═══ CHRONOS (calendrier + briefs) ═══ -->
+      <section class="page" id="page-chronos">
+        <div class="cal-grid" id="calDow"></div>
+        <div id="calScroll"></div>
+        <button class="cal-add-float" id="calAdd">+ Ajouter</button>
+
+        <!-- Modal événement / brief -->
+        <div class="modal-overlay" id="eventModal">
+          <div class="modal-panel">
+            <div class="modal-head"><h2 id="evModalTitle">Nouvel événement</h2><button class="modal-x" id="evCancel" aria-label="Fermer">✕</button></div>
+            <div class="modal-body">
+              <div class="auth-field"><label>Titre</label><input class="auth-input" id="evTitle" placeholder="Réunion, shoot, call, deadline…"></div>
+              <div class="auth-row2">
+                <div class="auth-field" style="flex:1"><label>Début</label><input class="auth-input" id="evDate" type="date"></div>
+                <div class="auth-field" style="flex:1"><label>Fin (si plusieurs jours)</label><input class="auth-input" id="evEndDate" type="date"></div>
+              </div>
+              <div class="auth-row2">
+                <div class="auth-field" style="flex:1"><label>Heure début</label><input class="auth-input" id="evTime" type="time"></div>
+                <div class="auth-field" style="flex:1"><label>Heure fin</label><input class="auth-input" id="evEnd" type="time"></div>
+              </div>
+              <div class="auth-row2">
+                <div class="auth-field" style="flex:1"><label>Catégorie</label>
+                  <select class="auth-input" id="evCat">
+                    <option value="general">Général</option>
+                    <option value="shoot">Shoot</option>
+                    <option value="rendu">Rendu</option>
+                    <option value="campagne">Campagne</option>
+                    <option value="call">Call</option>
+                    <option value="rdv">Rendez-vous</option>
+                    <option value="reunion">Réunion</option>
+                    <option value="client">Client</option>
+                    <option value="deadline">Deadline</option>
+                    <option value="divers">Travail divers</option>
+                    <option value="perso">Perso</option>
+                  </select>
+                </div>
+                <div class="auth-field" style="flex:1"><label>Assigné à</label><input class="auth-input" id="evAssignee" placeholder="Prénom"></div>
+              </div>
+              <div class="toggle-row">
+                <button class="toggle" id="evPerso" type="button"><span class="dot"></span>Perso</button>
+                <button class="toggle on" id="evBusy" type="button"><span class="dot"></span>Afficher l'indisponibilité</button>
+              </div>
+
+              <div class="modal-sep">Brief / détails</div>
+              <div class="auth-field"><label>Client / projet</label><input class="auth-input" id="evClient" placeholder="Nom du client ou du projet"></div>
+              <div class="auth-row2">
+                <div class="auth-field" style="flex:1"><label>Type</label><select class="auth-input" id="evType"><option value="">—</option><option value="photo">Photo</option><option value="video">Vidéo</option><option value="both">Photo + Vidéo</option></select></div>
+                <div class="auth-field" style="flex:1"><label>Premier rendu</label><input class="auth-input" id="evDelivery" type="date"></div>
+              </div>
+              <div class="auth-field"><label>Équipe</label><div class="chips" id="evParticipants"></div></div>
+              <div class="auth-field"><label>Le brief</label><textarea class="auth-input" id="evObjectives" rows="3" placeholder="Ce qu'on veut, le message, l'usage des visuels, les livrables…"></textarea></div>
+              <div class="auth-field">
+                <label>Références & moodboard</label>
+                <textarea class="auth-input" id="evMoodboard" rows="2" placeholder="Liens, ambiances, notes de style…"></textarea>
+                <div class="ev-actions" style="margin-top:8px;"><button class="btn sec" id="evUploadBtn" type="button">+ Ajouter des fichiers</button></div>
+                <div id="evFiles" style="margin-top:8px;"></div>
+              </div>
+              <div class="auth-field">
+                <label>Lieu</label>
+                <div style="display:flex;gap:10px;align-items:center;"><input class="auth-input" id="evLocation" list="evLocList" placeholder="Adresse" style="flex:1;"><span class="link" id="evMapsLink">Maps ↗</span></div>
+                <datalist id="evLocList"></datalist>
+              </div>
+              <div class="auth-field"><label>Plan de prises (shotlist)</label><textarea class="auth-input" id="evShotlist" rows="3" placeholder="1. Plan large…&#10;2. Portrait serré…"></textarea></div>
+            </div>
+            <div class="modal-foot">
+              <button class="cal-btn primary" id="evSave">Ajouter</button>
+              <button class="cal-btn" id="evDone" style="display:none;">Marquer fait</button>
+              <button class="cal-btn" id="evDelete" style="display:none;margin-left:auto;">Supprimer</button>
+              <div class="msg" id="evMsg" style="flex-basis:100%;"></div>
+            </div>
           </div>
         </div>
       </section>
 
-      <!-- ═══ APOLLON (galerie photo/vidéo) ═══ -->
+      <!-- ═══ IRIS (mailing + tracking) ═══ -->
+      <section class="page" id="page-iris">
+        <div class="ir-topbar">
+          <div class="page-head" style="margin-bottom:0;"><h1>Iris</h1><p>Le mailing — envoi, ouvertures, lectures, pièces jointes.</p></div>
+          <button class="cal-btn primary" id="irComposeBtn" style="margin-left:auto;">＋ Nouveau message</button>
+        </div>
+        <div class="ir-notice" id="irNotice" style="display:none;">Gmail non connecté — <span class="link" id="irisGoProfile">connecte-le dans ton profil</span> pour envoyer réellement. Les mails ci-dessous sont des données de démo.</div>
+        <div class="ir-stats" id="irStats"></div>
+        <div class="ir-toolbar">
+          <input class="hm-search" id="irSearch" placeholder="Rechercher un mail, un client…" style="max-width:270px;margin:0;">
+          <div class="ir-filters" id="irFilters">
+            <span data-f="all" class="active">Tous</span><span data-f="opened">Ouverts</span><span data-f="unopened">Non ouverts</span><span data-f="attach">PJ téléchargées</span>
+          </div>
+        </div>
+        <div class="ir-split">
+          <div class="ir-list" id="irList"></div>
+          <div class="ir-detail" id="irDetail"><div class="rb-empty" style="padding:60px 20px;text-align:center;">Sélectionne un mail pour voir son suivi.</div></div>
+        </div>
+
+        <div class="modal-overlay" id="irModal">
+          <div class="modal-panel">
+            <div class="modal-head"><h2>Nouveau message</h2><button class="modal-x" id="irCancel" aria-label="Fermer">✕</button></div>
+            <div class="modal-body">
+              <div class="auth-row2">
+                <div class="auth-field" style="flex:2"><label>Destinataire</label><input class="auth-input" id="irTo" type="email" placeholder="client@exemple.com"></div>
+                <div class="auth-field" style="flex:1"><label>Nom</label><input class="auth-input" id="irToName"></div>
+              </div>
+              <div class="auth-field"><label>Client / projet</label><input class="auth-input" id="irClient" placeholder="Maison Solène, Villa Riviera…"></div>
+              <div class="auth-field"><label>Sujet</label><input class="auth-input" id="irSubject"></div>
+              <div class="auth-field"><label>Message</label><textarea class="auth-input" id="irBody" rows="7"></textarea></div>
+              <div class="auth-field">
+                <label>Pièces jointes</label>
+                <div class="ev-actions" style="margin-top:2px;"><button class="btn sec" id="irAttachBtn" type="button">+ Joindre un fichier</button></div>
+                <div id="irAttachList" style="margin-top:8px;"></div>
+              </div>
+              <div class="toggle-row"><button class="toggle on" id="irTrack" type="button"><span class="dot"></span>Suivi (ouvertures · lectures · PJ)</button></div>
+            </div>
+            <div class="modal-foot">
+              <button class="cal-btn primary" id="irSend">Envoyer</button>
+              <div class="msg" id="irMsg" style="flex-basis:100%;"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ═══ APOLLON (galerie des shoots) ═══ -->
       <section class="page" id="page-apollon">
-        <div class="page-head"><h1>Apollon</h1><p>La galerie — vos shoots photo & vidéo.</p></div>
+        <div class="ap-top">
+          <div class="page-head" style="margin-bottom:0;"><h1>Apollon</h1><p>La galerie — les shoots photo & vidéo de l'agence.</p></div>
+          <button class="cal-btn primary" id="apImport" style="margin-left:auto;">＋ Importer un shoot</button>
+        </div>
+        <div class="ap-toolbar">
+          <div class="ir-filters" id="apFilters">
+            <span data-t="all" class="active">Tous</span><span data-t="photo">Photo</span><span data-t="video">Vidéo</span><span data-t="both">Photo + Vidéo</span>
+          </div>
+          <input class="hm-search" id="apSearch" placeholder="Client, lieu, shoot…" style="max-width:230px;margin:0 0 0 auto;">
+        </div>
+        <div class="ap-scroll" id="apBody"></div>
+        <div class="ap-light" id="apLight"></div>
+      </section>
+
+      <!-- ═══ PLOUTOS (devis sur mesure) ═══ -->
+      <section class="page" id="page-ploutos">
+        <div class="page-head"><h1>Ploutos</h1><p>Les devis sur mesure — vos prix, vos services.</p></div>
         <div class="section">
-          <h3>Ce que fera Apollon</h3>
-          <p class="desc">Centraliser et <b>présenter vos productions</b> : shoots photo et vidéo, classés par client / projet. Aperçus, tri, partage — la vitrine du travail d'Orphic.</p>
+          <h3>Ce que fera Ploutos</h3>
+          <p class="desc">Construire des <b>devis sur mesure</b> en assemblant vos prestations et vos tarifs : shooting, montage, campagne, retouche… On choisit les services et les quantités, le total se calcule tout seul.</p>
         </div>
         <div class="section">
-          <h3>Stockage</h3>
-          <p class="desc">Les médias vivront dans Supabase Storage (ou reliés à Atlas / Drive). On définira ensemble : upload direct, dossiers par client, vignettes, lecteur vidéo.</p>
-          <button class="btn sec" disabled style="margin-top:14px;">Importer des médias · bientôt</button>
+          <h3>Catalogue de prestations & tarifs</h3>
+          <p class="desc">Un catalogue éditable de vos services (prix au jour, au livrable, au forfait…), avec remises et TVA. Le devis pioche dedans, s'exporte en PDF, et se relie au client (Iris) et au shoot (Chronos).</p>
+          <button class="btn sec" disabled style="margin-top:14px;">Nouveau devis · bientôt</button>
         </div>
       </section>
 
-      <!-- ═══ MÉTIS (briefs shooting) ═══ -->
-      <section class="page" id="page-metis">
-        <div class="page-head"><h1>Métis</h1><p>Les briefs — la préparation de vos shootings.</p></div>
-
-        <div id="metisList">
-          <div class="ev-actions" style="margin-top:0;align-items:center;flex-wrap:wrap;">
-            <button class="btn" id="metisNewBtn">+ Nouveau brief</button>
-            <select class="auth-input" id="metisDatePick" style="max-width:340px;margin-left:14px;"><option value="">…ou depuis une date du calendrier</option></select>
+      <!-- ═══ MNÉMOSYNE (notes) ═══ -->
+      <section class="page" id="page-mnemosyne">
+        <div class="mn-wrap">
+          <aside class="mn-side">
+            <div class="mn-sidetop">
+              <input class="hm-search" id="mnSearch" placeholder="Rechercher…" style="margin:0;">
+              <button class="hm-icbtn" id="mnNew" title="Nouvelle note" style="width:40px;">＋</button>
+            </div>
+            <div class="mn-scroll" id="mnList"></div>
+          </aside>
+          <div class="mn-main" id="mnMain">
+            <div class="mn-editorhead">
+              <input class="mn-title" id="mnTitle" placeholder="Titre de la note…">
+              <span class="mn-when" id="mnWhen"></span>
+              <span class="link" id="mnDelete" style="color:var(--err);font-size:12px;">Supprimer</span>
+            </div>
+            <div class="mn-sharebar">
+              <span class="mn-sharelbl">Visible par</span>
+              <div class="mn-people" id="mnPeople"></div>
+              <span class="mn-sharelbl" style="margin-left:18px;">Événement</span>
+              <select class="mn-evsel" id="mnEvent"><option value="">— aucun —</option></select>
+            </div>
+            <textarea class="mn-body" id="mnBody" placeholder="Écris ta note… (enregistrée automatiquement)" spellcheck="true"></textarea>
           </div>
-          <div id="briefsList" style="margin-top:10px;max-width:820px;"><div class="rb-empty">Aucun brief pour l'instant.</div></div>
-        </div>
-
-        <div id="metisEditor" style="display:none;max-width:720px;">
-          <div class="ev-actions" style="margin-top:0;"><button class="btn sec" id="briefBack">← Retour aux briefs</button></div>
-          <div class="auth-row2" style="margin-top:16px;">
-            <div class="auth-field" style="flex:2"><label>Titre du projet</label><input class="auth-input" id="brTitle" placeholder="Shooting collection été"></div>
-            <div class="auth-field" style="flex:1"><label>Client</label><input class="auth-input" id="brClient"></div>
-          </div>
-          <div class="auth-row2">
-            <div class="auth-field" style="flex:1"><label>Jour du shoot</label><input class="auth-input" id="brDate" type="date"></div>
-            <div class="auth-field" style="flex:1"><label>Premier rendu</label><input class="auth-input" id="brDelivery" type="date"></div>
-            <div class="auth-field" style="flex:1"><label>Statut</label><select class="auth-input" id="brStatus"><option value="draft">Brouillon</option><option value="ready">Prêt</option><option value="done">Terminé</option></select></div>
-          </div>
-          <div class="auth-field"><label>Ou choisir une date déjà au calendrier</label><select class="auth-input" id="brExistingDate"><option value="">— dates existantes dans Chronos —</option></select></div>
-          <p class="desc" style="margin:-4px 0 10px;font-size:12px;color:var(--dim);">Les dates créent/mettent à jour automatiquement des événements dans <b>Chronos</b> (Shoot + Rendu).</p>
-          <div class="auth-row2">
-            <div class="auth-field" style="flex:1"><label>Heure de début</label><input class="auth-input" id="brStart" type="time"></div>
-            <div class="auth-field" style="flex:1"><label>Heure de fin</label><input class="auth-input" id="brEnd" type="time"></div>
-            <div class="auth-field" style="flex:1"><label>Type de shoot</label><select class="auth-input" id="brType"><option value="photo">Photo</option><option value="video">Vidéo</option><option value="both">Photo + Vidéo</option></select></div>
-          </div>
-          <div class="auth-field"><label>Équipe — salariés participants</label><div class="chips" id="brParticipants"></div></div>
-          <div class="auth-field"><label>Le brief</label><textarea class="auth-input" id="brObjectives" rows="4" placeholder="Le brief : ce qu'on veut, le message, l'usage des visuels, les livrables attendus…"></textarea></div>
-          <div class="auth-field">
-            <label>Références & moodboard</label>
-            <textarea class="auth-input" id="brMoodboard" rows="2" placeholder="Liens, ambiances, notes de style…"></textarea>
-            <div class="ev-actions" style="margin-top:8px;"><button class="btn sec" id="brUploadBtn">+ Ajouter des fichiers</button></div>
-            <div id="brFiles" style="margin-top:8px;"></div>
-          </div>
-          <div class="auth-field">
-            <label>Lieu</label>
-            <div style="display:flex;gap:10px;align-items:center;"><input class="auth-input" id="brLocation" placeholder="Adresse du shoot" style="flex:1;"><span class="link" id="brMapsLink">Google Maps ↗</span></div>
-          </div>
-          <div class="auth-field"><label>Plan de prises (shotlist)</label><textarea class="auth-input" id="brShotlist" rows="4" placeholder="1. Plan large…&#10;2. Portrait serré…"></textarea></div>
-          <div class="ev-actions"><button class="btn" id="briefSave">Enregistrer</button><button class="btn sec" id="briefDelete" style="display:none;margin-left:auto;">Supprimer</button></div>
-          <div class="msg" id="briefMsg"></div>
         </div>
       </section>
 
-      <!-- ═══ ARGOS (analytics clients) ═══ -->
+      <!-- ═══ ARGOS (data clients : réseaux · ads · web · SEO) ═══ -->
       <section class="page" id="page-argos">
-        <div class="page-head"><h1>Argos</h1><p>Analytics clients — campagnes & réseaux sociaux.</p></div>
-        <div class="section">
-          <h3>Ce que fera Argos</h3>
-          <p class="desc">Suivre en un coup d'œil les <b>performances des clients</b> : campagnes publicitaires (Meta Ads, Google Ads) et réseaux sociaux (Instagram, Facebook, LinkedIn, TikTok) — audience, engagement, conversions, budget dépensé.</p>
-        </div>
-        <div class="section">
-          <h3>Sources à connecter</h3>
-          <div class="env">
-            <div class="env-row"><div class="st miss">!</div><div><div class="nm">Meta (Facebook / Instagram)</div><div class="meta">Ads + pages — à connecter</div></div></div>
-            <div class="env-row"><div class="st miss">!</div><div><div class="nm">Google Ads</div><div class="meta">campagnes — à connecter</div></div></div>
-            <div class="env-row"><div class="st miss">!</div><div><div class="nm">LinkedIn / TikTok</div><div class="meta">réseaux — à connecter</div></div></div>
-          </div>
-          <p class="desc" style="margin-top:16px;">On définira ensemble les plateformes prioritaires, puis on les intègre une par une (chacune a son accès/OAuth).</p>
-        </div>
+        <div class="page-head"><h1>Argos</h1><p>La donnée des clients — réseaux, publicité, sites, campagnes & SEO.</p></div>
+        <div class="ag-clients" id="agClients"></div>
+        <div class="ag-scroll" id="agBody"></div>
       </section>
 
-      <!-- ═══ ATLAS (Google Drive) ═══ -->
+      <!-- ═══ ATLAS (drive) ═══ -->
       <section class="page" id="page-atlas">
-        <div class="page-head"><h1>Atlas</h1><p>Ton Google Drive, dans Olympus.</p></div>
-        <div class="section">
-          <h3>Ce que fera Atlas</h3>
-          <p class="desc">Parcourir, <b>uploader et télécharger</b> les fichiers de ton Google Drive directement depuis Olympus — sans quitter l'app.</p>
+        <div class="page-head"><h1>Atlas</h1><p>Le drive de l'agence — parcours, upload, download. <span style="color:var(--dim);">(démo — Google Drive à connecter)</span></p></div>
+        <div class="at-bar">
+          <div class="at-crumbs" id="atCrumbs"></div>
+          <input class="hm-search" id="atSearch" placeholder="Rechercher…" style="max-width:210px;margin:0 0 0 auto;">
+          <button class="btn sec" id="atNewFolder" style="padding:8px 16px;font-size:12.5px;">＋ Dossier</button>
+          <button class="cal-btn primary" id="atUpload">⤒ Uploader</button>
         </div>
-        <div class="section">
-          <h3>Connexion Google requise</h3>
-          <p class="desc" style="margin-bottom:14px;">Atlas a besoin d'un accès Google (projet Google Cloud + OAuth). On le préparera ensemble — c'est le seul prérequis.</p>
-          <button class="btn sec" disabled>Connecter Google Drive · bientôt</button>
+        <div id="atFolderForm" style="display:none;padding:8px 0 0;">
+          <div style="display:flex;gap:10px;max-width:360px;"><input class="hm-search" id="atFolderName" placeholder="Nom du dossier…" style="margin:0;"><button class="btn sec" id="atFolderCreate" style="padding:6px 16px;font-size:12.5px;">Créer</button></div>
+        </div>
+        <div class="at-scroll" id="atList"></div>
+        <div class="at-foot">
+          <span id="atUsageTxt">—</span>
+          <div class="at-usage"><i id="atUsageBar"></i></div>
         </div>
       </section>
 
@@ -796,6 +1221,17 @@
       </section>
     </main>
 
+    <div id="rbWheel">
+      <div class="wheel">
+        <svg id="wheelSvg" viewBox="46 0 144 270"></svg>
+      </div>
+    </div>
+
+    <aside id="rbBlank">
+      <div class="agenda-head" id="agendaHead">—</div>
+      <div id="agendaDay"><div class="rb-empty">—</div></div>
+    </aside>
+
     <aside id="rightbar">
       <div class="rb-sec">
         <h4>Projet en cours</h4>
@@ -818,6 +1254,15 @@
 
     <div id="floatBar">
       <span id="themeToggle" class="float-btn" title="Thème clair / sombre">◐</span>
+    </div>
+
+    <div id="calFade"></div>
+    <div class="at-toast" id="atToast"></div>
+
+    <div id="calViews">
+      <button data-view="month" class="active">Mois</button>
+      <button data-view="week">Semaine</button>
+      <button data-view="day">Jour</button>
     </div>
   </div>
   <script src="renderer.js"></script>

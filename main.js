@@ -482,27 +482,59 @@ ipcMain.handle("chat:send", async (_e, body) => {
 
 // ══════════ CHRONOS (calendrier / tâches) ══════════
 ipcMain.handle("chronos:list", async (_e, from, to) => {
-  const r = await authedFetch(`/rest/v1/events?select=*&date=gte.${from}&date=lte.${to}&order=date.asc,time.asc.nullsfirst`);
+  // chevauchement : date <= to ET (date >= from OU end_date >= from) → capture les events multi-jours
+  const r = await authedFetch(`/rest/v1/events?select=*&date=lte.${to}&or=(date.gte.${from},end_date.gte.${from})&order=date.asc,time.asc.nullsfirst`);
   if (!r.ok) return { ok: false, error: "Chronos indisponible." };
   return { ok: true, events: await r.json() };
 });
+// Champs autorisés d'un événement (le brief est fusionné dans l'événement).
+const EVENT_FIELDS = ["title", "date", "end_date", "time", "end_time", "category", "assignee", "notes",
+  "client", "shoot_type", "participants", "objectives", "moodboard", "attachments",
+  "location", "shotlist", "delivery_date", "is_personal", "show_busy"];
+function pickEvent(src) {
+  const b = {};
+  for (const f of EVENT_FIELDS) if (src[f] !== undefined) b[f] = src[f] === "" ? null : src[f];
+  return b;
+}
+// Crée / met à jour / supprime l'événement "Rendu" lié à la date de premier rendu.
+async function syncDeliveryEvent(existingId, date, title, userId) {
+  if (!date) { if (existingId) await authedFetch(`/rest/v1/events?id=eq.${existingId}`, { method: "DELETE" }); return null; }
+  const clean = (title || "").replace(/^Rendu — /, "");
+  const payload = { title: "Rendu — " + clean, date, category: "rendu" };
+  if (existingId) { await authedFetch(`/rest/v1/events?id=eq.${existingId}`, { method: "PATCH", body: JSON.stringify(payload) }); return existingId; }
+  payload.created_by = userId;
+  const r = await authedFetch(`/rest/v1/events`, { method: "POST", headers: { Prefer: "return=representation" }, body: JSON.stringify(payload) });
+  if (!r.ok) return null;
+  const a = await r.json(); return Array.isArray(a) ? a[0].id : a.id;
+}
 ipcMain.handle("chronos:create", async (_e, ev) => {
   const s = loadSession();
-  const body = {
-    title: ev.title, date: ev.date, time: ev.time || null,
-    category: ev.category || "general", assignee: ev.assignee || null,
-    notes: ev.notes || null, created_by: s?.user?.id || null,
-  };
+  const body = pickEvent(ev);
+  body.created_by = s?.user?.id || null;
   const r = await authedFetch(`/rest/v1/events`, { method: "POST", headers: { Prefer: "return=representation" }, body: JSON.stringify(body) });
   if (!r.ok) return { ok: false, error: "Création impossible." };
   const arr = await r.json();
-  return { ok: true, event: Array.isArray(arr) ? arr[0] : arr };
+  const event = Array.isArray(arr) ? arr[0] : arr;
+  if (ev.delivery_date) {
+    const did = await syncDeliveryEvent(null, ev.delivery_date, event.title, body.created_by);
+    if (did) { await authedFetch(`/rest/v1/events?id=eq.${event.id}`, { method: "PATCH", body: JSON.stringify({ delivery_event_id: did }) }); event.delivery_event_id = did; }
+  }
+  return { ok: true, event };
 });
 ipcMain.handle("chronos:update", async (_e, id, patch) => {
-  const r = await authedFetch(`/rest/v1/events?id=eq.${id}`, { method: "PATCH", body: JSON.stringify(patch) });
+  const body = pickEvent(patch);
+  if (patch.done !== undefined) body.done = patch.done;
+  if ("delivery_date" in patch) {                 // enregistrement complet depuis la modal
+    const g = await authedFetch(`/rest/v1/events?select=delivery_event_id,title&id=eq.${id}`);
+    const cur = g.ok ? (await g.json())[0] : null;
+    body.delivery_event_id = await syncDeliveryEvent(cur?.delivery_event_id || null, patch.delivery_date, patch.title || cur?.title, loadSession()?.user?.id || null);
+  }
+  const r = await authedFetch(`/rest/v1/events?id=eq.${id}`, { method: "PATCH", body: JSON.stringify(body) });
   return r.ok ? { ok: true } : { ok: false, error: "Mise à jour impossible." };
 });
 ipcMain.handle("chronos:delete", async (_e, id) => {
+  const g = await authedFetch(`/rest/v1/events?select=delivery_event_id&id=eq.${id}`);
+  if (g.ok) { const c = (await g.json())[0]; if (c?.delivery_event_id) await authedFetch(`/rest/v1/events?id=eq.${c.delivery_event_id}`, { method: "DELETE" }); }
   const r = await authedFetch(`/rest/v1/events?id=eq.${id}`, { method: "DELETE" });
   return r.ok ? { ok: true } : { ok: false, error: "Suppression impossible." };
 });
@@ -618,42 +650,8 @@ ipcMain.handle("pegasus:clients", async () => {
   } catch (e) { return { ok: false, error: e.message, clients: [] }; }
 });
 
-// ══════════ MÉTIS (briefs) ══════════
-ipcMain.handle("metis:list", async () => {
-  const r = await authedFetch(`/rest/v1/briefs?select=*&order=updated_at.desc&limit=200`);
-  return r.ok ? { ok: true, briefs: await r.json() } : { ok: false, briefs: [] };
-});
-// Crée / met à jour / supprime l'événement Chronos lié à une date de brief.
-async function syncBriefEvent(existingId, date, time, title, category, userId) {
-  if (!date) { if (existingId) await authedFetch(`/rest/v1/events?id=eq.${existingId}`, { method: "DELETE" }); return null; }
-  if (existingId) { await authedFetch(`/rest/v1/events?id=eq.${existingId}`, { method: "PATCH", body: JSON.stringify({ title, date, time: time || null, category }) }); return existingId; }
-  const r = await authedFetch(`/rest/v1/events`, { method: "POST", headers: { Prefer: "return=representation" }, body: JSON.stringify({ title, date, time: time || null, category, created_by: userId }) });
-  if (!r.ok) return null;
-  const a = await r.json(); return Array.isArray(a) ? a[0].id : a.id;
-}
-ipcMain.handle("metis:save", async (_e, b) => {
-  const s = loadSession();
-  const fields = ["title", "client", "shoot_date", "delivery_date", "start_time", "end_time", "shoot_type", "participants", "objectives", "moodboard", "location", "shotlist", "status", "attachments"];
-  const body = { updated_at: new Date().toISOString() };
-  for (const f of fields) if (b[f] !== undefined) body[f] = b[f] || null;
-  let r;
-  if (b.id) r = await authedFetch(`/rest/v1/briefs?id=eq.${b.id}`, { method: "PATCH", headers: { Prefer: "return=representation" }, body: JSON.stringify(body) });
-  else { body.created_by = s?.user?.id || null; r = await authedFetch(`/rest/v1/briefs`, { method: "POST", headers: { Prefer: "return=representation" }, body: JSON.stringify(body) }); }
-  if (!r.ok) return { ok: false, error: "Enregistrement impossible." };
-  const brief = (await r.json())[0] || {};
-  const uid = s?.user?.id || null;
-  const shootId = await syncBriefEvent(b.shoot_event_id, brief.shoot_date, brief.start_time, "Shoot — " + brief.title, "client", uid);
-  const deliveryId = await syncBriefEvent(b.delivery_event_id, brief.delivery_date, null, "Rendu — " + brief.title, "deadline", uid);
-  await authedFetch(`/rest/v1/briefs?id=eq.${brief.id}`, { method: "PATCH", body: JSON.stringify({ shoot_event_id: shootId, delivery_event_id: deliveryId }) });
-  return { ok: true, brief };
-});
-ipcMain.handle("metis:delete", async (_e, id) => {
-  const g = await authedFetch(`/rest/v1/briefs?select=shoot_event_id,delivery_event_id&id=eq.${id}`);
-  if (g.ok) { const b = (await g.json())[0]; if (b) for (const eid of [b.shoot_event_id, b.delivery_event_id]) if (eid) await authedFetch(`/rest/v1/events?id=eq.${eid}`, { method: "DELETE" }); }
-  const r = await authedFetch(`/rest/v1/briefs?id=eq.${id}`, { method: "DELETE" });
-  return r.ok ? { ok: true } : { ok: false, error: "Suppression impossible." };
-});
-ipcMain.handle("metis:upload", async (_e, folder) => {
+// ══════════ CHRONOS — upload moodboard / références ══════════
+ipcMain.handle("chronos:upload", async (_e, folder) => {
   const dlg = await dialog.showOpenDialog(win, {
     title: "Ajouter des références / moodboard",
     properties: ["openFile", "multiSelections"],
