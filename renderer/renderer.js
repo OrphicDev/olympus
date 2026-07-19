@@ -207,13 +207,20 @@ function pgRenderSide() {
     html += pgSites.map((s) => {
       const h = pgHealth[s.key];
       const dot = !h ? "wait" : h.ok ? "ok" : "err";
-      return `<div class="ir-folder pg-sitefold ${pgSel === s.key ? "active" : ""}" data-key="${escapeHtml(s.key)}"><span class="pg-dot ${dot}"></span><span class="lname">${escapeHtml(s.label)}</span></div>`;
+      let row = `<div class="ir-folder pg-sitefold ${pgSel === s.key ? "active" : ""}" data-key="${escapeHtml(s.key)}"><span class="pg-dot ${dot}"></span><span class="lname">${escapeHtml(s.label)}</span></div>`;
+      if (pgSel === s.key) {
+        row += `<div class="pg-sitetabs">` + PG_TABS.map((t) =>
+          `<div class="ir-folder pg-tabfold ${pgSiteTab === t.id ? "active" : ""}" data-tab="${t.id}"><span class="fic">·</span><span class="lname">${t.label}</span></div>`
+        ).join("") + `</div>`;
+      }
+      return row;
     }).join("");
   } else if (!pgProjects.length) {
     html = '<div class="pg-sidenote">Aucun site connecté. Utilise les boutons ci-dessous pour démarrer un projet ou connecter un site existant.</div>';
   }
   box.innerHTML = html;
   box.querySelectorAll(".pg-sitefold").forEach((el) => { el.onclick = () => { if (pgView !== "parc") pgSetView("parc"); pgSelect(el.dataset.key); }; });
+  box.querySelectorAll(".pg-tabfold").forEach((el) => { el.onclick = () => { pgSiteTab = el.dataset.tab; pgRenderSide(); pgRenderDetail(); }; });
   box.querySelectorAll(".pg-projfold").forEach((el) => { el.onclick = () => { if (pgView !== "parc") pgSetView("parc"); pgSelectProject(el.dataset.pid); }; });
   pgSideGhosts();
 }
@@ -334,12 +341,10 @@ function pgRenderDetail() {
     <button class="btn sec pg-open" data-url="${escapeHtml(s.base_url)}" style="padding:6px 14px;font-size:12px;">Ouvrir ↗</button>
     <button class="btn sec pg-open" data-url="${escapeHtml(s.base_url)}/wp-admin" style="padding:6px 14px;font-size:12px;">wp-admin</button>
   </div>`;
-  html += `<div class="pg-tabs">${PG_TABS.map((t) => `<span data-tab="${t.id}" class="${pgSiteTab === t.id ? "active" : ""}">${t.label}</span>`).join("")}</div>`;
   html += `<div class="pg-tabcontent">${pgTabHTML(pgSiteTab, s)}</div>`;
 
   box.innerHTML = html;
   box.querySelectorAll(".pg-open").forEach((b) => { b.onclick = () => window.olympus.openExternal(b.dataset.url); });
-  box.querySelectorAll(".pg-tabs span").forEach((el) => { el.onclick = () => { pgSiteTab = el.dataset.tab; pgRenderDetail(); }; });
   const sb = box.querySelector("#pgSeoBtn"); if (sb) sb.onclick = () => pgRunSeo(s.key);
   const pb = box.querySelector("#pgPerfBtn"); if (pb) pb.onclick = () => pgRunPerf(s.key);
   box.querySelectorAll(".pg-gbtns [data-sec]").forEach((b) => {
