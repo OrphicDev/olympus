@@ -110,20 +110,255 @@ $("setPegBtn").onclick = () => $("setPegBox").classList.toggle("show");
 wireInstaller("libPegCode", "libPegConnect", "libPegMsg", "libPegBox");
 wireInstaller("setPegCode", "setPegConnect", "setPegMsg", "setPegBox");
 
-// ── Pegasus : clients connectés
-async function refreshPegClients() {
-  const r = await window.olympus.pegasusClients();
-  const list = $("pegClients");
-  if (!list) return;
-  if (!r.ok) { list.innerHTML = `<div class="rb-empty">${escapeHtml(r.error || "Indisponible.")}</div>`; return; }
-  const c = r.clients || [];
-  list.innerHTML = c.length ? c.map((x) => {
-    const host = String(x.site_url || "").replace(/^https?:\/\//, "").replace(/\/$/, "");
-    const since = x.created_at ? new Date(x.created_at).toLocaleDateString("fr-FR") : "";
-    return `<div class="crm-row"><div style="flex:1;min-width:0"><div class="crm-to">${escapeHtml(x.label || host)}</div><div class="crm-meta">${escapeHtml(host)}${x.username ? " · " + escapeHtml(x.username) : ""}${since ? " · depuis " + since : ""}</div></div></div>`;
-  }).join("") : '<div class="rb-empty">Aucun site connecté pour l\'instant.</div>';
+// ══════════ PEGASUS — le parc de sites + la bibliothèque Orphic ══════════
+let pgSites = [], pgSel = null, pgTab = "parc";
+const pgHealth = {}, pgInspect = {}, pgSeo = {};
+
+// Remplissage fantôme maison : on dépasse le bas, le fader mange la dernière ligne.
+function pgFillGhosts(el) {
+  el.querySelectorAll(".ir-ghostrow").forEach((g) => g.remove());
+  let i = 0;
+  while (el.scrollHeight <= el.clientHeight + 30 && i < 40) {
+    const g = document.createElement("div");
+    g.className = "ir-ghostrow";
+    g.style.opacity = String(Math.max(0.13, 0.5 - i * 0.05));
+    g.innerHTML = `<span class="gdot"></span><i style="width:${34 + ((i * 37) % 46)}%"></i>`;
+    el.appendChild(g);
+    i++;
+  }
 }
-document.querySelector('.nav-item[data-app="pegasus"]').addEventListener("click", refreshPegClients);
+
+function pgSetTab(tab) {
+  pgTab = tab;
+  document.querySelectorAll("#pgTabs span").forEach((s) => s.classList.toggle("active", s.dataset.tab === tab));
+  $("pgViewParc").classList.toggle("show", tab === "parc");
+  $("pgViewBiblio").classList.toggle("show", tab === "biblio");
+  $("pgViewReglages").classList.toggle("show", tab === "reglages");
+  if (tab === "parc") pgLoadSites();
+  if (tab === "biblio") pgLoadRefs();
+}
+document.querySelectorAll("#pgTabs span").forEach((s) => { s.onclick = () => pgSetTab(s.dataset.tab); });
+
+// ── Le parc : registre + santé en direct
+async function pgLoadSites() {
+  const box = $("pgSites");
+  const r = await window.olympus.pegasusSites();
+  if (!r.ok) { box.innerHTML = `<div class="rb-empty">${escapeHtml(r.error || "Registre indisponible.")}</div>`; pgFillGhosts(box); return; }
+  pgSites = r.sites || [];
+  pgRenderSites();
+  for (const s of pgSites) {
+    if (pgHealth[s.key]) continue;
+    window.olympus.pegasusSiteHealth(s.key).then((h) => {
+      pgHealth[s.key] = h;
+      pgRenderSites();
+      if (pgSel === s.key) pgRenderDetail();
+    });
+  }
+  if (pgSites.length && !pgSel) pgSelect(pgSites[0].key);
+  else if (!pgSites.length) { $("pgDetail").innerHTML = ""; pgFillGhosts($("pgDetail")); }
+}
+
+function pgRenderSites() {
+  const box = $("pgSites");
+  if (!pgSites.length) { box.innerHTML = '<div class="rb-empty">Aucun site connecté — passe par /pegasus:connecter dans Claude Code.</div>'; pgFillGhosts(box); return; }
+  box.innerHTML = pgSites.map((s) => {
+    const h = pgHealth[s.key];
+    const dot = !h ? "wait" : h.ok ? "ok" : "err";
+    const meta = h && h.ok
+      ? `WP ${escapeHtml(h.health.wp || "?")} · PHP ${escapeHtml(String(h.health.php || "?").split("-")[0])} · Pegasus ${escapeHtml(h.health.pegasus || "?")}`
+      : h ? "injoignable" : escapeHtml(s.host);
+    return `<div class="pg-site ${pgSel === s.key ? "active" : ""}" data-key="${escapeHtml(s.key)}">
+      <span class="pg-dot ${dot}"></span>
+      <div><div class="nm">${escapeHtml(s.label)}</div><div class="meta">${meta}</div></div>
+    </div>`;
+  }).join("");
+  box.querySelectorAll(".pg-site").forEach((el) => { el.onclick = () => pgSelect(el.dataset.key); });
+  pgFillGhosts(box);
+}
+
+async function pgSelect(key) {
+  pgSel = key;
+  pgRenderSites();
+  pgRenderDetail();
+  if (!pgInspect[key]) {
+    const r = await window.olympus.pegasusSiteInspect(key);
+    pgInspect[key] = r;
+    if (pgSel === key) pgRenderDetail();
+  }
+}
+
+function pgRenderDetail() {
+  const box = $("pgDetail");
+  const s = pgSites.find((x) => x.key === pgSel);
+  if (!s) { box.innerHTML = ""; pgFillGhosts(box); return; }
+  const h = pgHealth[s.key], ins = pgInspect[s.key], seo = pgSeo[s.key];
+  const since = s.created_at ? new Date(s.created_at).toLocaleDateString("fr-FR") : "";
+  let html = `<div class="pg-dhead">
+    <span class="pg-dot ${!h ? "wait" : h.ok ? "ok" : "err"}"></span>
+    <h2>${escapeHtml(s.label)}</h2>
+    <button class="btn sec pg-open" data-url="${escapeHtml(s.base_url)}" style="padding:6px 14px;font-size:12px;">Ouvrir ↗</button>
+    <button class="btn sec pg-open" data-url="${escapeHtml(s.base_url)}/wp-admin" style="padding:6px 14px;font-size:12px;">wp-admin</button>
+  </div>`;
+
+  if (h && !h.ok) html += `<div class="rb-empty">Site injoignable : ${escapeHtml(h.error || "")}</div>`;
+
+  const hh = h && h.ok ? h.health : null;
+  html += `<div class="pg-kpis">
+    <div class="pg-kpi"><div class="n">${hh ? escapeHtml(hh.wp) : "—"}</div><div class="l">WordPress</div></div>
+    <div class="pg-kpi"><div class="n">${hh ? escapeHtml(String(hh.php).split("-")[0]) : "—"}</div><div class="l">PHP</div></div>
+    <div class="pg-kpi"><div class="n">${hh ? escapeHtml(hh.pegasus) : "—"}</div><div class="l">Pegasus</div></div>
+    <div class="pg-kpi"><div class="n">${ins && ins.ok ? (ins.inspect.counts?.page ?? "—") : "—"}</div><div class="l">Pages</div></div>
+  </div>`;
+
+  if (ins && ins.ok) {
+    const d = ins.inspect;
+    const actifs = (d.plugins || []).filter((p) => p.active);
+    html += `<div class="pg-sub">Structure</div>`;
+    html += `<div class="pg-line"><span class="k">Thème</span><span class="v">${escapeHtml(d.theme?.name || "?")} ${escapeHtml(d.theme?.version || "")}</span></div>`;
+    html += `<div class="pg-line"><span class="k">Constructeur</span><span class="v">${escapeHtml(d.page_builder || "?")}</span></div>`;
+    html += `<div class="pg-line"><span class="k">Permaliens</span><span class="v">${escapeHtml(d.permalinks || "par défaut (?p=)")}</span></div>`;
+    html += `<div class="pg-line"><span class="k">Langue</span><span class="v">${escapeHtml(d.site?.lang || "?")}</span></div>`;
+    html += `<div class="pg-line"><span class="k">Contenus</span><span class="v">${d.counts?.page ?? 0} pages · ${d.counts?.post ?? 0} articles</span></div>`;
+    html += `<div class="pg-line"><span class="k">Connecté</span><span class="v">${escapeHtml(s.username)}${since ? " · depuis " + since : ""}</span></div>`;
+    html += `<div class="pg-sub">Extensions actives · ${actifs.length}</div>`;
+    html += actifs.map((p) => `<div class="pg-line"><span class="k">${escapeHtml(p.name)}</span><span class="v">${escapeHtml(p.version || "")}</span></div>`).join("");
+    const inactifs = (d.plugins || []).length - actifs.length;
+    if (inactifs > 0) html += `<div class="pg-line"><span class="k" style="color:var(--dim);">+ ${inactifs} inactive(s)</span><span class="v"></span></div>`;
+  } else if (!ins) {
+    html += `<div class="pg-sub">Structure</div><div class="rb-empty">Inspection…</div>`;
+  }
+
+  html += `<div class="pg-sub">SEO</div>`;
+  if (!seo) {
+    html += `<button class="cal-btn" id="pgSeoBtn" style="margin-top:4px;">Lancer l'audit SEO</button>`;
+  } else if (seo.loading) {
+    html += `<div class="rb-empty">Audit en cours… (lecture du HTML rendu de chaque page)</div>`;
+  } else if (!seo.ok) {
+    html += `<div class="rb-empty">Audit impossible : ${escapeHtml(seo.error || "")}</div><button class="cal-btn" id="pgSeoBtn" style="margin-top:8px;">Réessayer</button>`;
+  } else {
+    const a = seo.seo;
+    html += `<div class="pg-line"><span class="k">Plugin SEO</span><span class="v">${escapeHtml(a.plugin_seo)}</span></div>`;
+    html += `<div class="pg-line"><span class="k">Sitemap</span><span class="v">${escapeHtml(a.sitemap)}</span></div>`;
+    html += `<div class="pg-line"><span class="k">robots.txt</span><span class="v">${escapeHtml(a.robots_txt)}</span></div>`;
+    const res = Object.entries(a.resume_problemes || {}).filter(([, n]) => n > 0);
+    if (!res.length) html += `<div class="pg-alert"><span>✓</span> Aucun problème détecté sur ${a.pages_auditees} page(s).</div>`;
+    else res.forEach(([k, n]) => { html += `<div class="pg-alert"><span>·</span> ${escapeHtml(k.replace(/_/g, " "))} : <b style="color:var(--txt)">${n}</b></div>`; });
+    (a.detail || []).filter((p) => p.problemes && p.problemes[0] !== "aucun").slice(0, 8).forEach((p) => {
+      html += `<div class="pg-alert"><span style="color:var(--dim)">${escapeHtml(p.page)}</span> ${escapeHtml((p.problemes || []).join(" · "))}</div>`;
+    });
+    html += `<button class="cal-btn" id="pgSeoBtn" style="margin-top:12px;">Relancer l'audit</button>`;
+  }
+
+  box.innerHTML = html;
+  box.querySelectorAll(".pg-open").forEach((b) => { b.onclick = () => window.olympus.openExternal(b.dataset.url); });
+  const sb = box.querySelector("#pgSeoBtn");
+  if (sb) sb.onclick = () => pgRunSeo(s.key);
+  pgFillGhosts(box);
+}
+
+async function pgRunSeo(key) {
+  pgSeo[key] = { loading: true };
+  pgRenderDetail();
+  const r = await window.olympus.pegasusSiteSeo(key, 10);
+  pgSeo[key] = r;
+  if (pgSel === key) pgRenderDetail();
+}
+
+// ── La bibliothèque Orphic (références vivantes — Supabase via Pegasus)
+function pgRefFilters() {
+  return {
+    q: $("pgRefQ").value.trim(),
+    kind: $("pgRefKind").value,
+    niveau: $("pgRefNiveau").value,
+    registre: $("pgRefRegistre").value,
+    statut: $("pgRefStatut").value,
+  };
+}
+async function pgLoadRefs() {
+  const box = $("pgRefs");
+  const r = await window.olympus.pegasusRefs(pgRefFilters());
+  if (!r.ok && r.missing_table) {
+    const setup = await window.olympus.pegasusRefsSetup();
+    box.innerHTML = `<div class="pg-setup">
+      <p><b>La bibliothèque n'est pas encore installée.</b><br>Une seule étape : coller le SQL <kbd>references-library.sql</kbd> dans le SQL Editor du Supabase Pegasus, puis revenir ici.</p>
+      <div class="act">
+        ${setup.sql ? '<button class="cal-btn primary" id="pgCopySql">Copier le SQL</button>' : ""}
+        ${setup.editor ? `<button class="btn sec pg-open" data-url="${escapeHtml(setup.editor)}" style="padding:8px 16px;font-size:12.5px;">Ouvrir le SQL Editor ↗</button>` : ""}
+      </div>
+      <div class="msg" id="pgSqlMsg"></div>
+    </div>`;
+    const cp = box.querySelector("#pgCopySql");
+    if (cp) cp.onclick = async () => { await navigator.clipboard.writeText(setup.sql); const m = box.querySelector("#pgSqlMsg"); m.className = "msg ok"; m.textContent = "SQL copié — colle-le dans le SQL Editor."; };
+    box.querySelectorAll(".pg-open").forEach((b) => { b.onclick = () => window.olympus.openExternal(b.dataset.url); });
+    pgFillGhosts(box);
+    return;
+  }
+  if (!r.ok) { box.innerHTML = `<div class="rb-empty">${escapeHtml(r.error || "Bibliothèque indisponible.")}</div>`; pgFillGhosts(box); return; }
+  const refs = r.refs || [];
+  if (!refs.length) { box.innerHTML = '<div class="rb-empty">Aucune référence — la bibliothèque se remplit par l\'usage (veille, projets).</div>'; pgFillGhosts(box); return; }
+  box.innerHTML = refs.map((x) => {
+    const dot = x.statut === "valide" ? "ok" : x.statut === "rejete" ? "err" : "warn";
+    const badges = [x.kind, x.niveau, x.registre].filter(Boolean).map((b) => `<span class="pg-badge">${escapeHtml(b)}</span>`).join("");
+    const metaBits = [x.business, x.technique, x.ingredients, x.auteur ? "par " + x.auteur : "", x.created_at ? new Date(x.created_at).toLocaleDateString("fr-FR") : ""].filter(Boolean);
+    const acts = x.statut === "candidat"
+      ? `<button data-act="valide">Valider</button><button data-act="rejete">Rejeter</button>`
+      : x.statut === "valide"
+        ? `<button data-act="rejete">Rejeter</button>`
+        : `<button data-act="valide">Valider</button><button data-act="suppr">✕</button>`;
+    return `<div class="pg-ref" data-id="${x.id}">
+      <span class="pg-dot ${dot}"></span>
+      <div>
+        <div class="t">${x.url ? `<a data-url="${escapeHtml(x.url)}">${escapeHtml(x.titre)} ↗</a>` : escapeHtml(x.titre)}</div>
+        <div class="meta">${escapeHtml(metaBits.join(" · "))}</div>
+      </div>
+      ${badges}
+      <div class="pg-ract">${acts}</div>
+    </div>`;
+  }).join("");
+  box.querySelectorAll(".pg-ref .t a[data-url]").forEach((a) => { a.onclick = () => window.olympus.openExternal(a.dataset.url); });
+  box.querySelectorAll(".pg-ract button").forEach((b) => {
+    b.onclick = async () => {
+      const id = b.closest(".pg-ref").dataset.id;
+      if (b.dataset.act === "suppr") await window.olympus.pegasusRefDelete(id);
+      else await window.olympus.pegasusRefSet(id, b.dataset.act);
+      pgLoadRefs();
+    };
+  });
+  pgFillGhosts(box);
+}
+let pgRefQTimer;
+$("pgRefQ").addEventListener("input", () => { clearTimeout(pgRefQTimer); pgRefQTimer = setTimeout(pgLoadRefs, 300); });
+["pgRefKind", "pgRefNiveau", "pgRefRegistre", "pgRefStatut"].forEach((id) => { $(id).addEventListener("change", pgLoadRefs); });
+
+// ── Proposer une référence
+$("pgRefNew").onclick = () => { $("pgRefForm").classList.toggle("show"); };
+$("pgRfCancel").onclick = () => { $("pgRefForm").classList.remove("show"); };
+$("pgRfSave").onclick = async () => {
+  const msg = $("pgRfMsg");
+  const row = {
+    titre: $("pgRfTitre").value.trim(),
+    url: $("pgRfUrl").value.trim(),
+    kind: $("pgRfKind").value,
+    niveau: $("pgRfNiveau").value,
+    registre: $("pgRfRegistre").value,
+    business: $("pgRfBusiness").value.trim(),
+    ingredients: $("pgRfIngredients").value.trim(),
+    statut: $("pgRfValide").checked ? "valide" : "candidat",
+  };
+  if (!row.titre) { msg.className = "msg err"; msg.textContent = "Le titre est obligatoire."; return; }
+  const r = await window.olympus.pegasusRefAdd(row);
+  if (!r.ok) { msg.className = "msg err"; msg.textContent = r.error || "Enregistrement impossible."; return; }
+  msg.className = "msg ok"; msg.textContent = row.statut === "valide" ? "Référence enregistrée (validée)." : "Proposée en candidate — à valider.";
+  ["pgRfTitre", "pgRfUrl", "pgRfBusiness", "pgRfIngredients"].forEach((id) => { $(id).value = ""; });
+  $("pgRfValide").checked = false;
+  setTimeout(() => { $("pgRefForm").classList.remove("show"); msg.textContent = ""; }, 900);
+  pgLoadRefs();
+};
+
+document.querySelector('.nav-item[data-app="pegasus"]').addEventListener("click", (e) => {
+  if (e.currentTarget.classList.contains("locked")) return;
+  pgSetTab(pgTab);
+});
 
 // ══════════ CHRONOS — support de la modal (équipe · fichiers · lieu) ══════════
 async function renderParticipantChips(selected) {
@@ -921,6 +1156,8 @@ async function refreshRightbar() {
   $("rbOnline").innerHTML = users.length
     ? users.map((u) => { const on = isOn(u); const n = u.name || "?"; return `<div class="rb-user"><div class="avatar-sm">${escapeHtml(n.charAt(0).toUpperCase())}</div><span style="flex:1${on ? "" : ";color:var(--muted)"}">${escapeHtml(n)}</span><span class="status-dot ${on ? "on" : "off"}"></span></div>`; }).join("")
     : '<div class="rb-empty">—</div>';
+  if (rbView === 1) rbRenderChat();
+  else if (rbView === 2) rbRenderMail();
 }
 function startPresence() {
   window.olympus.presenceBeat();
@@ -928,12 +1165,52 @@ function startPresence() {
   if (rbTimer) clearInterval(rbTimer);
   rbTimer = setInterval(() => { window.olympus.presenceBeat(); refreshRightbar(); }, 30000);
 }
+// ── Carrousel de la colonne droite : Agenda · Chat · Mail ──
+let rbView = 0;
+function rbSetView(i) {
+  rbView = i;
+  $("rbSlider").style.transform = `translateX(-${i * 100}%)`;
+  $("rbTabs").querySelectorAll("span").forEach((s) => s.classList.toggle("active", +s.dataset.rv === i));
+  if (i === 1) rbRenderChat();
+  else if (i === 2) rbRenderMail();
+}
+$("rbTabs").onclick = (e) => { const t = e.target.closest("[data-rv]"); if (t) rbSetView(+t.dataset.rv); };
+async function rbRenderChat() {
+  const r = await window.olympus.chatList(0);
+  const msgs = (r.ok ? r.messages : []).slice(-14);
+  const f = $("rbChatFeed");
+  f.innerHTML = msgs.length
+    ? msgs.map((m) => `<div class="rb-cmsg${m.user_id === currentUserId ? " me" : ""}"><div class="a">${escapeHtml(m.author_name || "?")} · ${fmtTime(m.created_at)}</div><div class="b">${escapeHtml(m.body)}</div></div>`).join("")
+    : '<div class="rb-empty">Aucun message — lance la conversation.</div>';
+  f.scrollTop = f.scrollHeight;
+}
+$("rbChatInput").addEventListener("keydown", async (e) => {
+  if (e.key !== "Enter") return;
+  const v = $("rbChatInput").value.trim(); if (!v) return;
+  $("rbChatInput").value = "";
+  await window.olympus.chatSend(v);
+  rbRenderChat();
+});
+function rbRenderMail() {
+  const unread = irMails.filter((m) => m.dir === "in" && m.unread && !m.trash).slice(0, 5);
+  $("rbMailUnread").innerHTML = unread.length
+    ? unread.map((m) => `<div class="rb-mrow" data-rbmail="${m.id}"><span class="dotg"></span><div style="flex:1;min-width:0;"><b>${escapeHtml(m.toName)}</b><div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(m.subject)}</div></div></div>`).join("")
+    : '<div class="rb-empty">✨ Boîte à zéro.</div>';
+  $("rbMailLive").innerHTML = irEventFeed().slice(0, 4).map(({ m, e, ts }) => `<div class="rb-mrow" data-rbmail="${m.id}"><span style="filter:grayscale(1);font-size:11px;">${IR_EV_ICON[e.k]}</span><div style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><b>${escapeHtml(m.toName)}</b> ${IR_EV_VERB[e.k].split(" ")[0]} « ${escapeHtml(m.subject.slice(0, 22))}… »</div><span style="font-size:9.5px;color:var(--dim);flex-shrink:0;">${irAgo(ts)}</span></div>`).join("") || '<div class="rb-empty">Aucune activité.</div>';
+}
+$("rightbar").addEventListener("click", (e) => {
+  const r = e.target.closest("[data-rbmail]"); if (!r) return;
+  const m = irMails.find((x) => x.id === r.dataset.rbmail); if (!m) return;
+  irFolder = m.dir === "in" ? "inbox" : "sent";
+  goTo("iris");
+  irMode(); renderIrFolders(); renderIrList(); renderIrDetail(m.id);
+});
 
 // ══════════ IRIS (mailing + tracking) ══════════
 const IR_LBL = { sent: "Envoyé", open: "Ouvert", read: "Lu en entier", dl: "PJ téléchargée", click: "Lien cliqué" };
 // Mails de démo — chaque action (ouverture, lecture, téléchargement, clic) est tracée avec son heure.
 let irMails = [
-  { id: "m1", to: "claire@maisonsolene.fr", toName: "Claire Fontaine", client: "Maison Solène", by: "Sacha", when: "17 juil · 18:42", subject: "Devis campagne rentrée 2026", preview: "Comme convenu au téléphone, voici notre proposition pour la campagne…",
+  { id: "m1", cc: ["julie.marchand@maisonsolene.fr"], to: "claire@maisonsolene.fr", toName: "Claire Fontaine", client: "Maison Solène", by: "Sacha", when: "17 juil · 18:42", subject: "Devis campagne rentrée 2026", preview: "Comme convenu au téléphone, voici notre proposition pour la campagne…",
     body: "Bonjour Claire,\n\nComme convenu au téléphone, voici notre proposition pour la campagne de rentrée : 2 journées de shooting, 25 visuels retouchés et 3 formats vidéo pour les réseaux.\n\nLe devis détaillé est en pièce jointe. Je reste dispo pour en parler cette semaine.\n\nSacha — Orphic Agency",
     atts: [{ name: "devis_rentree_2026.pdf", size: "840 Ko", dl: 3 }, { name: "moodboard.pdf", size: "6,2 Mo", dl: 1 }],
     events: [{ k: "sent", w: "17 juil · 18:42" }, { k: "open", w: "17 juil · 19:05" }, { k: "read", w: "17 juil · 19:06", x: "2 min 10 de lecture" }, { k: "dl", w: "17 juil · 19:08", x: "devis_rentree_2026.pdf" }, { k: "open", w: "18 juil · 08:31" }, { k: "dl", w: "18 juil · 08:33", x: "devis_rentree_2026.pdf" }, { k: "dl", w: "18 juil · 08:34", x: "moodboard.pdf" }, { k: "click", w: "18 juil · 08:36", x: "orphic-agency.com/portfolio" }, { k: "dl", w: "18 juil · 09:02", x: "devis_rentree_2026.pdf" }, { k: "open", w: "18 juil · 09:02" }] },
@@ -958,18 +1235,356 @@ let irMails = [
     atts: [{ name: "devis_lookbook.pdf", size: "610 Ko", dl: 2 }],
     events: [{ k: "sent", w: "12 juil · 17:48" }, { k: "open", w: "13 juil · 08:20" }, { k: "dl", w: "13 juil · 08:22", x: "devis_lookbook.pdf" }, { k: "open", w: "16 juil · 14:05" }, { k: "dl", w: "16 juil · 14:06", x: "devis_lookbook.pdf" }, { k: "click", w: "16 juil · 14:09", x: "orphic-agency.com/lookbooks" }] },
 ];
+// Tri façon Gmail : direction, drapeaux (favori, en attente, important…) et catégories des mails de démo.
+const irMeta = (id, patch) => Object.assign(irMails.find((m) => m.id === id), patch);
+irMeta("m1", { labels: ["Clients", "Devis"], star: true, important: true });
+irMeta("m2", { labels: ["Clients"] });
+irMeta("m3", { labels: ["Clients"], snooze: true });
+irMeta("m5", { labels: ["Devis"], star: true });
+irMeta("m6", { labels: ["Devis"], important: true });
+irMails.push(
+  { id: "r1", cc: ["julie.marchand@maisonsolene.fr"], dir: "in", unread: true, toName: "Claire Fontaine", to: "claire@maisonsolene.fr", client: "Maison Solène", by: "", when: "18 juil · 08:12", subject: "Re: Devis campagne rentrée 2026", preview: "Très belle proposition ! Deux questions sur les formats vidéo avant de signer…", body: "Bonjour Sacha,\n\nTrès belle proposition ! Deux questions sur les formats vidéo avant de signer :\n— peut-on ajouter un format 9:16 de 15 s ?\n— le droit d'usage couvre-t-il l'affichage en boutique ?\n\nBien à vous,\nClaire", atts: [], events: [], labels: ["Clients", "Devis"], important: true },
+  { id: "r2", dir: "in", toName: "Marc Aubert", to: "marc@villariviera.mc", client: "Villa Riviera", by: "", when: "17 juil · 14:30", subject: "Re: Livraison — pack réseaux sociaux", preview: "Reçu, superbe travail. Le pack part en diffusion lundi…", body: "Bonjour,\n\nReçu, superbe travail. Le pack part en diffusion lundi.\n\nMarc", atts: [], events: [], labels: ["Clients"], star: true },
+  { id: "r3", dir: "in", unread: true, toName: "Compta — Orphic", to: "compta@orphic-agency.com", client: "", by: "", when: "16 juil · 10:02", subject: "Factures juin à valider", preview: "Les 3 factures de juin sont prêtes pour validation…", body: "Les 3 factures de juin sont prêtes pour validation dans Atlas → Admin → Factures.", atts: [{ name: "recap_juin.pdf", size: "96 Ko", dl: 0 }], events: [], labels: ["Factures"], snooze: true },
+  { id: "d1", draft: true, toName: "Nadia Belkacem", to: "nadia@atelier-n.fr", client: "Atelier N", by: "Sacha", when: "18 juil · 07:55", subject: "Proposition — shoot automne (brouillon)", preview: "Suite à ta réponse, voici ce qu'on peut caler en septembre…", body: "Bonjour Nadia,\n\nSuite à ta réponse, voici ce qu'on peut caler en septembre…\n\n[à terminer]", atts: [], events: [], labels: ["Devis"] },
+  // Groupes imbriqués (ex. SBM › Marlow, 8 Limited)
+  { id: "m7", cc: ["chef@marlow.mc"], to: "events@marlow.mc", toName: "Direction Marlow", client: "SBM — Marlow", by: "Sacha", when: "14 juil · 10:05", subject: "Shooting culinaire — nouvelle carte", preview: "Voici notre approche pour la nouvelle carte : lumière naturelle, 12 plats…", body: "Bonjour,\n\nVoici notre approche pour la nouvelle carte : lumière naturelle, 12 plats, 2 ambiances (comptoir + terrasse).\n\nProposition détaillée en PJ.\n\nSacha — Orphic Agency", atts: [{ name: "proposition_marlow.pdf", size: "1,1 Mo", dl: 1 }], events: [{ k: "sent", w: "14 juil · 10:05" }, { k: "open", w: "14 juil · 11:20" }, { k: "dl", w: "14 juil · 11:24", x: "proposition_marlow.pdf" }], labels: ["Clients/SBM/Marlow"] },
+  { id: "r4", cc: ["chef@marlow.mc"], dir: "in", unread: true, toName: "Direction Marlow", to: "events@marlow.mc", client: "SBM — Marlow", by: "", when: "15 juil · 09:40", subject: "Re: Shooting culinaire — nouvelle carte", preview: "Merci, la proposition plaît beaucoup au chef. On vise la semaine 32…", body: "Bonjour Sacha,\n\nMerci, la proposition plaît beaucoup au chef. On vise la semaine 32 pour le shooting, avant le changement de carte.\n\nBien à vous", atts: [], events: [], labels: ["Clients/SBM/Marlow"], important: true },
+  { id: "m8", to: "hello@8limited.com", toName: "8 Limited", client: "8 Limited", by: "Astrid Berges", when: "11 juil · 16:22", subject: "Récap call — identité visuelle", preview: "Comme discuté, on part sur 3 pistes créatives à présenter le 24…", body: "Bonjour,\n\nComme discuté, on part sur 3 pistes créatives à présenter le 24. Moodboards en cours côté DA.\n\nAstrid — Orphic Agency", atts: [], events: [{ k: "sent", w: "11 juil · 16:22" }, { k: "open", w: "11 juil · 18:03" }, { k: "read", w: "11 juil · 18:05", x: "1 min 30 de lecture" }], labels: ["Clients/8 Limited"] }
+);
+const IR_FOLDERS = [
+  { id: "home", ic: "🏠", n: "Accueil", f: () => false },
+  { id: "inbox", ic: "📥", n: "Boîte de réception", f: (m) => m.dir === "in" && !m.trash },
+  { id: "unread", ic: "📩", n: "Non lus", f: (m) => m.dir === "in" && m.unread && !m.trash },
+  { id: "star", ic: "⭐", n: "Favoris", f: (m) => m.star && !m.trash },
+  { id: "snooze", ic: "⏳", n: "En attente", f: (m) => m.snooze && !m.trash },
+  { id: "important", ic: "❗", n: "Importants", f: (m) => m.important && !m.trash },
+  { id: "sent", ic: "📤", n: "Envoyés", f: (m) => m.dir !== "in" && !m.draft && !m.sched && !m.trash },
+  { id: "draft", ic: "✏️", n: "Brouillons", f: (m) => m.draft && !m.trash },
+  { id: "sched", ic: "🕐", n: "Programmés", f: (m) => m.sched && !m.trash },
+  { id: "trash", ic: "🗑️", n: "Supprimés", f: (m) => m.trash },
+];
+// Les catégories sont des CHEMINS (« Clients/SBM/Marlow ») = libellés imbriqués Gmail → groupes de mails.
+let irFolder = "home", irLabelsList = ["Clients", "Clients/SBM", "Clients/SBM/Marlow", "Clients/8 Limited", "Devis", "Factures", "Prestataires"], irLabelsReal = false;
+let irOpen = new Set(["Clients", "Clients/SBM"]);           // groupes dépliés
+const irLabelDot = (path) => { const P = ["#5b9bd5", "#45c4b0", "#a98bd6", "#e0a862", "#6cc48f", "#d98cb0", "#8a93de", "#e0885a"]; const root = path.split("/")[0]; let h = 0; for (const c of root) h = (h * 31 + c.charCodeAt(0)) >>> 0; return P[h % P.length]; };
+const irLabelMatch = (m, p) => (m.labels || []).some((l) => l === p || l.startsWith(p + "/"));
+const irInFolder = (m) => irFolder.startsWith("label:") ? irLabelMatch(m, irFolder.slice(6)) && !m.trash : (IR_FOLDERS.find((f) => f.id === irFolder) || IR_FOLDERS.find((f) => f.id === "sent")).f(m);
+function irLabelTree() {
+  const root = { children: {} };
+  for (const p of irLabelsList) {
+    let node = root, path = "";
+    for (const seg of p.split("/")) {
+      path = path ? path + "/" + seg : seg;
+      node.children = node.children || {};
+      node.children[seg] = node.children[seg] || { path, children: {} };
+      node = node.children[seg];
+    }
+  }
+  return root;
+}
+// Création de groupe « en place » : champ inséré dans l'arbre, au niveau du parent (＋ au survol d'une ligne).
+let irNewParent = null;                                     // null = fermé · "" = racine · "Clients/SBM" = sous ce groupe
+function irNewRow(parent, depth) {
+  const ph = parent ? `Groupe dans ${parent.split("/").pop()}…` : "Nouvelle catégorie…";
+  return `<div class="ir-newrow" style="padding-left:${10 + depth * 15}px"><span class="tw"></span><span class="ldot" style="background:${parent ? irLabelDot(parent) : "var(--line2)"}"></span><input id="irInlineNew" placeholder="${escapeHtml(ph)}" autocomplete="off" spellcheck="false"><span class="ir-newok" data-newok title="Créer">↵</span></div><div class="ir-newhint" style="padding-left:${10 + depth * 15 + 30}px">Entrée pour créer · aussi dans Gmail · Échap pour annuler</div>`;
+}
+function irLabelRows(node, depth = 0) {
+  const dragM = irDragId ? irMails.find((x) => x.id === irDragId) : null;
+  return Object.values(node.children || {}).sort((a, b) => a.path.localeCompare(b.path)).map((ch) => {
+    const kids = Object.keys(ch.children || {}).length > 0;
+    const open = irOpen.has(ch.path);
+    const n = irMails.filter((m) => irLabelMatch(m, ch.path) && !m.trash).length;
+    const tw = kids ? `<span class="tw" data-tw="${escapeHtml(ch.path)}">${open ? "▾" : "▸"}</span>` : `<span class="tw"></span>`;
+    const door = dragM && (dragM.labels || []).includes(ch.path) ? `<span class="ir-exit" data-exit="${escapeHtml(ch.path)}" title="Sortir le mail de ce groupe">🚪</span>` : "";
+    return `<div class="ir-folder${irFolder === "label:" + ch.path ? " active" : ""}" style="padding-left:${10 + depth * 15}px" data-fold="label:${escapeHtml(ch.path)}">${tw}<span class="ldot" style="background:${irLabelDot(ch.path)}"></span><span class="lname">${escapeHtml(ch.path.split("/").pop())}</span><span class="cnt">${n || ""}</span>${door}<span class="addg" data-addin="${escapeHtml(ch.path)}" title="Créer un groupe dans ${escapeHtml(ch.path.split("/").pop())}">＋</span></div>`
+      + (irNewParent === ch.path ? irNewRow(ch.path, depth + 1) : "")
+      + (kids && open ? irLabelRows(ch, depth + 1) : "");
+  }).join("");
+}
+function renderIrFolders() {
+  $("irFolders").innerHTML = IR_FOLDERS.map((f) => {
+    const n = irMails.filter(f.f).length;
+    return `<div class="ir-folder${irFolder === f.id ? " active" : ""}" data-fold="${f.id}"><span class="fic">${f.ic}</span>${f.n}<span class="cnt">${n || ""}</span></div>`;
+  }).join("");
+  $("irLabels").innerHTML = (irNewParent === "" ? irNewRow("", 0) : "") + irLabelRows(irLabelTree());
+  $("irSyncNote").textContent = irLabelsReal
+    ? "Catégories & groupes synchronisés avec Gmail (libellés imbriqués) — créés ici, ils apparaissent dans Gmail, et inversement."
+    : "Démo — connecte Gmail (profil) pour synchroniser catégories & groupes dans les deux sens.";
+  irFillCatGhosts();
+  const inp = $("irInlineNew");
+  if (inp) {
+    inp.focus();
+    inp.onkeydown = (e) => {
+      if (e.key === "Escape") { irNewParent = null; renderIrFolders(); }
+      else if (e.key === "Enter") irCreateGroup(inp.value);
+    };
+  }
+}
+async function irCreateGroup(raw) {
+  const name = String(raw || "").trim().replace(/\//g, "-");
+  if (!name) { irNewParent = null; renderIrFolders(); return; }
+  const path = irNewParent ? irNewParent + "/" + name : name;
+  const inp = $("irInlineNew"); if (inp) inp.disabled = true;
+  const r = await window.olympus.irisCreateLabel(path);
+  if (r.ok) { atToast("✅ « " + path.replace(/\//g, " › ") + " » créé — aussi dans Gmail."); await irLoadLabels(); }
+  else { if (!irLabelsList.includes(path)) irLabelsList.push(path); atToast("Groupe ajouté (démo — Gmail non connecté)."); }
+  let acc = ""; for (const seg of path.split("/").slice(0, -1)) { acc = acc ? acc + "/" + seg : seg; irOpen.add(acc); } // déplie les parents
+  irNewParent = null;
+  renderIrFolders();
+}
+// Comble la colonne des catégories jusqu'en bas avec des lignes fantômes (le fondu mange la dernière).
+function irFillCatGhosts() {
+  const box = $("irLabelGhosts"), sc = document.querySelector("#page-iris .ir-sidescroll");
+  if (!box) return;
+  box.innerHTML = "";
+  if (!sc || !sc.clientHeight) return;                     // page masquée → rien à mesurer
+  const limit = sc.getBoundingClientRect().bottom + 24;
+  const widths = [64, 46, 70, 52, 60, 42, 66, 55];         // largeurs variées, comme de vrais noms
+  for (let i = 0; i < 20 && box.getBoundingClientRect().bottom <= limit; i++) {
+    const op = Math.max(0.16, 0.5 - i * 0.045).toFixed(2); // s'évanouit progressivement vers le bas
+    box.insertAdjacentHTML("beforeend", `<div class="ir-ghostrow" style="opacity:${op}"><span class="gdot"></span><i style="width:${widths[i % widths.length]}%"></i></div>`);
+  }
+}
+async function irLoadLabels() {
+  if (!irAccObj().real) return;                            // la synchro Gmail ne concerne que la boîte connectée
+  const r = await window.olympus.irisLabels();
+  if (r.ok) { irLabelsReal = true; irLabelsList = [...new Set([...r.labels, ...irLabelsList])]; }
+  renderIrFolders();
+}
+// ── Alertes en direct : les derniers événements de suivi, façon notifications ──
+const IR_EV_ICON = { open: "📬", read: "📖", dl: "📎", click: "🔗" };
+const IR_EV_VERB = { open: "a ouvert", read: "a lu", dl: "a téléchargé une PJ de", click: "a cliqué un lien de" };
+const irAgo = (ts) => { const d = Date.now() - ts; if (d < 90e3) return "à l'instant"; if (d < 3600e3) return "il y a " + Math.round(d / 60e3) + " min"; if (d < 86400e3) return "il y a " + Math.round(d / 3600e3) + " h"; return "il y a " + Math.round(d / 86400e3) + " j"; };
+function irEventFeed() {
+  const evs = [];
+  for (const m of irMails) if (m.dir !== "in" && !m.draft && !m.trash) for (const e of m.events) if (e.k !== "sent") evs.push({ m, e, ts: irWhenTs(e.w) });
+  return evs.sort((a, b) => b.ts - a.ts).slice(0, 5);
+}
+// Simulation démo : de temps en temps, un destinataire « ouvre » un mail → alerte + flux mis à jour.
+let irSimTimer = null;
+function irStartSim() {
+  if (irSimTimer) return;
+  irSimTimer = setInterval(() => {
+    if (!document.querySelector("#page-iris.show")) return;
+    const outs = irMails.filter((m) => m.dir !== "in" && !m.draft && !m.trash && m.events.length);
+    if (!outs.length) return;
+    const m = outs[Math.floor(Math.random() * outs.length)];
+    let k = ["open", "open", "read", "dl"][Math.floor(Math.random() * 4)];
+    if (k === "dl" && !m.atts.length) k = "open";
+    const now = new Date();
+    const w = now.getDate() + " " + MON_ABBR[now.getMonth()] + " · " + now.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+    m.events.push({ k, w, x: k === "dl" ? m.atts[0].name : k === "read" ? "1 min de lecture" : undefined });
+    if (k === "dl" && m.atts[0]) m.atts[0].dl = (m.atts[0].dl || 0) + 1;
+    atToast(`${IR_EV_ICON[k]} ${m.toName} ${k === "open" ? "vient d'ouvrir" : k === "read" ? "vient de lire" : "vient de télécharger une PJ de"} « ${m.subject.slice(0, 38)} »`);
+    if (irFolder === "home" && $("irHome").style.display !== "none") renderIrHome();
+    else { renderIrStats(); renderIrList(); if (irSel === m.id) renderIrDetail(m.id); }
+  }, 45000);
+}
+// ── Accueil Iris : l'état du profil mail en un coup d'œil ──
+function irMode() {
+  const home = irFolder === "home";
+  $("irStats").style.display = home ? "none" : "";
+  document.querySelector("#page-iris .ir-toolbar").style.display = home ? "none" : "";
+  document.querySelector("#page-iris .ir-split").style.display = home ? "none" : "";
+  $("irHome").style.display = home ? "" : "none";
+  if (home) renderIrHome();
+}
+function irRing(pct, label) {
+  const r = 48, c = (2 * Math.PI * r).toFixed(1), off = (c * (1 - pct / 100)).toFixed(1);
+  return `<div class="ir-ring"><svg width="116" height="116" viewBox="0 0 116 116"><circle cx="58" cy="58" r="${r}" class="bg"/><circle cx="58" cy="58" r="${r}" class="fg" stroke-dasharray="${c}" stroke-dashoffset="${off}" transform="rotate(-90 58 58)"/><text x="58" y="55" class="v">${pct}%</text><text x="58" y="74" class="t">${label}</text></svg></div>`;
+}
+function renderIrHome() {
+  const outs = irMails.filter((m) => m.dir !== "in" && !m.draft && !m.sched && !m.trash);
+  const ins = irMails.filter((m) => m.dir === "in" && !m.trash);
+  const replied = (m) => irThreadOf(m).some((x) => x.dir === "in" && irWhenTs(x.when) > irWhenTs(m.when));
+  const openRate = outs.length ? Math.round(outs.filter((m) => irCount(m, "open") > 0).length / outs.length * 100) : 0;
+  const replyRate = outs.length ? Math.round(outs.filter(replied).length / outs.length * 100) : 0;
+  const dls = outs.reduce((s, m) => s + irCount(m, "dl"), 0);
+  const snoozed = irMails.filter((m) => m.snooze && !m.trash).length;
+  // Activité de la semaine (lun 13 → dim 19)
+  const dayNum = (w) => { const t = irWhenTs(w); return t ? new Date(t).getDate() : 0; };
+  const days = [13, 14, 15, 16, 17, 18, 19].map((d, i) => ({ l: DOW[i], d, out: outs.filter((m) => dayNum(m.when) === d).length, inn: ins.filter((m) => dayNum(m.when) === d).length }));
+  const mx = Math.max(1, ...days.map((x) => Math.max(x.out, x.inn)));
+  const week = days.map((x) => `<div class="ir-day"><div class="bars"><i class="out" style="height:${Math.max(3, x.out / mx * 100)}%" title="${x.out} envoyé(s)"></i><i class="inn" style="height:${Math.max(3, x.inn / mx * 100)}%" title="${x.inn} reçu(s)"></i></div><span>${x.l}</span></div>`).join("");
+  // Groupes les plus actifs
+  const roots = [...new Set(irLabelsList.map((p) => p.split("/")[0]))];
+  const gcounts = roots.map((g) => ({ g, n: irMails.filter((m) => irLabelMatch(m, g) && !m.trash).length })).filter((x) => x.n).sort((a, b) => b.n - a.n).slice(0, 5);
+  const gmx = Math.max(1, ...gcounts.map((x) => x.n));
+  let groups = gcounts.map((x) => `<div class="ir-gb"><span class="ldot" style="background:${irLabelDot(x.g)}"></span><span class="name">${escapeHtml(x.g)}</span><div class="track"><i style="width:${x.n / gmx * 100}%;background:${irLabelDot(x.g)}"></i></div><span class="n">${x.n}</span></div>`).join("");
+  // À relancer : envoyés sans réponse
+  const now = Date.now();
+  const relAll = outs.filter((m) => !replied(m)).map((m) => ({ m, days: Math.max(0, Math.round((now - irWhenTs(m.when)) / 864e5)), o: irCount(m, "open") })).sort((a, b) => b.days - a.days);
+  const rel = relAll.slice(0, 8);
+  let relances = rel.length ? rel.map(({ m, days: dd, o }) => `<div class="ir-rel" data-goto="${m.id}"><div class="ir-av" style="width:30px;height:30px;font-size:10.5px;">${initialsOf(m.toName)}</div><div class="ir-tmain"><div class="ir-twho">${escapeHtml(m.toName)}</div><div class="ir-tsnip">${escapeHtml(m.subject)}</div></div><span class="ir-b${o ? " on" : ""}">${o ? "ouvert ×" + o + " · sans réponse" : "jamais ouvert"} · ${dd} j</span></div>`).join("") : '<div class="rb-empty" style="padding:14px 2px;">Rien à relancer — tout le monde a répondu 🎉</div>';
+  const me = ($("accName").textContent || "").split(" ")[0] || "toi";
+  const unreadN = ins.filter((m) => m.unread).length;       // nouveaux mails non lus
+  $("irHome").innerHTML = `
+    <div class="ir-hgreet">Bonjour ${escapeHtml(me)} — voilà où en sont tes mails.</div>
+    <div class="ir-hero2">
+      ${irRing(openRate, "d'ouverture")}
+      ${irRing(replyRate, "de réponse")}
+      <div class="ir-newmails">
+        <div class="ir-newcount" data-fold-go="unread" title="Ouvrir les non lus">
+          <div class="n">${unreadN}</div>
+          <div class="l">nouveau${unreadN > 1 ? "x" : ""} mail${unreadN > 1 ? "s" : ""} non lu${unreadN > 1 ? "s" : ""}</div>
+        </div>
+        <div class="ir-newlist">
+          ${ins.filter((m) => m.unread).sort((a, b) => irWhenTs(b.when) - irWhenTs(a.when)).slice(0, 3).map((m) => `<div class="ir-new" data-goto="${m.id}"><span class="dotg"></span><div class="t"><b>${escapeHtml(m.toName)}</b>${escapeHtml(m.subject)}</div><span class="w">${m.when}</span></div>`).join("") || '<div class="ir-newzero">✨ Boîte à zéro — aucun nouveau mail.</div>'}
+          ${unreadN > 3 ? `<div class="ir-newmore" data-fold-go="unread">＋ ${unreadN - 3} autre${unreadN - 3 > 1 ? "s" : ""} non lu${unreadN - 3 > 1 ? "s" : ""}…</div>` : ""}
+        </div>
+      </div>
+      <div class="ir-hkpis">
+        <div class="ir-stat"><div class="n">${outs.length}</div><div class="l">envoyés cette semaine</div></div>
+        <div class="ir-stat"><div class="n">${ins.length}</div><div class="l">réponses reçues</div></div>
+        <div class="ir-stat"><div class="n">${relAll.length}</div><div class="l">sans réponse</div></div>
+        <div class="ir-stat"><div class="n">${dls}</div><div class="l">PJ téléchargées</div></div>
+        <div class="ir-stat"><div class="n">${snoozed}</div><div class="l">en attente</div></div>
+      </div>
+    </div>
+    <div class="ir-hgrid">
+      <div>
+        <div class="ir-sect">Activité de la semaine</div>
+        <div class="ir-week">${week}</div>
+        <div class="ir-wleg"><span><i class="out"></i>envoyés</span><span><i class="inn"></i>reçus</span></div>
+      </div>
+      <div class="ir-alerts">
+        <div class="ir-sect" style="margin-bottom:6px;">En direct<span class="ir-livedot"></span></div>
+        ${irEventFeed().map(({ m, e, ts }, i) => `<div class="ir-alert${i === 0 ? " live" : ""}" data-goto="${m.id}"><span class="ic">${IR_EV_ICON[e.k]}</span><div class="t"><b>${escapeHtml(m.toName)}</b> ${IR_EV_VERB[e.k]} « ${escapeHtml(m.subject.slice(0, 34))} »</div><span class="w">${irAgo(ts)}</span></div>`).join("") || '<div class="rb-empty" style="padding:10px 0;">Aucune activité pour l\'instant.</div>'}
+      </div>
+      <div>
+        <div class="ir-sect">Groupes les plus actifs</div><div data-gwrap>${groups}</div>
+      </div>
+      <div>
+        <div class="ir-sect">À relancer</div>
+        <div data-rwrap>${relances}</div>
+      </div>
+    </div>`;
+  irFillGhosts();
+}
+// Comble les deux colonnes jusqu'au bas de la fenêtre avec des lignes fantômes (mesuré, pas estimé).
+function irFillGhosts() {
+  const home = $("irHome");
+  const limit = home.getBoundingClientRect().bottom + 30;   // on dépasse le bord : le fondu du bas mange la dernière ligne
+  const gw = home.querySelector("[data-gwrap]"), rw = home.querySelector("[data-rwrap]");
+  const GG = '<div class="ir-gb ghost"><span class="ldot"></span><span class="name">—</span><div class="track"></div><span class="n"></span></div>';
+  const GR = '<div class="ir-rel ghost"><div class="ir-av gav"></div><div class="ir-tmain"><div class="gline w1"></div><div class="gline w2"></div></div></div>';
+  for (let i = 0; i < 30 && gw.getBoundingClientRect().bottom <= limit; i++) gw.insertAdjacentHTML("beforeend", GG);
+  for (let i = 0; i < 30 && rw.getBoundingClientRect().bottom <= limit; i++) rw.insertAdjacentHTML("beforeend", GR);
+}
+window.addEventListener("resize", () => {
+  if (!document.querySelector("#page-iris.show")) return;
+  renderIrFolders();
+  if (irFolder === "home" && $("irHome").style.display !== "none") renderIrHome();
+  else renderIrList();
+});
+$("irHome").addEventListener("click", (e) => {
+  const fg = e.target.closest("[data-fold-go]");
+  if (fg) { irFolder = fg.dataset.foldGo; irMode(); renderIrFolders(); renderIrList(); return; }
+  const g = e.target.closest("[data-goto]"); if (!g) return;
+  const gm = irMails.find((x) => x.id === g.dataset.goto);
+  irFolder = gm && gm.dir === "in" ? "inbox" : "sent";
+  irMode(); renderIrFolders(); renderIrList(); renderIrDetail(g.dataset.goto);
+});
+// Classement automatique : une adresse ↔ un groupe. Le mail arrive pré-rangé, on peut finir à la main.
+let irRules = [];
+try { irRules = JSON.parse(localStorage.getItem("iris-rules:sacha") || localStorage.getItem("iris-rules")) || []; } catch { irRules = []; }
+if (!localStorage.getItem("iris-rules:sacha") && !localStorage.getItem("iris-rules")) irRules = [{ addr: "events@marlow.mc", label: "Clients/SBM/Marlow" }];
+const irRulesSave = () => localStorage.setItem("iris-rules:" + irAcc, JSON.stringify(irRules));
+const irRuleFor = (addr) => irRules.find((r) => r.addr.toLowerCase() === String(addr || "").toLowerCase());
+function irApplyRules() {
+  for (const m of irMails) {
+    const r = irRuleFor(m.to);
+    if (r) { m.labels = m.labels || []; if (!m.labels.includes(r.label)) m.labels.push(r.label); }
+  }
+}
+// Retire un mail d'un groupe ; si une règle auto l'y re-classerait, on retire la règle aussi (sinon il reviendrait).
+function irRemoveLabel(m, p) {
+  m.labels = (m.labels || []).filter((l) => l !== p);
+  const r = irRuleFor(m.to);
+  if (r && r.label === p) { irRules = irRules.filter((x) => x !== r); irRulesSave(); return true; }
+  return false;
+}
+// Fil de discussion : mails groupés par interlocuteur + sujet normalisé (sans les « Re: / Tr: »).
+irMails.push({ id: "r0", cc: ["julie.marchand@maisonsolene.fr"], dir: "in", toName: "Claire Fontaine", to: "claire@maisonsolene.fr", client: "Maison Solène", by: "", when: "16 juil · 11:05", subject: "Devis campagne rentrée 2026", preview: "Suite à notre appel, pouvez-vous me chiffrer la campagne de rentrée ?", body: "Bonjour Sacha,\n\nSuite à notre appel, pouvez-vous me chiffrer la campagne de rentrée ? Idéalement shooting + vidéos réseaux, avec une livraison mi-août.\n\nMerci !\nClaire", atts: [], events: [], labels: ["Clients", "Devis"] });
+const irNormSubj = (s) => String(s || "").replace(/^((re|tr|fwd?)\s*:\s*)+/i, "").trim().toLowerCase();
+const irThreadKey = (m) => String(m.to || "").toLowerCase() + "|" + irNormSubj(m.subject);
+const IR_MONTHS = { janv: 0, févr: 1, mars: 2, avr: 3, mai: 4, juin: 5, juil: 6, août: 7, sept: 8, oct: 9, nov: 10, déc: 11 };
+function irWhenTs(w) {                                      // "17 juil · 18:42" → timestamp (tri chronologique)
+  const m = /^(\d{1,2})\s+(\S+?)\.?\s*·\s*(\d{2}):(\d{2})/.exec(String(w || ""));
+  if (!m) return 0;
+  return new Date(2026, IR_MONTHS[m[2].replace(".", "")] ?? 0, +m[1], +m[3], +m[4]).getTime();
+}
+const irThreadOf = (m) => irMails.filter((x) => irThreadKey(x) === irThreadKey(m) && (!x.trash || x.id === m.id)).sort((a, b) => irWhenTs(a.when) - irWhenTs(b.when));
+let irThreadOpen = new Set();
+let irThreadStackOpen = false;                              // la pile de messages précédents est-elle dépliée ?
+// ══ Boîtes mail multiples : chaque boîte garde ses mails, ses catégories et ses règles — aucun mélange. ══
+const IR_ACCOUNTS = [
+  { id: "sacha", email: "sacha@orphic-agency.com", label: "Boîte personnelle", real: true },
+  { id: "agence", email: "hello@orphic-agency.com", label: "Boîte agence · partagée", real: false },
+];
+let irAcc = "sacha";
+const irStore = {
+  agence: {
+    labelsReal: false,
+    labels: ["Prospects", "Presse", "Clients"],
+    rules: (() => { try { return JSON.parse(localStorage.getItem("iris-rules:agence")) || []; } catch { return []; } })(),
+    mails: [
+      { id: "a1", dir: "in", unread: true, toName: "Léa Morin", to: "lea.morin@gmail.com", client: "", by: "", when: "18 juil · 09:20", subject: "Demande de devis — mariage septembre", preview: "Bonjour, nous cherchons un photographe pour notre mariage le 12 septembre à Èze…", body: "Bonjour,\n\nNous cherchons un photographe pour notre mariage le 12 septembre à Èze (90 invités, cérémonie en extérieur).\n\nPouvez-vous nous envoyer vos formules ?\n\nLéa Morin", atts: [], events: [], labels: ["Prospects"] },
+      { id: "a2", dir: "in", unread: true, toName: "Nice-Matin", to: "redaction@nicematin.fr", client: "", by: "", when: "17 juil · 16:40", subject: "Interview — portrait d'agence", preview: "Nous préparons un dossier sur les agences créatives de la Côte d'Azur…", body: "Bonjour,\n\nNous préparons un dossier sur les agences créatives de la Côte d'Azur et aimerions vous interviewer.\n\nSeriez-vous disponibles la semaine prochaine ?\n\nLa rédaction", atts: [], events: [], labels: ["Presse"] },
+      { id: "a3", toName: "Léa Morin", to: "lea.morin@gmail.com", client: "", by: "Astrid Berges", when: "18 juil · 10:02", subject: "Re: Demande de devis — mariage septembre", preview: "Merci pour votre message ! Voici notre brochure mariage et nos trois formules…", body: "Bonjour Léa,\n\nMerci pour votre message ! Voici notre brochure mariage et nos trois formules. Le 12 septembre est encore libre.\n\nAstrid — Orphic Agency", atts: [{ name: "brochure_mariage.pdf", size: "4,2 Mo", dl: 1 }], events: [{ k: "sent", w: "18 juil · 10:02" }, { k: "open", w: "18 juil · 11:12" }, { k: "dl", w: "18 juil · 11:15", x: "brochure_mariage.pdf" }], labels: ["Prospects"] },
+    ],
+  },
+};
+const irAccObj = () => IR_ACCOUNTS.find((a) => a.id === irAcc);
+const irAccInitials = (email) => initialsOf(email.split("@")[0].replace(/[._-]/g, " "));
+function irSwitchAccount(id) {
+  if (id === irAcc || (!irStore[id] && !IR_ACCOUNTS.some((a) => a.id === id))) return;
+  irStore[irAcc] = { mails: irMails, labels: irLabelsList, rules: irRules, labelsReal: irLabelsReal };
+  irAcc = id;
+  const s = irStore[id];
+  irMails = s.mails; irLabelsList = s.labels; irRules = s.rules; irLabelsReal = s.labelsReal;
+  irSel = null; irThreadOpen = new Set(); irFolder = "home"; irNewParent = null; irFilter = "all";
+  document.querySelector("#page-iris .ir-split").classList.remove("reader"); document.querySelector("#page-iris .ir-split").classList.add("full");
+  $("irDetail").innerHTML = '<div class="rb-empty" style="padding:60px 20px;text-align:center;">Sélectionne un mail pour voir son suivi.</div>';
+  renderIrAcct(); refreshIris();
+  atToast("Boîte active : " + irAccObj().email);
+}
+function renderIrAcct() {
+  const a = irAccObj();
+  $("irAcctAv").textContent = irAccInitials(a.email);
+  $("irAcctEmail").textContent = a.email;
+  $("irAcctLabel").textContent = a.label;
+  $("irAcctMenu").innerHTML = IR_ACCOUNTS.map((x) => {
+    const mails = x.id === irAcc ? irMails : (irStore[x.id] || {}).mails || [];
+    const un = mails.filter((m) => m.dir === "in" && m.unread && !m.trash).length;
+    return `<div class="ir-arow${x.id === irAcc ? " active" : ""}" data-acct="${x.id}"><div class="ir-aav sm">${irAccInitials(x.email)}</div><div class="ir-ainfo"><div class="nm">${x.email}</div><div class="sub">${x.label}</div></div>${x.id === irAcc ? '<span class="chk">✓</span>' : un ? `<span class="hm-unread">${un}</span>` : ""}</div>`;
+  }).join("") + `<div class="ir-arow add" data-acct-add><div class="ir-aav sm dash">＋</div><div class="ir-ainfo"><div class="nm">Connecter une boîte…</div><div class="sub">Gmail · mot de passe d'application</div></div></div>`;
+}
+$("irAcctCur").onclick = () => { const m = $("irAcctMenu"); m.style.display = m.style.display === "none" ? "" : "none"; if (m.style.display === "") renderIrAcct(); };
+$("irAcctMenu").onclick = (e) => {
+  if (e.target.closest("[data-acct-add]")) { $("irAcctMenu").style.display = "none"; $("profileCard").click(); atToast("Connecte la nouvelle boîte dans Comptes & connexions."); return; }
+  const r = e.target.closest("[data-acct]"); if (!r) return;
+  $("irAcctMenu").style.display = "none";
+  irSwitchAccount(r.dataset.acct);
+};
+document.addEventListener("click", (e) => { if (!e.target.closest("#irAcct")) $("irAcctMenu").style.display = "none"; });
 let irFilter = "all", irSel = null, irAtts = [];
 const irCount = (m, k) => m.events.filter((e) => e.k === k).length;
 function renderIrStats() {
-  const sent = irMails.length;
-  const opened = irMails.filter((m) => irCount(m, "open") > 0).length;
+  const out = irMails.filter((m) => m.dir !== "in" && !m.draft && !m.sched && !m.trash);
+  const sent = out.length;
+  const opened = out.filter((m) => irCount(m, "open") > 0).length;
   const rate = sent ? Math.round(opened / sent * 100) : 0;
-  const dls = irMails.reduce((s, m) => s + irCount(m, "dl"), 0);
-  const reads = irMails.reduce((s, m) => s + irCount(m, "read"), 0);
+  const dls = out.reduce((s, m) => s + irCount(m, "dl"), 0);
+  const reads = out.reduce((s, m) => s + irCount(m, "read"), 0);
   $("irStats").innerHTML = [[sent, "envoyés"], [rate + "%", "taux d'ouverture"], [reads, "lectures complètes"], [dls, "PJ téléchargées"]]
     .map(([n, l]) => `<div class="ir-stat"><div class="n">${n}</div><div class="l">${l}</div></div>`).join("");
 }
 function irBadges(m) {
+  if (m.trash) return `<span class="ir-b">Supprimé</span>`;
+  if (m.sched) return `<span class="ir-b on">🕐 ${m.sched}</span>`;
+  if (m.dir === "in" || m.draft) return `<span class="ir-b">${m.draft ? "Brouillon" : "Reçu"}</span>`;
   const o = irCount(m, "open"), r = irCount(m, "read"), d = irCount(m, "dl"), c = irCount(m, "click");
   return `<span class="ir-b${o ? " on" : ""}">${o ? "Ouvert ×" + o : "Non ouvert"}</span>` +
     (r ? `<span class="ir-b on">Lu</span>` : "") + (d ? `<span class="ir-b on">PJ ×${d}</span>` : "") + (c ? `<span class="ir-b on">Clic ×${c}</span>` : "");
@@ -977,45 +1592,177 @@ function irBadges(m) {
 function renderIrList() {
   const q = ($("irSearch").value || "").toLowerCase();
   const list = irMails.filter((m) => {
+    if (!irInFolder(m)) return false;
     if (q && ![m.toName, m.to, m.client, m.subject].join(" ").toLowerCase().includes(q)) return false;
     if (irFilter === "opened") return irCount(m, "open") > 0;
     if (irFilter === "unopened") return irCount(m, "open") === 0;
     if (irFilter === "attach") return irCount(m, "dl") > 0;
     return true;
   });
-  $("irList").innerHTML = list.length ? list.map((m) => `
-    <div class="ir-row${irSel === m.id ? " active" : ""}" data-mail="${m.id}">
+  $("irList").innerHTML = list.length ? list.map((m) => {
+    const dots = (m.labels || []).map((l) => `<span class="ldot" style="background:${irLabelDot(l)}" title="${escapeHtml(l.replace(/\//g, " › "))}"></span>`).join("");
+    return `
+    <div class="ir-row${irSel === m.id ? " active" : ""}${m.unread ? " unread" : ""}" data-mail="${m.id}" draggable="true">
       <div class="ir-av">${initialsOf(m.toName)}</div>
       <div class="ir-main">
-        <div class="ir-name">${escapeHtml(m.toName)}<span class="cl">${escapeHtml(m.client || "")}</span></div>
-        <div class="ir-sub">${escapeHtml(m.subject)}</div>
+        <div class="ir-name">${escapeHtml(m.toName)}${irThreadOf(m).length > 1 ? `<span class="cl">(${irThreadOf(m).length})</span>` : ""}<span class="cl">${escapeHtml(m.client || "")}</span></div>
+        <div class="ir-sub">${dots}${escapeHtml(m.subject)}</div>
         <div class="ir-prev">${escapeHtml(m.preview || "")}</div>
       </div>
       <div class="ir-meta"><span class="ir-when">${m.when}</span><div class="ir-badges">${irBadges(m)}</div></div>
-    </div>`).join("") : '<div class="rb-empty" style="padding:30px 10px;">Aucun mail ne correspond.</div>';
+      <span class="ir-exp" data-expand="${m.id}" title="Ouvrir en grand">⤢</span>
+    </div>`;
+  }).join("") : '<div class="rb-empty" style="padding:30px 10px;">Aucun mail ne correspond.</div>';
+  irFillListGhosts();
+}
+// Comble la liste de mails jusqu'en bas avec des lignes fantômes (dépassent le bord, le fondu les mange).
+function irFillListGhosts() {
+  const el = $("irList");
+  if (!el || !el.clientHeight) return;                     // page masquée → rien à mesurer
+  const limit = el.getBoundingClientRect().bottom + 30;
+  const G = '<div class="ir-row ghost"><div class="ir-av gav"></div><div class="ir-main"><div class="gline w1"></div><div class="gline" style="width:58%;"></div></div></div>';
+  for (let i = 0; i < 30 && el.lastElementChild && el.lastElementChild.getBoundingClientRect().bottom <= limit; i++) el.insertAdjacentHTML("beforeend", G);
 }
 function renderIrDetail(id) {
   const m = irMails.find((x) => x.id === id); if (!m) return;
+  if (irSel !== id) { irThreadOpen = new Set([id]); irThreadStackOpen = false; }   // le message cliqué est déplié, les précédents repliés
   irSel = id;
+  if (m.unread) { m.unread = false; renderIrFolders(); }    // l'ouvrir le marque comme lu
+  const tracked = m.dir !== "in" && !m.draft && !m.sched;
   const kpi = [[irCount(m, "open"), "ouvertures"], [irCount(m, "read"), "lectures"], [irCount(m, "dl"), "PJ téléchargées"], [irCount(m, "click"), "clics"]]
     .map(([n, l]) => `<div class="ir-kpi"><div class="n">${n}</div><div class="l">${l}</div></div>`).join("");
-  const atts = m.atts.length ? m.atts.map((a) => `<div class="ir-att"><span>📎</span><span>${escapeHtml(a.name)}</span><span style="color:var(--dim);font-size:11px;">${a.size}</span><span class="cnt${a.dl ? " hot" : ""}">${a.dl ? "téléchargée ×" + a.dl : "jamais téléchargée"}</span></div>`).join("") : "";
   const tl = m.events.slice().reverse().map((e) => `<div class="ir-tli${e.k !== "sent" ? " hot" : ""}"><div class="k">${IR_LBL[e.k]}${e.x ? ` — <span style="color:var(--muted)">${escapeHtml(e.x)}</span>` : ""}</div><div class="w">${e.w}</div></div>`).join("");
+  const meta = m.dir === "in"
+    ? `De ${escapeHtml(m.toName)} &lt;${escapeHtml(m.to)}&gt;${m.client ? " · " + escapeHtml(m.client) : ""} · reçu le ${m.when}`
+    : `À ${escapeHtml(m.toName)} &lt;${escapeHtml(m.to)}&gt;${m.client ? " · " + escapeHtml(m.client) : ""}${m.by ? " · envoyé par " + escapeHtml(m.by) : ""} · ${m.when}`;
+  const rule = irRuleFor(m.to);
+  const allPaths = irLabelsList.slice().sort();
+  const chips = (m.labels || []).map((l) => `<span class="ir-lchip"><span class="ldot" style="background:${irLabelDot(l)}"></span>${escapeHtml(l.replace(/\//g, " › "))}<span class="x" data-rmlbl="${escapeHtml(l)}" title="Retirer de ce groupe">✕</span></span>`).join("");
+  const addOpts = allPaths.filter((p) => !(m.labels || []).includes(p)).map((p) => `<option value="${escapeHtml(p)}">${escapeHtml(p.replace(/\//g, " › "))}</option>`).join("");
+  const autoLine = rule
+    ? `<span class="ir-autoon">⚡ Les mails de ${escapeHtml(m.to)} se rangent dans <b>${escapeHtml(rule.label.replace(/\//g, " › "))}</b></span><span class="link" data-rmrule style="font-size:11px;">retirer</span>`
+    : `<select class="mn-evsel" id="irAutoSel"><option value="">⚡ Toujours classer ${escapeHtml(m.to)} dans…</option>${allPaths.map((p) => `<option value="${escapeHtml(p)}">${escapeHtml(p.replace(/\//g, " › "))}</option>`).join("")}</select>`;
+  const thread = irThreadOf(m);
+  const hidden = thread.filter((t) => !(irThreadOpen.has(t.id) || thread.length === 1));
+  let stackDone = false;
+  const tItem = (t) => {
+    const who = t.dir === "in" ? t.toName : (t.by || "Moi");
+    const open = irThreadOpen.has(t.id) || thread.length === 1;
+    if (!open && !irThreadStackOpen && hidden.length > 1) {   // pile repliée : une seule ligne pour tous les messages masqués
+      if (stackDone) return "";
+      stackDone = true;
+      return `<div class="ir-tstack" data-tstack>▸ ${hidden.length} messages masqués<span class="w">du ${hidden[0].when.split(" · ")[0]} au ${hidden[hidden.length - 1].when.split(" · ")[0]}</span></div>`;
+    }
+    if (!open) {
+      const snip = (t.body || "").replace(/\s+/g, " ").slice(0, 90);
+      return `<div class="ir-titem col slim" data-texp="${t.id}"><span class="cwho">${escapeHtml(who)}</span><span class="csnip">${escapeHtml(snip)}…</span><span class="ir-twhen">${t.when}</span></div>`;
+    }
+    const tAtts = (t.atts || []).map((a) => `<div class="ir-att" style="margin-left:39px;"><span>📎</span><span>${escapeHtml(a.name)}</span><span style="color:var(--dim);font-size:11px;">${a.size}</span>${t.dir !== "in" && !t.draft ? `<span class="cnt${a.dl ? " hot" : ""}">${a.dl ? "téléchargée ×" + a.dl : "jamais téléchargée"}</span>` : ""}</div>`).join("");
+    return `<div class="ir-titem exp${t.id === id ? " sel" : ""}"><div class="ir-thead"${t.id === id ? "" : ` data-texp="${t.id}"`}><div class="ir-tav">${initialsOf(who)}</div><div class="ir-tmain"><div class="ir-twho">${escapeHtml(who)}${t.dir === "in" ? "" : ` <span style="color:var(--dim);font-weight:400;">→ ${escapeHtml(t.toName)}</span>`}</div><div class="ir-tsnip">${t.dir === "in" ? "reçu" : t.draft ? "brouillon" : "envoyé"}</div></div><div style="display:flex;flex-direction:column;align-items:flex-end;gap:5px;flex-shrink:0;"><span class="ir-twhen">${t.when}</span><div class="ir-badges">${irBadges(t)}</div></div></div><div class="ir-tbody">${escapeHtml(t.body || "")}</div>${tAtts}</div>`;
+  };
+  const foldable = thread.length > 1 && (irThreadStackOpen || [...irThreadOpen].some((x) => x !== id));
+  const threadHtml = (foldable ? `<div class="ir-tfold" data-tfold title="Revenir à la vue compacte">⌃ Tout replier</div>` : "") + thread.map(tItem).join("");
   $("irDetail").innerHTML = `
-    <div class="ir-dsubj">${escapeHtml(m.subject)}</div>
-    <div class="ir-dmeta">À ${escapeHtml(m.toName)} &lt;${escapeHtml(m.to)}&gt; · ${escapeHtml(m.client || "")} · envoyé par ${escapeHtml(m.by)} · ${m.when}</div>
-    <div class="ir-kpis">${kpi}</div>
-    <div class="ir-dbody">${escapeHtml(m.body || "")}</div>
-    ${atts ? `<div class="ir-sect">Pièces jointes</div>${atts}` : ""}
-    <div class="ir-sect">Activité</div><div class="ir-tl">${tl}</div>`;
+    <div class="ir-dtop">
+      <div class="ir-dsubj">${escapeHtml(m.subject)}${thread.length > 1 ? ` <span style="font-size:13px;color:var(--dim);font-weight:400;">· ${thread.length} messages</span>` : ""}</div>
+      <div class="ir-replygrp">${document.querySelector("#page-iris .ir-split").classList.contains("reader") ? `<button class="ir-replysm" id="irReaderBack" title="Réduire — revenir à la liste">⤡</button>` : ""}${m.draft ? "" : `<button class="ir-replysm" id="irReplySm" title="Répondre">↩</button>${(m.cc || []).length ? `<button class="ir-replysm all" id="irReplyAllSm" title="Répondre à tous (${m.cc.length + 1} destinataires)">↩ tous</button>` : ""}`}${m.trash ? "" : `<button class="ir-replysm trash" id="irTrashBtn" title="Supprimer le mail">🗑️</button>`}</div>
+    </div>
+    <div class="ir-dmeta">${meta}${(m.cc || []).length ? ` · <span style="color:var(--dim);">cc ${m.cc.map(escapeHtml).join(", ")}</span>` : ""}</div>
+    <div class="ir-hgroups"><div class="ir-glist">${chips}<select class="mn-evsel" id="irAddLbl"><option value="">＋ Ajouter à un groupe…</option>${addOpts}</select></div><div class="ir-auto">${autoLine}</div></div>
+    ${m.trash ? `<div class="ir-auto"><span class="ir-autoon" style="color:var(--err);">🗑️ Ce mail est dans Supprimés</span><span class="link" data-restore style="font-size:11px;">Restaurer</span><span class="link" data-purge style="font-size:11px;color:var(--err);">Supprimer définitivement</span></div>` : ""}
+    ${m.sched && !m.trash ? `<div class="ir-auto"><span class="ir-autoon">🕐 Envoi programmé — <b>${m.sched}</b></span><span class="link" data-unsched style="font-size:11px;">Annuler la programmation</span></div>` : ""}
+    ${tracked ? `<div class="ir-kpis">${kpi}</div>` : ""}
+    <div class="ir-thread">${threadHtml}</div>
+    ${tracked ? `<div class="ir-sect">Activité${thread.length > 1 ? " — message sélectionné" : ""}</div><div class="ir-tl">${tl}</div>` : ""}`;
+  document.querySelector("#page-iris .ir-split").classList.remove("full");   // rouvre le panneau si fermé
+  const rback = $("irReaderBack");
+  if (rback) rback.onclick = () => {
+    document.querySelector("#page-iris .ir-split").classList.remove("reader");
+    renderIrList(); renderIrDetail(m.id);
+  };
+  const tb = $("irTrashBtn");
+  if (tb) tb.onclick = () => {
+    m.trash = true;
+    atToast("🗑️ Déplacé dans Supprimés.");
+    renderIrStats(); renderIrFolders(); renderIrList(); renderIrDetail(m.id);
+  };
+  const rs = $("irReplySm");
+  if (rs) rs.onclick = () => irOpenReply(m, false);
+  const rsa = $("irReplyAllSm");
+  if (rsa) rsa.onclick = () => irOpenReply(m, true);
+  const addSel = $("irAddLbl");
+  if (addSel) addSel.onchange = () => {
+    if (!addSel.value) return;
+    m.labels = m.labels || []; m.labels.push(addSel.value);
+    renderIrFolders(); renderIrDetail(m.id);
+  };
+  const autoSel = $("irAutoSel");
+  if (autoSel) autoSel.onchange = () => {
+    if (!autoSel.value) return;
+    irRules = irRules.filter((r) => r.addr.toLowerCase() !== m.to.toLowerCase());
+    irRules.push({ addr: m.to, label: autoSel.value });
+    irRulesSave(); irApplyRules();
+    atToast("⚡ Les mails de " + m.to + " se rangeront dans « " + autoSel.value.replace(/\//g, " › ") + " »");
+    renderIrFolders(); renderIrDetail(m.id);
+  };
   renderIrList();
 }
+$("irDetailClose").onclick = () => {
+  irSel = null;
+  document.querySelector("#page-iris .ir-split").classList.remove("reader"); document.querySelector("#page-iris .ir-split").classList.add("full");
+  $("irDetail").innerHTML = '<div class="rb-empty" style="padding:60px 20px;text-align:center;">Sélectionne un mail pour voir son suivi.</div>';
+  renderIrList();
+};
+$("irDetail").addEventListener("click", (e) => {
+  const m = irMails.find((x) => x.id === irSel); if (!m) return;
+  if (e.target.closest("[data-tfold]")) { irThreadOpen = new Set([irSel]); irThreadStackOpen = false; renderIrDetail(irSel); return; }
+  if (e.target.closest("[data-tstack]")) { irThreadStackOpen = true; renderIrDetail(irSel); return; }
+  const te = e.target.closest("[data-texp]");
+  if (te) { const tid = te.dataset.texp; irThreadOpen.has(tid) ? irThreadOpen.delete(tid) : irThreadOpen.add(tid); renderIrDetail(irSel); return; }
+  if (e.target.closest("[data-restore]")) { m.trash = false; atToast("Mail restauré."); renderIrStats(); renderIrFolders(); renderIrList(); renderIrDetail(m.id); return; }
+  if (e.target.closest("[data-unsched]")) { m.sched = null; m.draft = true; atToast("Programmation annulée — déplacé en brouillons."); renderIrStats(); renderIrFolders(); renderIrList(); renderIrDetail(m.id); return; }
+  if (e.target.closest("[data-purge]")) {
+    irMails = irMails.filter((x) => x.id !== m.id); irSel = null;
+    document.querySelector("#page-iris .ir-split").classList.remove("reader"); document.querySelector("#page-iris .ir-split").classList.add("full");
+    $("irDetail").innerHTML = '<div class="rb-empty" style="padding:60px 20px;text-align:center;">Sélectionne un mail pour voir son suivi.</div>';
+    atToast("Supprimé définitivement.");
+    renderIrStats(); renderIrFolders(); renderIrList(); return;
+  }
+  const rm = e.target.closest("[data-rmlbl]");
+  if (rm) { if (irRemoveLabel(m, rm.dataset.rmlbl)) atToast("Règle auto retirée aussi."); renderIrFolders(); renderIrDetail(m.id); return; }
+  if (e.target.closest("[data-rmrule]")) {
+    irRules = irRules.filter((r) => r.addr.toLowerCase() !== m.to.toLowerCase());
+    irRulesSave(); atToast("Classement auto retiré pour " + m.to + ".");
+    renderIrDetail(m.id);
+  }
+});
+let irDemoMode = false;                                    // accès à la vue sans boîte connectée (revue des designs)
 async function refreshIris() {
   const st = await window.olympus.irisStatus();
-  $("irNotice").style.display = st.connected ? "none" : "";
-  renderIrStats(); renderIrList();
+  const open = st.connected || irDemoMode;
+  $("irGate").style.display = open ? "none" : "";
+  document.querySelector("#page-iris .ir-wrap").style.display = open ? "" : "none";
+  if (!open) return;                                       // boîte non connectée → portail, pas de vue Iris
+  irApplyRules();                                          // pré-classement automatique par adresse
+  renderIrAcct();
+  renderIrStats(); renderIrFolders(); renderIrList(); irMode();
+  irStartSim();                                            // alertes de suivi en direct (démo)
   if (irSel) renderIrDetail(irSel);
+  if (st.connected) irLoadLabels();                        // synchro des catégories Gmail (IMAP)
 }
+$("irFolders").onclick = $("irLabels").onclick = (e) => {
+  const ok = e.target.closest("[data-newok]");
+  if (ok) { const inp = $("irInlineNew"); if (inp) irCreateGroup(inp.value); return; }
+  if (e.target.closest(".ir-newrow")) return;               // clic dans le champ de création
+  const add = e.target.closest("[data-addin]");
+  if (add) { irNewParent = add.dataset.addin; irOpen.add(irNewParent); renderIrFolders(); return; }
+  const tw = e.target.closest("[data-tw]");
+  if (tw) { const p = tw.dataset.tw; irOpen.has(p) ? irOpen.delete(p) : irOpen.add(p); renderIrFolders(); return; }
+  const f = e.target.closest("[data-fold]"); if (!f) return;
+  irFolder = f.dataset.fold;
+  irMode(); renderIrFolders(); renderIrList();
+};
+$("irNewLabel").onclick = () => { irNewParent = irNewParent === "" ? null : ""; renderIrFolders(); };
 $("irSearch").addEventListener("input", renderIrList);
 $("irFilters").onclick = (e) => {
   const s = e.target.closest("[data-f]"); if (!s) return;
@@ -1023,7 +1770,95 @@ $("irFilters").onclick = (e) => {
   $("irFilters").querySelectorAll("span").forEach((x) => x.classList.toggle("active", x === s));
   renderIrList();
 };
-$("irList").onclick = (e) => { const row = e.target.closest("[data-mail]"); if (row) renderIrDetail(row.dataset.mail); };
+$("irList").onclick = (e) => {
+  const ex = e.target.closest("[data-expand]");
+  if (ex) { document.querySelector("#page-iris .ir-split").classList.add("reader"); renderIrDetail(ex.dataset.expand); return; }
+  const row = e.target.closest("[data-mail]"); if (row) renderIrDetail(row.dataset.mail);
+};
+// Drag & drop : glisser un mail sur un groupe (ou Favoris / En attente / Importants) pour le classer.
+let irDragId = null;
+const IR_DROP_SYS = { star: ["star", "Ajouté aux favoris."], snooze: ["snooze", "Mis en attente."], important: ["important", "Marqué important."], trash: ["trash", "🗑️ Déplacé dans Supprimés."] };
+$("irList").addEventListener("dragstart", (e) => {
+  const row = e.target.closest("[data-mail]"); if (!row) return;
+  irDragId = row.dataset.mail;
+  row.classList.add("dragging");
+  e.dataTransfer.effectAllowed = "copyMove";               // copy = classer dans un groupe · move = porte de sortie
+  e.dataTransfer.setData("text/plain", irDragId);
+  // Les portes de sortie apparaissent sur les groupes du mail → on déplie leurs parents pour les rendre visibles.
+  const m = irMails.find((x) => x.id === irDragId);
+  if (m) for (const l of (m.labels || [])) { let acc = ""; for (const seg of l.split("/")) { acc = acc ? acc + "/" + seg : seg; if (acc !== l) irOpen.add(acc); } }
+  document.body.classList.add("ir-drag");
+  renderIrFolders();
+});
+$("irList").addEventListener("dragend", () => {
+  irDragId = null;
+  document.body.classList.remove("ir-drag");
+  document.querySelectorAll(".ir-row.dragging").forEach((r) => r.classList.remove("dragging"));
+  renderIrFolders();                                       // retire les portes de sortie
+});
+const irClearOvers = () => { document.querySelectorAll(".ir-folder.dropover").forEach((r) => r.classList.remove("dropover")); document.querySelectorAll(".ir-exit.over").forEach((r) => r.classList.remove("over")); };
+function irDragOver(e) {
+  if (!irDragId) return;
+  const ex = e.target.closest("[data-exit]");
+  if (ex) {                                                 // porte de sortie : retirer du groupe
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    irClearOvers();
+    ex.classList.add("over");
+    return;
+  }
+  const f = e.target.closest("[data-fold]"); if (!f) return;
+  const m = irMails.find((x) => x.id === irDragId); if (!m) return;
+  const id = f.dataset.fold;
+  const home = m.dir === "in" ? "inbox" : m.draft ? "draft" : m.sched ? "sched" : "sent";
+  // Mail supprimé : on peut le remettre dans son dossier d'origine, ou dans un groupe (= restaurer + classer).
+  const valid = m.trash ? (id.startsWith("label:") || id === home) : (id.startsWith("label:") || IR_DROP_SYS[id]);
+  if (!valid) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "copy";
+  irClearOvers();
+  f.classList.add("dropover");
+  if (id.startsWith("label:")) {                            // survol d'un groupe fermé → il s'ouvre pour viser un sous-groupe
+    const p = id.slice(6);
+    if (!irOpen.has(p) && irLabelsList.some((l) => l.startsWith(p + "/"))) { irOpen.add(p); renderIrFolders(); }
+  }
+}
+function irDrop(e) {
+  if (!irDragId) return;
+  const m = irMails.find((x) => x.id === irDragId); if (!m) return;
+  const ex = e.target.closest("[data-exit]");
+  if (ex) {
+    e.preventDefault();
+    const p = ex.dataset.exit;
+    const ruleGone = irRemoveLabel(m, p);
+    atToast("🚪 Sorti de « " + p.replace(/\//g, " › ") + " »" + (ruleGone ? " — règle auto retirée aussi" : ""));
+  } else {
+    const f = e.target.closest("[data-fold]"); if (!f) return;
+    e.preventDefault();
+    const id = f.dataset.fold;
+    const home = m.dir === "in" ? "inbox" : m.draft ? "draft" : m.sched ? "sched" : "sent";
+    if (id.startsWith("label:")) {
+      const p = id.slice(6);
+      m.labels = m.labels || [];
+      const restored = m.trash; m.trash = false;
+      if (!m.labels.includes(p)) m.labels.push(p);
+      atToast(restored ? "Restauré et classé dans « " + p.replace(/\//g, " › ") + " »" : "« " + m.subject.slice(0, 42) + " » → " + p.replace(/\//g, " › "));
+    } else if (m.trash && id === home) {
+      m.trash = false;
+      atToast("↩ Remis dans « " + (IR_FOLDERS.find((x) => x.id === home) || {}).n + " »");
+    } else if (!m.trash && IR_DROP_SYS[id]) { m[IR_DROP_SYS[id][0]] = true; atToast(IR_DROP_SYS[id][1]); }
+  }
+  irDragId = null;
+  document.body.classList.remove("ir-drag");
+  irClearOvers();
+  renderIrFolders(); renderIrList();
+  if (irSel === m.id) renderIrDetail(m.id);
+}
+for (const id of ["irLabels", "irFolders"]) {
+  $(id).addEventListener("dragover", irDragOver);
+  $(id).addEventListener("drop", irDrop);
+  $(id).addEventListener("dragleave", (e) => { const f = e.target.closest("[data-fold]"); if (f) f.classList.remove("dropover"); const ex = e.target.closest("[data-exit]"); if (ex) ex.classList.remove("over"); });
+}
 // Connexions (dans le profil)
 async function refreshConnections() {
   const st = await window.olympus.irisStatus();
@@ -1046,14 +1881,133 @@ $("gmConnectBtn").onclick = async () => {
 };
 $("gmDisconnect").onclick = async () => { await window.olympus.irisDisconnect(); refreshConnections(); refreshIris(); };
 $("irisGoProfile").onclick = () => $("profileCard").click();
+$("irDemoLink").onclick = () => { irDemoMode = true; refreshIris(); };
 // Composition (modal)
 function renderIrAtts() {
   $("irAttachList").innerHTML = irAtts.map((a, i) => `<div class="crm-row" style="padding:7px 0"><div style="flex:1;min-width:0"><span style="font-size:13px;">📎 ${escapeHtml(a.name)}</span> <span style="color:var(--dim);font-size:11px;">${a.size}</span></div><span class="member-btn danger" data-rmatt="${i}">Retirer</span></div>`).join("");
 }
-$("irComposeBtn").onclick = () => { irAtts = []; renderIrAtts(); ["irTo", "irToName", "irClient", "irSubject", "irBody"].forEach((id) => ($(id).value = "")); $("irMsg").textContent = ""; $("irModal").classList.add("show"); $("irTo").focus(); };
+$("irComposeBtn").onclick = () => {
+  irReplyLabels = null; irAtts = []; renderIrAtts();
+  ["irTo", "irToName", "irClient", "irCc", "irSubject", "irBody"].forEach((id) => ($(id).value = ""));
+  irShowCc(false); irShowDet(false);
+  irFillCompCat("");
+  irReplyMailId = null; renderIrCompSide();
+  $("irSchedPop").style.display = "none";
+  $("irCompTitle").textContent = "Nouveau message";
+  $("irMsg").textContent = "";
+  $("irModal").classList.remove("min");
+  $("irModal").classList.add("show");
+  $("irTo").focus();
+};
+// Répondre : composition pré-remplie (destinataire, sujet Re:, message cité, groupes hérités)
+let irReplyLabels = null;
+function irOpenReply(m, all) {
+  irAtts = []; renderIrAtts();
+  $("irTo").value = m.to; $("irToName").value = m.toName || ""; $("irClient").value = m.client || "";
+  $("irCc").value = all ? (m.cc || []).join(", ") : "";
+  $("irSubject").value = /^re\s*:/i.test(m.subject) ? m.subject : "Re: " + m.subject;
+  const who = m.dir === "in" ? m.toName : (m.by || "moi");
+  $("irBody").value = "\n\n— Le " + m.when + ", " + who + " a écrit :\n" + (m.body || "").split("\n").map((l) => "> " + l).join("\n");
+  irReplyLabels = (m.labels || []).slice();
+  irShowCc(!!(all && (m.cc || []).length));
+  irShowDet(false);
+  irFillCompCat((m.labels || [])[0] || "");
+  irReplyMailId = m.id; irCompOpen = new Set([m.id]); renderIrCompSide();
+  $("irSchedPop").style.display = "none";
+  $("irCompTitle").textContent = (all ? "Répondre à tous — " : "Répondre — ") + (m.toName || m.to);
+  $("irMsg").textContent = "";
+  $("irModal").classList.remove("min");
+  $("irModal").classList.add("show");
+  $("irBody").focus(); $("irBody").setSelectionRange(0, 0);
+}
 $("irCancel").onclick = () => $("irModal").classList.remove("show");
-$("irModal").onclick = (e) => { if (e.target === $("irModal")) $("irModal").classList.remove("show"); };
-$("irTrack").onclick = () => $("irTrack").classList.toggle("on");
+// Composer façon Gmail : réduire / agrandir / abandonner + révélateurs Cc & Détails
+function irShowCc(v) { $("irCcRow").style.display = v ? "" : "none"; $("irTogCc").classList.toggle("on", v); }
+function irShowDet(v) { $("irDetRow").style.display = v ? "" : "none"; $("irTogDet").classList.toggle("on", v); }
+$("irTogCc").onclick = () => { const v = $("irCcRow").style.display === "none"; irShowCc(v); if (v) $("irCc").focus(); };
+$("irTogDet").onclick = () => { const v = $("irDetRow").style.display === "none"; irShowDet(v); if (v) $("irToName").focus(); };
+$("irCompMin").onclick = () => { $("irModal").classList.toggle("min"); $("irModal").classList.remove("max"); renderIrCompSide(); };
+$("irCompMax").onclick = () => { $("irModal").classList.toggle("max"); $("irModal").classList.remove("min"); renderIrCompSide(); };
+// Colonne « Fil de discussion » du composer plein stage : lire la conversation en écrivant, re-citer un autre message.
+let irReplyMailId = null, irCompOpen = new Set();
+function renderIrCompSide() {
+  const el = $("irCompSide");
+  const m = irMails.find((x) => x.id === irReplyMailId);
+  if (!m || !$("irModal").classList.contains("max")) { el.style.display = "none"; return; }
+  el.style.display = "";
+  const thread = irThreadOf(m);
+  el.innerHTML = `<div class="ir-sect" style="margin:0 0 8px;">Fil de discussion · ${thread.length} message${thread.length > 1 ? "s" : ""}</div>` + thread.map((t) => {
+    const who = t.dir === "in" ? t.toName : (t.by || "Moi");
+    const open = irCompOpen.has(t.id);
+    return `<div class="cs-item${t.id === irReplyMailId ? " sel" : ""}">
+      <div class="cs-head" data-cst="${t.id}"><b>${escapeHtml(who)}</b><span class="w">${t.when}</span><span class="cs-re" data-csr="${t.id}" title="Répondre à ce message (recale la citation)">↩</span></div>
+      ${open ? `<div class="cs-body">${escapeHtml(t.body || "")}</div>` : `<div class="cs-snip">${escapeHtml((t.body || "").replace(/\s+/g, " ").slice(0, 72))}…</div>`}
+    </div>`;
+  }).join("");
+}
+function irRequote(t) {
+  const who = t.dir === "in" ? t.toName : (t.by || "moi");
+  const typed = $("irBody").value.split("\n\n— Le ")[0].replace(/\s+$/, "");
+  $("irBody").value = typed + "\n\n— Le " + t.when + ", " + who + " a écrit :\n" + (t.body || "").split("\n").map((l) => "> " + l).join("\n");
+  irReplyMailId = t.id;
+  irCompOpen = new Set([t.id]);
+  renderIrCompSide();
+  atToast("↩ Réponse recalée sur le message du " + t.when);
+}
+$("irCompSide").addEventListener("click", (e) => {
+  const r = e.target.closest("[data-csr]");
+  if (r) { const t = irMails.find((x) => x.id === r.dataset.csr); if (t) irRequote(t); return; }
+  const h = e.target.closest("[data-cst]");
+  if (h) { const id = h.dataset.cst; irCompOpen.has(id) ? irCompOpen.delete(id) : irCompOpen.add(id); renderIrCompSide(); }
+});
+$("irDiscard").onclick = () => {
+  irReplyLabels = null; irAtts = []; renderIrAtts();
+  ["irTo", "irToName", "irClient", "irCc", "irSubject", "irBody"].forEach((id) => ($(id).value = ""));
+  $("irModal").classList.remove("show");
+  atToast("🗑️ Brouillon abandonné.");
+};
+// Groupe du message (header) : classe ce mail ET crée la règle auto → les suivants iront au même endroit.
+function irFillCompCat(sel) {
+  $("irCompCat").innerHTML = '<option value="">＋ Groupe…</option>' + irLabelsList.slice().sort().map((p) => `<option value="${escapeHtml(p)}"${p === sel ? " selected" : ""}>${escapeHtml(p.replace(/\//g, " › "))}</option>`).join("");
+}
+function irApplyCompCat(nm, addr) {
+  const cat = $("irCompCat").value;
+  if (!cat) return;
+  nm.labels = nm.labels || [];
+  if (!nm.labels.includes(cat)) nm.labels.push(cat);
+  irRules = irRules.filter((r) => r.addr.toLowerCase() !== addr.toLowerCase());
+  irRules.push({ addr, label: cat });
+  irRulesSave();
+}
+// Programmation de l'envoi
+const fmtSched = (dt) => dt.getDate() + " " + MON_ABBR[dt.getMonth()] + " · " + String(dt.getHours()).padStart(2, "0") + ":" + String(dt.getMinutes()).padStart(2, "0");
+$("irSched").onclick = () => {
+  const p = $("irSchedPop");
+  if (p.style.display === "none") {
+    const t1 = new Date(); t1.setDate(t1.getDate() + 1); t1.setHours(8, 0, 0, 0);
+    const t2 = new Date(); t2.setDate(t2.getDate() + 1); t2.setHours(14, 0, 0, 0);
+    const t3 = new Date(); t3.setDate(t3.getDate() + (((8 - t3.getDay()) % 7) || 7)); t3.setHours(9, 0, 0, 0);
+    const opts = [["Demain matin", t1], ["Demain après-midi", t2], ["Lundi matin", t3]];
+    p.querySelectorAll(".sp-opt").forEach((el, i) => { el.textContent = opts[i][0] + " — " + fmtSched(opts[i][1]); el.dataset.when = fmtSched(opts[i][1]); });
+    p.style.display = "";
+  } else p.style.display = "none";
+};
+function irScheduleMail(when) {
+  const d = { to: $("irTo").value.trim(), toName: $("irToName").value.trim(), subject: $("irSubject").value.trim(), body: $("irBody").value.trim() };
+  const msg = $("irMsg");
+  $("irSchedPop").style.display = "none";
+  if (!d.to || !d.subject || !d.body) { msg.className = "msg err"; msg.textContent = "Destinataire, sujet et message requis."; return; }
+  const nm = { id: "m" + Date.now(), to: d.to, toName: d.toName || d.to, client: $("irClient").value.trim(), cc: $("irCc").value.split(",").map((x) => x.trim()).filter(Boolean), by: "Sacha", when, sched: when, subject: d.subject, preview: d.body.replace(/^\s+/, "").slice(0, 90), body: d.body, atts: irAtts, events: [], labels: irReplyLabels ? irReplyLabels.slice() : [] };
+  irApplyCompCat(nm, d.to);
+  irMails.unshift(nm);
+  irReplyLabels = null;
+  irApplyRules();
+  $("irModal").classList.remove("show");
+  atToast("🕐 Envoi programmé — " + when);
+  renderIrStats(); renderIrFolders(); renderIrList();
+}
+$("irSchedPop").onclick = (e) => { const o = e.target.closest("[data-sp]"); if (o && o.dataset.when) irScheduleMail(o.dataset.when); };
+$("irSchedOk").onclick = () => { const v = $("irSchedAt").value; if (!v) return; irScheduleMail(fmtSched(new Date(v))); };
 $("irAttachBtn").onclick = () => {
   const inp = document.createElement("input"); inp.type = "file"; inp.multiple = true;
   inp.onchange = () => { for (const f of inp.files) irAtts.push({ name: f.name, size: f.size > 1048576 ? (f.size / 1048576).toFixed(1).replace(".", ",") + " Mo" : Math.max(1, Math.round(f.size / 1024)) + " Ko", dl: 0 }); renderIrAtts(); };
@@ -1070,11 +2024,15 @@ $("irSend").onclick = async () => {
   if (st.connected) { const r = await window.olympus.irisSend(d); sentReal = r.ok; if (!r.ok) { btn.disabled = false; btn.textContent = "Envoyer"; msg.className = "msg err"; msg.textContent = r.error; return; } }
   const now = new Date();
   const when = now.getDate() + " " + MON_ABBR[now.getMonth()] + " · " + now.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
-  irMails.unshift({ id: "m" + Date.now(), to: d.to, toName: d.toName || d.to, client: $("irClient").value.trim(), by: "Sacha", when, subject: d.subject, preview: d.body.slice(0, 90), body: d.body, atts: irAtts, events: [{ k: "sent", w: when }] });
+  const nm = { id: "m" + Date.now(), to: d.to, toName: d.toName || d.to, client: $("irClient").value.trim(), cc: $("irCc").value.split(",").map((x) => x.trim()).filter(Boolean), by: "Sacha", when, subject: d.subject, preview: d.body.replace(/^\s+/, "").slice(0, 90), body: d.body, atts: irAtts, events: [{ k: "sent", w: when }], labels: irReplyLabels ? irReplyLabels.slice() : [] };
+  irApplyCompCat(nm, d.to);                                // groupe choisi dans le header + règle auto pour la suite
+  irMails.unshift(nm);
+  irReplyLabels = null;
+  irApplyRules();                                          // le nouveau mail se pré-range selon les règles
   btn.disabled = false; btn.textContent = "Envoyer";
   msg.className = "msg ok"; msg.textContent = sentReal ? "✅ Envoyé — suivi actif." : "✅ Ajouté (démo — Gmail non connecté).";
   setTimeout(() => $("irModal").classList.remove("show"), 700);
-  renderIrStats(); renderIrList();
+  renderIrStats(); renderIrFolders(); renderIrList();
 };
 document.querySelector('.nav-item[data-page="iris"]').addEventListener("click", refreshIris);
 

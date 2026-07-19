@@ -261,8 +261,236 @@
   #chatSend:hover{filter:brightness(1.08);}
 
   /* ── Iris (mailing + tracking) ── */
-  #page-iris.show{display:flex;flex-direction:column;height:100%;max-width:none;padding-bottom:0;}
-  .ir-topbar{display:flex;align-items:flex-end;gap:20px;flex-shrink:0;}
+  #page-iris.show{display:flex;height:100%;max-width:none;padding:0 30px 0 0;}
+  .ir-wrap{display:flex;flex:1;min-width:0;height:100%;}
+  .ir-side{width:224px;flex-shrink:0;display:flex;flex-direction:column;padding:24px 18px 14px 40px;border-right:1px solid var(--line);}
+  .ir-acct{position:relative;margin-bottom:14px;flex-shrink:0;}
+  .ir-acur{display:flex;align-items:center;gap:10px;padding:8px 10px;margin:0 -10px;border-radius:12px;cursor:pointer;transition:background .12s;}
+  .ir-acur:hover{background:var(--card);}
+  .ir-aav{width:34px;height:34px;border-radius:50%;background:var(--card2);display:grid;place-items:center;font-size:12px;font-weight:700;flex-shrink:0;}
+  .ir-aav.sm{width:28px;height:28px;font-size:10px;}
+  .ir-aav.dash{background:transparent;border:1px dashed var(--line2);color:var(--dim);}
+  .ir-ainfo{flex:1;min-width:0;}
+  .ir-ainfo .nm{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .ir-ainfo .sub{font-size:10px;color:var(--dim);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .ir-acur .chev{font-size:9px;color:var(--dim);flex-shrink:0;}
+  .ir-amenu{position:absolute;top:calc(100% + 6px);left:-10px;right:-10px;background:var(--bg1);border:1px solid var(--line);border-radius:14px;padding:6px;z-index:60;box-shadow:0 18px 48px rgba(0,0,0,.45);animation:modalRise .16s cubic-bezier(.2,.8,.2,1);}
+  .ir-arow{display:flex;align-items:center;gap:10px;padding:8px 9px;border-radius:10px;cursor:pointer;transition:background .12s;}
+  .ir-arow:hover{background:var(--card);}
+  .ir-arow.active{background:var(--card2);}
+  .ir-arow .chk{font-size:11px;color:var(--txt);text-shadow:0 0 8px var(--accent2);flex-shrink:0;}
+  .ir-arow.add .nm{color:var(--muted);font-weight:500;}
+  .ir-sidescroll{flex:1;overflow-y:auto;scrollbar-width:none;display:flex;flex-direction:column;padding-bottom:14px;-webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 36px),transparent);mask-image:linear-gradient(to bottom,#000 calc(100% - 36px),transparent);}
+  .ir-catfoot{padding-top:24px;}
+  .ir-ghostrow{display:flex;align-items:center;gap:11px;padding:10px 10px;margin:0 -10px;pointer-events:none;}
+  .ir-ghostrow .gdot{width:8px;height:8px;border-radius:50%;background:var(--card2);flex-shrink:0;}
+  .ir-ghostrow i{display:block;height:6px;border-radius:3px;background:linear-gradient(to right,var(--card2),transparent);}
+  .ir-side>.ir-syncnote{flex-shrink:0;padding:10px 2px 6px;}
+  .ir-sidescroll::-webkit-scrollbar{display:none;}
+  .ir-folder{display:flex;align-items:center;gap:11px;padding:8px 10px;margin:0 -10px;border-radius:10px;cursor:pointer;font-size:13px;color:var(--muted);transition:background .12s,color .12s;}
+  .ir-folder:hover{background:var(--card);color:var(--txt);}
+  .ir-folder.active{background:var(--card2);color:var(--txt);}
+  .ir-folder .fic{width:18px;text-align:center;font-size:13px;flex-shrink:0;filter:grayscale(1);}
+  .ir-folder .cnt{margin-left:auto;font-size:10.5px;color:var(--dim);font-variant-numeric:tabular-nums;}
+  .ir-folder.active .cnt{color:var(--txt);text-shadow:0 0 8px var(--accent2);}
+  .ir-folder .ldot{width:8px;height:8px;border-radius:50%;flex-shrink:0;}
+  .ir-folder .tw{width:15px;height:18px;line-height:18px;flex-shrink:0;font-size:10px;color:var(--muted);text-align:center;cursor:pointer;border-radius:5px;transition:color .12s,background .12s;}
+  .ir-folder .tw:hover{color:var(--txt);background:var(--card2);}
+  .ir-folder .lname{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
+  .ir-folder .addg{opacity:0;flex-shrink:0;font-size:12px;color:var(--dim);cursor:pointer;transition:opacity .12s,color .12s,text-shadow .12s;}
+  .ir-folder:hover .addg{opacity:1;}
+  .ir-folder .addg:hover{color:var(--txt);text-shadow:0 0 8px var(--accent2);}
+  .ir-newrow{display:flex;align-items:center;gap:11px;padding:6px 10px;margin:0 -10px;}
+  .ir-newrow .tw{width:11px;flex-shrink:0;}
+  .ir-newrow input{flex:1;min-width:0;background:none;border:none;border-bottom:1px solid var(--line2);color:var(--txt);font-size:12.5px;outline:none;padding:3px 0;font-family:inherit;}
+  .ir-newrow input:focus{border-bottom-color:var(--txt);box-shadow:0 7px 14px -10px var(--accent2);}
+  .ir-newrow input::placeholder{color:var(--dim);}
+  .ir-newok{flex-shrink:0;font-size:12px;color:var(--dim);cursor:pointer;transition:color .12s,text-shadow .12s;}
+  .ir-newok:hover{color:var(--txt);text-shadow:0 0 8px var(--accent2);}
+  .ir-newhint{font-size:9.5px;color:var(--dim);margin:2px 0 5px;}
+  .ir-hgroups{margin:10px 0 2px 8px;padding-bottom:2px;}
+  .ir-hgroups .ir-glist,.ir-hgroups .ir-auto{margin-left:0;}
+  .ir-hgroups .ir-auto{padding:6px 0 0;}
+  .ir-glist{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:4px 0;}
+  .ir-lchip{display:inline-flex;align-items:center;gap:7px;padding:4px 10px;border:1px solid var(--line);border-radius:14px;font-size:11.5px;color:var(--muted);}
+  .ir-lchip .ldot{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
+  .ir-lchip .x{cursor:pointer;color:var(--dim);font-size:10px;transition:color .12s;}
+  .ir-lchip .x:hover{color:var(--err);}
+  .ir-auto{padding:8px 0 2px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+  .ir-autoon{font-size:11.5px;color:var(--muted);}
+  .ir-autoon b{color:var(--txt);font-weight:600;text-shadow:0 0 9px var(--accent2);}
+  .ir-row.dragging{opacity:.35;}
+  .ir-row.unread::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--txt);box-shadow:0 0 8px var(--accent2);align-self:center;flex-shrink:0;}
+  .ir-row.ghost{pointer-events:none;opacity:.45;}
+  .ir-row.ghost .gav{width:36px;height:36px;border-radius:50%;border:1px dashed var(--line2);background:transparent;flex-shrink:0;}
+  .ir-row.unread .ir-name{font-weight:700;}
+  .ir-row.unread .ir-sub,.ir-row.unread .ir-prev{color:var(--txt);}
+  .ir-folder.dropover{background:var(--card2);color:var(--txt);box-shadow:inset 0 0 0 1px var(--line2),0 0 14px -3px var(--accent2);}
+  .ir-folder.dropover .cnt{color:var(--txt);text-shadow:0 0 8px var(--accent2);}
+  .ir-exit{flex-shrink:0;font-size:13px;filter:grayscale(1);opacity:.7;padding:1px 4px;border-radius:7px;transition:opacity .12s,box-shadow .12s,background .12s;animation:fadeIn .18s both;}
+  .ir-exit.over{filter:none;opacity:1;background:rgba(214,90,100,.16);box-shadow:0 0 12px -2px var(--err);}
+  body.ir-drag .ir-folder .addg{display:none;}
+  .ir-detail{display:flex;flex-direction:column;}
+  .ir-thread{margin-top:14px;border-top:1px solid var(--line);flex:1 0 auto;display:flex;flex-direction:column;}
+  .ir-titem.exp.sel{flex:1 0 auto;}
+  .ir-titem{border-bottom:1px solid var(--line);}
+  .ir-titem.col{display:flex;align-items:center;gap:11px;padding:10px 6px;cursor:pointer;border-radius:8px;transition:background .12s;}
+  .ir-titem.col:hover{background:var(--card);}
+  .ir-tfold{display:flex;justify-content:flex-end;font-size:10.5px;color:var(--dim);cursor:pointer;padding:7px 6px 3px;transition:color .12s,text-shadow .12s;}
+  .ir-tfold:hover{color:var(--txt);text-shadow:0 0 8px var(--accent2);}
+  .ir-tstack{display:flex;align-items:center;gap:10px;padding:9px 6px;font-size:11.5px;color:var(--muted);cursor:pointer;border-bottom:1px solid var(--line);transition:color .12s,text-shadow .12s;}
+  .ir-tstack:hover{color:var(--txt);text-shadow:0 0 8px var(--accent2);}
+  .ir-tstack .w{font-size:10px;color:var(--dim);margin-left:auto;}
+  .ir-titem.col.slim{padding:8px 6px;}
+  .ir-titem.col.slim .cwho{font-size:12px;font-weight:650;flex-shrink:0;}
+  .ir-titem.col.slim .csnip{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11.5px;color:var(--dim);}
+  .ir-tav{width:28px;height:28px;border-radius:50%;background:var(--card2);display:grid;place-items:center;font-size:10px;font-weight:700;flex-shrink:0;}
+  .ir-tmain{flex:1;min-width:0;}
+  .ir-twho{font-size:12.5px;font-weight:600;}
+  .ir-tsnip{font-size:11.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;}
+  .ir-twhen{font-size:10px;color:var(--dim);flex-shrink:0;}
+  .ir-titem.exp{padding:10px 6px 14px;}
+  .ir-titem.exp.sel{box-shadow:inset 2px 0 0 var(--accent2);padding-left:12px;}
+  .ir-thead{display:flex;align-items:flex-start;gap:11px;cursor:pointer;}
+  .ir-titem.exp.sel .ir-thead{cursor:default;}
+  .ir-tbody{font-size:13px;color:var(--muted);line-height:1.65;white-space:pre-line;margin:10px 0 6px 39px;}
+  .ir-replygrp{display:flex;gap:7px;flex-shrink:0;}
+  .ir-replysm.all{width:auto;padding:0 13px;border-radius:17px;font-size:11px;}
+  .ir-split{position:relative;}
+  .ir-closefloat{position:absolute;top:-40px;right:-16px;width:28px;height:28px;font-size:11px;z-index:6;}
+  .ir-split.full .ir-closefloat{display:none;}
+  .ir-replysm.trash{font-size:12px;filter:grayscale(1);}
+  .ir-replysm.trash:hover{filter:none;border-color:var(--err);box-shadow:0 0 10px -3px var(--err);text-shadow:none;}
+  .ir-split.full .ir-detail{display:none;}
+  .ir-row .ir-exp{opacity:0;flex-shrink:0;align-self:center;font-size:13px;color:var(--muted);cursor:pointer;padding:4px 6px;border-radius:8px;transition:opacity .12s,color .12s,background .12s,text-shadow .12s;}
+  .ir-row:hover .ir-exp{opacity:1;}
+  .ir-row .ir-exp:hover{color:var(--txt);background:var(--card2);text-shadow:0 0 8px var(--accent2);}
+  .ir-split.reader .ir-list{display:none;}
+  .ir-split.reader .ir-detail{border-left:none;padding-left:34px;padding-right:34px;}
+  .ir-dtop{display:flex;align-items:flex-start;gap:14px;}
+  .ir-dtop .ir-dsubj{flex:1;min-width:0;}
+  .ir-replysm{flex-shrink:0;width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:var(--card);color:var(--muted);font-size:14px;cursor:pointer;transition:color .12s,border-color .12s,text-shadow .12s;}
+  .ir-replysm:hover{color:var(--txt);border-color:var(--line2);text-shadow:0 0 9px var(--accent2);}
+  /* Accueil Iris */
+  .ir-home{flex:1;overflow-y:auto;scrollbar-width:none;padding:8px 10px 10px 0;display:flex;flex-direction:column;-webkit-mask-image:linear-gradient(to bottom,transparent,#000 14px,#000 calc(100% - 80px),transparent);mask-image:linear-gradient(to bottom,transparent,#000 14px,#000 calc(100% - 80px),transparent);}
+  .ir-home::-webkit-scrollbar{display:none;}
+  .ir-hgreet{font-size:21px;font-weight:300;letter-spacing:-.01em;margin:10px 0 8px;text-shadow:0 0 14px var(--accent2);flex-shrink:0;}
+  .ir-hero2{display:flex;align-items:center;gap:44px;flex-wrap:wrap;margin:18px 0 14px;flex-shrink:0;}
+  .ir-hkpis{margin-left:auto;display:flex;gap:48px;justify-content:flex-end;flex-wrap:wrap;}
+  .ir-newmails{flex:1;display:flex;align-items:center;gap:36px;min-width:0;padding:0 10px;}
+  .ir-newcount{cursor:pointer;flex-shrink:0;padding:4px 10px;border-radius:12px;transition:background .14s;}
+  .ir-newcount:hover{background:var(--card);}
+  .ir-newcount .n{font-size:44px;font-weight:150;letter-spacing:-.02em;line-height:1;text-shadow:0 0 20px var(--accent2);}
+  .ir-newcount .l{font-size:10.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--dim);margin-top:7px;}
+  .ir-newlist{flex:1;min-width:0;max-width:560px;}
+  .ir-new{display:flex;align-items:center;gap:11px;padding:7px 4px;border-bottom:1px solid var(--line);cursor:pointer;min-width:0;border-radius:8px;transition:background .12s;}
+  .ir-new:last-of-type{border-bottom:none;}
+  .ir-new:hover{background:var(--card);}
+  .ir-new .dotg{width:6px;height:6px;border-radius:50%;background:var(--txt);box-shadow:0 0 8px var(--accent2);flex-shrink:0;animation:livePulse 2s ease-in-out infinite;}
+  .ir-new .t{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:12.5px;color:var(--muted);}
+  .ir-new .t b{color:var(--txt);font-weight:650;margin-right:9px;}
+  .ir-new .w{font-size:10px;color:var(--dim);flex-shrink:0;}
+  .ir-newmore{font-size:11px;color:var(--dim);cursor:pointer;padding:7px 4px 0;transition:color .12s,text-shadow .12s;}
+  .ir-newmore:hover{color:var(--txt);text-shadow:0 0 8px var(--accent2);}
+  .ir-newzero{font-size:12.5px;color:var(--dim);}
+  .ir-hgrid{flex:1;display:grid;grid-template-columns:1.05fr 1fr;column-gap:96px;row-gap:26px;align-content:start;margin-top:22px;}
+  .ir-home .ir-sect{margin:0 0 10px;}
+  .ir-alerts{min-width:0;align-self:center;padding-bottom:6px;}
+  .ir-alert{display:flex;align-items:center;gap:9px;padding:7px 0;border-bottom:1px solid var(--line);font-size:12px;color:var(--muted);cursor:pointer;transition:color .12s;}
+  .ir-alert:hover{color:var(--txt);}
+  .ir-alert:last-child{border-bottom:none;}
+  .ir-alert .ic{filter:grayscale(1);font-size:12px;flex-shrink:0;}
+  .ir-alert b{color:var(--txt);font-weight:600;}
+  .ir-alert .t{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .ir-alert .w{font-size:10px;color:var(--dim);flex-shrink:0;}
+  .ir-alert.live .w{color:var(--txt);text-shadow:0 0 8px var(--accent2);}
+  .ir-livedot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--txt);box-shadow:0 0 8px var(--accent2);margin-left:8px;vertical-align:1px;animation:livePulse 1.6s ease-in-out infinite;}
+  @keyframes livePulse{50%{opacity:.3;}}
+  .ir-ring .bg{fill:none;stroke:var(--card2);stroke-width:7;}
+  .ir-ring .fg{fill:none;stroke:var(--txt);stroke-width:7;stroke-linecap:round;filter:drop-shadow(0 0 6px var(--accent2));}
+  .ir-ring .v{fill:var(--txt);font-size:21px;font-weight:250;text-anchor:middle;}
+  .ir-ring .t{fill:var(--dim);font-size:8px;letter-spacing:.09em;text-transform:uppercase;text-anchor:middle;}
+  .ir-week{display:flex;gap:16px;align-items:stretch;height:180px;padding:12px 2px 0;}
+  .ir-day{display:flex;flex-direction:column;align-items:center;gap:8px;flex:1;}
+  .ir-day .bars{flex:1;display:flex;align-items:flex-end;gap:5px;}
+  .ir-day .bars i{width:9px;border-radius:4px;display:block;}
+  .ir-day span{font-size:9px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em;}
+  .ir-week .out,.ir-wleg .out{background:var(--txt);box-shadow:0 0 8px -1px var(--accent2);}
+  .ir-week .inn,.ir-wleg .inn{background:var(--line2);}
+  .ir-wleg{display:flex;gap:18px;margin-top:10px;font-size:10.5px;color:var(--dim);}
+  .ir-wleg span{display:inline-flex;align-items:center;gap:6px;}
+  .ir-wleg i{width:8px;height:8px;border-radius:3px;display:inline-block;}
+  .ir-gb{display:flex;align-items:center;gap:13px;padding:13px 0;border-bottom:1px solid var(--line);font-size:13px;}
+  .ir-gb .ldot{width:8px;height:8px;border-radius:50%;flex-shrink:0;}
+  .ir-gb .name{width:118px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .ir-gb .track{flex:1;height:4px;border-radius:2px;background:var(--card2);overflow:hidden;}
+  .ir-gb .track i{display:block;height:100%;border-radius:2px;opacity:.85;}
+  .ir-gb .n{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;min-width:18px;text-align:right;}
+  .ir-rel{display:flex;align-items:center;gap:13px;padding:14px 8px;margin:0 -8px;border-radius:10px;border-bottom:1px solid var(--line);cursor:pointer;transition:background .12s;}
+  .ir-rel:hover{background:var(--card);}
+  .ir-gb.ghost,.ir-rel.ghost{pointer-events:none;opacity:.45;}
+  .ir-gb.ghost .ldot{background:transparent;border:1px dashed var(--line2);}
+  .ir-gb.ghost .name{color:var(--dim);}
+  .ir-rel.ghost .gav{width:30px;height:30px;border-radius:50%;background:transparent;border:1px dashed var(--line2);flex-shrink:0;}
+  .gline{height:7px;border-radius:4px;background:var(--card2);}
+  .gline.w1{width:38%;margin-bottom:7px;}
+  .gline.w2{width:64%;}
+  .ir-syncnote{font-size:10.5px;color:var(--dim);margin-top:14px;line-height:1.5;padding:0 2px;}
+  .ir-main{flex:1;min-width:0;display:flex;flex-direction:column;padding:0 0 0 26px;}
+  .ir-topbar{display:flex;align-items:flex-end;gap:20px;flex-shrink:0;padding-top:24px;}
+  /* Composer façon Gmail (ancré bas-droit) */
+  .ir-comp{position:fixed;right:292px;bottom:0;width:560px;height:min(70vh,640px);z-index:320;display:none;flex-direction:column;background:var(--bg1);border:1px solid var(--line);border-bottom:none;border-radius:16px 16px 0 0;box-shadow:0 -10px 60px rgba(0,0,0,.4);-webkit-app-region:no-drag;}
+  .ir-comp.show{display:flex;animation:compUp .22s cubic-bezier(.2,.8,.2,1);}
+  @keyframes compUp{from{transform:translateY(26px);opacity:0;}}
+  .ir-comp.min{height:46px;overflow:hidden;}
+  .ir-comp.max{left:236px;right:268px;top:0;bottom:0;width:auto;height:auto;transform:none;border-radius:0;border:none;border-left:1px solid var(--line);border-right:1px solid var(--line);box-shadow:none;}
+  .ir-comp.max.show{animation:fadeIn .22s ease;}
+  .ir-comp.max .ir-comphead{padding:20px 40px 14px;}
+  .ir-comp.max .ir-crow{padding-left:40px;padding-right:40px;}
+  .ir-comp.max .ir-cbody{padding:20px 40px;}
+  .ir-comp.max .ir-compfoot{padding:14px 40px 20px;}
+  .ir-comp.max .ir-schedpop{left:38px;}
+  .ir-comp.max .ir-catts{padding:0 38px;}
+  .ir-comp.max .ir-crow,.ir-comp.max .ir-cbody,.ir-comp.max .ir-compfoot,.ir-comp.max .ir-catts{margin-right:344px;}
+  .ir-comp.max .ir-compside{display:flex;flex-direction:column;position:absolute;top:59px;right:0;bottom:0;width:344px;border-left:1px solid var(--line);padding:18px 24px 24px;overflow-y:auto;scrollbar-width:none;-webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 34px),transparent);mask-image:linear-gradient(to bottom,#000 calc(100% - 34px),transparent);}
+  .ir-comp.max .ir-compside::-webkit-scrollbar{display:none;}
+  .cs-item{padding:10px 2px;border-bottom:1px solid var(--line);}
+  .cs-item.sel{box-shadow:inset 2px 0 0 var(--accent2);padding-left:10px;}
+  .cs-head{display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;min-width:0;}
+  .cs-head b{color:var(--txt);font-weight:650;flex-shrink:0;}
+  .cs-head .w{font-size:9.5px;color:var(--dim);margin-left:auto;flex-shrink:0;}
+  .cs-re{color:var(--dim);cursor:pointer;font-size:12px;flex-shrink:0;transition:color .12s,text-shadow .12s;}
+  .cs-re:hover{color:var(--txt);text-shadow:0 0 8px var(--accent2);}
+  .cs-snip{font-size:11px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:3px;}
+  .cs-body{font-size:12px;color:var(--muted);line-height:1.6;white-space:pre-line;margin-top:6px;}
+  .ir-comphead{display:flex;align-items:center;gap:5px;padding:12px 14px;border-bottom:1px solid var(--line);flex-shrink:0;}
+  .ir-comphead .t{font-size:13px;font-weight:650;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .hbtn{width:24px;height:24px;display:grid;place-items:center;border-radius:7px;color:var(--dim);cursor:pointer;font-size:12px;transition:color .12s,background .12s;flex-shrink:0;}
+  .hbtn:hover{color:var(--txt);background:var(--card);}
+  .ir-crow{display:flex;align-items:center;gap:10px;padding:9px 16px;border-bottom:1px solid var(--line);flex-shrink:0;}
+  .ir-crow .lbl{font-size:12px;color:var(--dim);flex-shrink:0;}
+  .ir-crow input{flex:1;min-width:0;background:none;border:none;outline:none;color:var(--txt);font-size:13.5px;font-family:inherit;}
+  .ir-crow input::placeholder{color:var(--dim);}
+  .ctog{font-size:12px;color:var(--dim);cursor:pointer;flex-shrink:0;transition:color .12s;}
+  .ctog:hover,.ctog.on{color:var(--txt);}
+  .ir-cbody{flex:1;min-height:0;resize:none;background:none;border:none;outline:none;color:var(--txt);font-size:13.5px;line-height:1.7;font-family:inherit;padding:14px 16px;scrollbar-width:none;}
+  .ir-cbody::-webkit-scrollbar{display:none;}
+  .ir-cbody::placeholder{color:var(--dim);}
+  .ir-catts{padding:0 14px;max-height:110px;overflow-y:auto;scrollbar-width:none;flex-shrink:0;}
+  .ir-compfoot{display:flex;align-items:center;gap:16px;padding:12px 16px 14px;border-top:1px solid var(--line);flex-shrink:0;}
+  .cico{font-size:15px;filter:grayscale(1);opacity:.7;cursor:pointer;transition:opacity .12s,filter .12s;flex-shrink:0;}
+  .cico:hover{opacity:1;}
+  .ir-schedpop{position:absolute;bottom:62px;left:14px;width:280px;background:var(--bg1);border:1px solid var(--line);border-radius:14px;padding:8px;z-index:8;box-shadow:0 16px 44px rgba(0,0,0,.45);animation:modalRise .16s cubic-bezier(.2,.8,.2,1);}
+  .ir-schedpop .sp-t{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);padding:5px 9px 7px;}
+  .ir-schedpop .sp-opt{padding:8px 9px;border-radius:9px;font-size:12.5px;color:var(--muted);cursor:pointer;transition:background .12s,color .12s;}
+  .ir-schedpop .sp-opt:hover{background:var(--card);color:var(--txt);}
+  .ir-schedpop .sp-row{display:flex;gap:8px;align-items:center;padding:7px 6px 4px;border-top:1px solid var(--line);margin-top:6px;}
+  .ir-gate{flex:1;display:grid;place-items:center;}
+  .ir-gatebox{text-align:center;max-width:420px;padding-bottom:6vh;}
+  .ir-gateic{font-size:40px;filter:grayscale(1);opacity:.8;}
+  .ir-gatetitle{font-size:23px;font-weight:300;letter-spacing:-.01em;margin-top:16px;text-shadow:0 0 16px var(--accent2);}
+  .ir-gatedesc{font-size:12.5px;color:var(--muted);line-height:1.7;margin-top:12px;}
+  .ir-gatedemo{display:inline-block;font-size:11px;color:var(--dim);margin-top:16px;}
   .ir-notice{font-size:12px;color:var(--muted);margin-top:12px;flex-shrink:0;}
   .ir-stats{display:flex;gap:48px;margin:22px 0 4px;flex-shrink:0;}
   .ir-stat .n{font-size:30px;font-weight:200;letter-spacing:-.02em;text-shadow:0 0 16px var(--accent2);}
@@ -273,7 +501,7 @@
   .ir-filters span:hover{color:var(--muted);}
   .ir-filters span.active{color:var(--txt);background:var(--card2);}
   .ir-split{flex:1;display:flex;gap:0;min-height:0;}
-  .ir-list{flex:1.25;overflow-y:auto;scrollbar-width:none;padding:6px 22px 60px 0;-webkit-mask-image:linear-gradient(to bottom,transparent,#000 14px,#000 calc(100% - 40px),transparent);mask-image:linear-gradient(to bottom,transparent,#000 14px,#000 calc(100% - 40px),transparent);}
+  .ir-list{flex:3;min-width:0;overflow-y:auto;scrollbar-width:none;padding:6px 18px 60px 0;-webkit-mask-image:linear-gradient(to bottom,transparent,#000 14px,#000 calc(100% - 40px),transparent);mask-image:linear-gradient(to bottom,transparent,#000 14px,#000 calc(100% - 40px),transparent);}
   .ir-list::-webkit-scrollbar,.ir-detail::-webkit-scrollbar{display:none;}
   .ir-row{display:flex;gap:13px;padding:13px 10px;border-bottom:1px solid var(--line);cursor:pointer;transition:background .12s;border-radius:10px;}
   .ir-row:hover{background:var(--card);}
@@ -283,13 +511,15 @@
   .ir-name{font-size:13.5px;font-weight:600;}
   .ir-name .cl{color:var(--dim);font-weight:400;font-size:11px;margin-left:8px;}
   .ir-sub{font-size:12.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;}
+  .ir-sub .ldot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;vertical-align:1px;}
   .ir-prev{font-size:11.5px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;}
   .ir-meta{display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0;}
   .ir-when{font-size:10.5px;color:var(--dim);}
-  .ir-badges{display:flex;gap:5px;}
+  .ir-badges{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end;max-width:150px;}
   .ir-b{font-size:9.5px;padding:2px 8px;border-radius:10px;border:1px solid var(--line);color:var(--dim);white-space:nowrap;}
   .ir-b.on{color:var(--txt);border-color:var(--line2);text-shadow:0 0 8px var(--accent2);}
-  .ir-detail{flex:1;overflow-y:auto;scrollbar-width:none;border-left:1px solid var(--line);padding:14px 4px 60px 28px;-webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 40px),transparent);mask-image:linear-gradient(to bottom,#000 calc(100% - 40px),transparent);}
+  .ir-detail{flex:7;min-width:0;overflow-y:auto;scrollbar-width:none;border-left:1px solid var(--line);padding:14px 4px 0 14px;-webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 40px),transparent);mask-image:linear-gradient(to bottom,#000 calc(100% - 40px),transparent);}
+  .ir-detail .ir-dmeta,.ir-detail .ir-kpis,.ir-detail .ir-thread,.ir-detail .ir-sect,.ir-detail .ir-glist,.ir-detail .ir-auto,.ir-detail .ir-tl{margin-left:8px;}
   .ir-dsubj{font-size:20px;font-weight:300;letter-spacing:-.01em;}
   .ir-dmeta{font-size:12px;color:var(--dim);margin-top:5px;}
   .ir-dbody{font-size:13px;color:var(--muted);line-height:1.65;margin-top:16px;padding:14px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);white-space:pre-line;}
@@ -553,6 +783,65 @@
   .section h3{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);margin-bottom:13px;}
   .desc{color:#c3cbda;font-size:14px;line-height:1.7;}
   .env{display:flex;flex-direction:column;gap:8px;}
+  /* ── Pegasus : le parc + bibliothèque Orphic ── */
+  #page-pegasus.show{display:flex;flex-direction:column;height:100%;max-width:none;padding-bottom:0;}
+  .pg-tabs{display:flex;gap:6px;flex-shrink:0;margin-bottom:4px;}
+  .pg-tabs span{font-size:12.5px;color:var(--dim);cursor:pointer;padding:6px 15px;border-radius:20px;transition:color .12s,background .12s;}
+  .pg-tabs span:hover{color:var(--muted);}
+  .pg-tabs span.active{color:var(--txt);background:var(--card2);text-shadow:0 0 10px var(--accent2);}
+  .pg-view{display:none;flex:1;min-height:0;flex-direction:column;}
+  .pg-view.show{display:flex;}
+  .pg-cols{display:flex;gap:30px;flex:1;min-height:0;}
+  .pg-sites-col{width:300px;flex-shrink:0;}
+  .pg-detail-col{flex:1;min-width:0;}
+  .pg-scroll{flex:1;min-height:0;overflow-y:auto;scrollbar-width:none;padding:10px 2px 70px;-webkit-mask-image:linear-gradient(to bottom,transparent,#000 16px,#000 calc(100% - 50px),transparent);mask-image:linear-gradient(to bottom,transparent,#000 16px,#000 calc(100% - 50px),transparent);}
+  .pg-scroll::-webkit-scrollbar{display:none;}
+  .pg-site{display:flex;align-items:center;gap:11px;padding:12px 10px;margin:0 -10px;border-radius:12px;cursor:pointer;transition:background .12s;}
+  .pg-site:hover{background:var(--card);}
+  .pg-site.active{background:var(--card2);}
+  .pg-site>div{flex:1;min-width:0;}
+  .pg-site .nm{font-weight:550;font-size:13.5px;}
+  .pg-site .meta{color:var(--dim);font-size:11.5px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .pg-dot{width:8px;height:8px;border-radius:50%;background:var(--card2);flex-shrink:0;transition:background .3s,box-shadow .3s;}
+  .pg-dot.ok{background:var(--ok);box-shadow:0 0 8px color-mix(in srgb,var(--ok) 60%,transparent);}
+  .pg-dot.err{background:var(--err);box-shadow:0 0 8px color-mix(in srgb,var(--err) 60%,transparent);}
+  .pg-dot.warn{background:var(--warn);box-shadow:0 0 8px color-mix(in srgb,var(--warn) 55%,transparent);}
+  .pg-dot.wait{background:var(--dim);animation:pgPulse 1.2s ease-in-out infinite;}
+  @keyframes pgPulse{50%{opacity:.3;}}
+  .pg-dhead{display:flex;align-items:center;gap:12px;padding:6px 0 14px;border-bottom:1px solid var(--line);}
+  .pg-dhead h2{font-size:19px;font-weight:650;letter-spacing:-.01em;flex:1;min-width:0;}
+  .pg-kpis{display:flex;gap:44px;flex-wrap:wrap;margin:18px 0 4px;}
+  .pg-kpi .n{font-size:26px;font-weight:200;letter-spacing:-.02em;text-shadow:0 0 16px var(--accent2);}
+  .pg-kpi .l{color:var(--dim);font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;margin-top:3px;}
+  .pg-sub{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);margin:22px 0 6px;}
+  .pg-line{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);font-size:13px;}
+  .pg-line .k{color:var(--muted);width:150px;flex-shrink:0;}
+  .pg-line .v{color:var(--txt);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;}
+  .pg-alert{display:flex;gap:9px;align-items:baseline;padding:7px 0;font-size:12.5px;color:var(--muted);border-bottom:1px solid var(--line);}
+  .pg-bar{display:flex;gap:8px;align-items:center;flex-shrink:0;flex-wrap:wrap;padding:6px 0 2px;}
+  .pg-select{padding:8px 11px;border-radius:20px;background:var(--card);border:1px solid var(--line);color:var(--muted);font-size:12.5px;outline:none;-webkit-appearance:none;}
+  .pg-select:focus{border-color:var(--line2);}
+  .pg-ref{display:flex;align-items:center;gap:12px;padding:12px 10px;margin:0 -10px;border-radius:12px;transition:background .12s;}
+  .pg-ref:hover{background:var(--card);}
+  .pg-ref>div{flex:1;min-width:0;}
+  .pg-ref .t{font-weight:550;font-size:13.5px;}
+  .pg-ref .t a{color:inherit;text-decoration:none;cursor:pointer;}
+  .pg-ref .t a:hover{text-shadow:0 0 12px var(--accent2);}
+  .pg-ref .meta{color:var(--dim);font-size:11.5px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .pg-badge{font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);background:var(--card);border:1px solid var(--line);border-radius:12px;padding:2.5px 9px;flex-shrink:0;}
+  .pg-ract{display:flex;gap:6px;opacity:0;transition:opacity .12s;flex-shrink:0;}
+  .pg-ref:hover .pg-ract{opacity:1;}
+  .pg-ract button{padding:5px 11px;font-size:11.5px;border-radius:9px;border:1px solid var(--line);background:var(--card);color:var(--muted);cursor:pointer;}
+  .pg-ract button:hover{color:var(--txt);border-color:var(--line2);}
+  .pg-refform{display:none;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin:8px 0 2px;flex-shrink:0;}
+  .pg-refform.show{display:block;}
+  .pg-refform-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;}
+  .pg-refform-foot{display:flex;align-items:center;gap:10px;margin-top:10px;}
+  .pg-check{display:flex;align-items:center;gap:7px;color:var(--muted);font-size:12.5px;flex:1;cursor:pointer;}
+  .pg-setup{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;max-width:560px;margin-top:14px;}
+  .pg-setup p{color:var(--muted);font-size:13px;line-height:1.55;margin-bottom:12px;}
+  .pg-setup .act{display:flex;gap:10px;}
+
   .env-row{display:flex;align-items:center;gap:12px;padding:12px 15px;background:var(--card);border:1px solid var(--line);border-radius:12px;}
   .env-row .st{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-size:13px;flex-shrink:0;background:var(--card2);color:var(--dim);}
   .env-row .st.ok{background:rgba(74,222,128,.15);color:var(--ok);}
@@ -633,7 +922,27 @@
   .btn.sec:hover,.btn.ok:hover,.btn-lg.sec:hover,.cal-btn:not(.primary):hover,.member-btn:hover{color:var(--txt)!important;}
 
   /* ── Colonne droite (infos) ── */
-  #rightbar{background:var(--panel);backdrop-filter:blur(var(--glass-blur)) saturate(1.3);-webkit-backdrop-filter:blur(var(--glass-blur)) saturate(1.3);padding:58px 20px 24px;overflow-y:auto;display:flex;flex-direction:column;gap:28px;-webkit-app-region:drag;}
+  #rightbar{background:var(--panel);backdrop-filter:blur(var(--glass-blur)) saturate(1.3);-webkit-backdrop-filter:blur(var(--glass-blur)) saturate(1.3);padding:58px 20px 24px;overflow:hidden;display:flex;flex-direction:column;-webkit-app-region:drag;}
+  /* Carrousel de la colonne droite : Agenda · Chat · Mail */
+  .rb-tabs{display:flex;gap:8px;justify-content:center;flex-shrink:0;margin-bottom:20px;-webkit-app-region:no-drag;}
+  .rb-tabs span{width:30px;height:30px;display:grid;place-items:center;border-radius:50%;cursor:pointer;filter:grayscale(1);opacity:.45;font-size:13px;transition:opacity .15s,background .15s,box-shadow .15s;}
+  .rb-tabs span:hover{opacity:.85;}
+  .rb-tabs span.active{opacity:1;background:var(--card2);box-shadow:0 0 12px -3px var(--accent2);}
+  .rb-carousel{flex:1;overflow:hidden;min-height:0;}
+  .rb-slider{display:flex;height:100%;transition:transform .45s cubic-bezier(.25,.8,.25,1);}
+  .rb-view{width:100%;flex-shrink:0;overflow-y:auto;scrollbar-width:none;display:flex;flex-direction:column;gap:28px;padding:2px 2px 20px;-webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 34px),transparent);mask-image:linear-gradient(to bottom,#000 calc(100% - 34px),transparent);}
+  .rb-view::-webkit-scrollbar{display:none;}
+  .rb-chatfeed{flex:1;min-height:0;overflow-y:auto;scrollbar-width:none;display:flex;flex-direction:column;gap:11px;margin-top:6px;-webkit-app-region:no-drag;-webkit-mask-image:linear-gradient(to bottom,transparent,#000 16px);mask-image:linear-gradient(to bottom,transparent,#000 16px);}
+  .rb-chatfeed::-webkit-scrollbar{display:none;}
+  .rb-cmsg .a{font-size:9.5px;color:var(--dim);font-weight:700;margin-bottom:2px;letter-spacing:.03em;}
+  .rb-cmsg .b{font-size:12.5px;color:var(--muted);line-height:1.5;}
+  .rb-cmsg.me .b{color:var(--txt);}
+  #rbChatInput{-webkit-app-region:no-drag;}
+  .rb-mrow{display:flex;gap:9px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line);cursor:pointer;font-size:12px;color:var(--muted);-webkit-app-region:no-drag;transition:color .12s;}
+  .rb-mrow:last-child{border-bottom:none;}
+  .rb-mrow:hover{color:var(--txt);}
+  .rb-mrow b{color:var(--txt);font-weight:650;}
+  .rb-mrow .dotg{width:6px;height:6px;border-radius:50%;background:var(--txt);box-shadow:0 0 8px var(--accent2);flex-shrink:0;animation:livePulse 2s ease-in-out infinite;}
   #rbWheel{display:none;position:absolute;top:0;bottom:0;right:492px;width:150px;z-index:7;flex-direction:column;justify-content:center;align-items:flex-end;padding:0;overflow:hidden;-webkit-app-region:no-drag;}
   #hub.with-rail #rbWheel{display:flex;}
   #rbBlank{display:none;position:absolute;top:0;bottom:0;right:268px;width:224px;z-index:7;background:linear-gradient(var(--panel),var(--panel)),var(--bg2);padding:44px 22px 24px;overflow-y:auto;flex-direction:column;gap:12px;-webkit-app-region:no-drag;}
@@ -820,39 +1129,81 @@
         </div>
       </section>
 
-      <!-- ═══ PEGASUS (calibration, déverrouillé après install) ═══ -->
+      <!-- ═══ PEGASUS (le parc + bibliothèque Orphic, déverrouillé après install) ═══ -->
       <section class="page" id="page-pegasus">
-        <div class="app-hero">
-          <div class="app-icon peg">🦄</div>
-          <div><h1>Pegasus</h1><div class="tag">Réglages & environnement</div></div>
+        <div class="page-head" style="margin-bottom:0;">
+          <h1>Pegasus</h1><p style="margin-bottom:14px;">Le parc WordPress des clients — santé, structure, SEO & bibliothèque Orphic.</p>
+        </div>
+        <div class="pg-tabs" id="pgTabs">
+          <span data-tab="parc" class="active">Parc</span>
+          <span data-tab="biblio">Bibliothèque</span>
+          <span data-tab="reglages">Réglages</span>
         </div>
 
-        <div class="section">
-          <h3>Environnement</h3>
-          <div class="env" id="envList">
-            <div class="env-row"><div class="st">…</div><div><div class="nm">Node.js</div><div class="meta">vérification…</div></div></div>
-            <div class="env-row"><div class="st">…</div><div><div class="nm">Claude Code</div><div class="meta">vérification…</div></div></div>
-            <div class="env-row"><div class="st">…</div><div><div class="nm">WordPress local</div><div class="meta">vérification…</div></div></div>
+        <!-- ── Volet Parc ── -->
+        <div class="pg-view show" id="pgViewParc">
+          <div class="pg-cols">
+            <div class="pg-scroll pg-sites-col" id="pgSites"><div class="rb-empty">Chargement du registre…</div></div>
+            <div class="pg-scroll pg-detail-col" id="pgDetail"></div>
           </div>
         </div>
 
-        <div class="section">
-          <h3>Clients connectés</h3>
-          <div id="pegClients"><div class="rb-empty">Chargement…</div></div>
+        <!-- ── Volet Bibliothèque ── -->
+        <div class="pg-view" id="pgViewBiblio">
+          <div class="pg-bar">
+            <input class="hm-search" id="pgRefQ" placeholder="Rechercher (titre, ingrédients, technique…)" style="max-width:240px;margin:0;">
+            <select class="pg-select" id="pgRefKind"><option value="">Type</option><option value="site">Site</option><option value="animation">Animation</option><option value="matiere">Matière</option><option value="secteur">Secteur</option><option value="autre">Autre</option></select>
+            <select class="pg-select" id="pgRefNiveau"><option value="">Niveau</option><option>N1</option><option>N2</option><option>N3</option><option>N4</option></select>
+            <select class="pg-select" id="pgRefRegistre"><option value="">Registre</option><option value="sombre-dramatique">Sombre-dramatique</option><option value="clair-epure">Clair-épuré</option><option value="chaleureux-ludique">Chaleureux-ludique</option><option value="clair-conversion">Clair-conversion</option></select>
+            <select class="pg-select" id="pgRefStatut"><option value="tous">Tous statuts</option><option value="valide">Validées</option><option value="candidat">Candidates</option><option value="rejete">Rejetées</option></select>
+            <button class="cal-btn primary" id="pgRefNew" style="margin-left:auto;">＋ Proposer</button>
+          </div>
+          <div class="pg-refform" id="pgRefForm">
+            <div class="pg-refform-grid">
+              <input class="hm-search" id="pgRfTitre" placeholder="Titre *" style="margin:0;">
+              <input class="hm-search" id="pgRfUrl" placeholder="URL" style="margin:0;">
+              <select class="pg-select" id="pgRfKind"><option value="site">Site</option><option value="animation">Animation</option><option value="matiere">Matière</option><option value="secteur">Secteur</option><option value="autre">Autre</option></select>
+              <select class="pg-select" id="pgRfNiveau"><option value="">Niveau</option><option>N1</option><option>N2</option><option>N3</option><option>N4</option></select>
+              <select class="pg-select" id="pgRfRegistre"><option value="">Registre</option><option value="sombre-dramatique">Sombre-dramatique</option><option value="clair-epure">Clair-épuré</option><option value="chaleureux-ludique">Chaleureux-ludique</option><option value="clair-conversion">Clair-conversion</option></select>
+              <input class="hm-search" id="pgRfBusiness" placeholder="Secteur client (ex : yachting)" style="margin:0;">
+            </div>
+            <input class="hm-search" id="pgRfIngredients" placeholder="Ingrédients — ce qu'on en extrait et recombine (jamais un modèle)" style="margin:8px 0 0;">
+            <div class="pg-refform-foot">
+              <label class="pg-check"><input type="checkbox" id="pgRfValide"> Enregistrer directement comme validée</label>
+              <button class="btn sec" id="pgRfCancel" style="padding:7px 16px;font-size:12.5px;">Annuler</button>
+              <button class="cal-btn primary" id="pgRfSave">Enregistrer</button>
+            </div>
+            <div class="msg" id="pgRfMsg"></div>
+          </div>
+          <div class="pg-scroll pg-refs" id="pgRefs"><div class="rb-empty">Chargement…</div></div>
         </div>
-        <div class="section">
-          <h3>Historique & retour arrière</h3>
-          <p class="desc">Bientôt : consulter les <b>anciennes versions</b> d'un site client et <b>revenir en arrière en un clic</b> si une modification a cassé quelque chose. (Nécessite un ajout côté plugin WordPress Pegasus : sauvegarde/restauration des versions.)</p>
-        </div>
-        <div class="section">
-          <h3>Clé d'équipe</h3>
-          <p class="desc" style="margin-bottom:12px;">Ta clé est installée dans <kbd>~/.pegasus/team-key</kbd>. Pense à ajouter le plugin dans Claude Code : Personnaliser → Plugins → <kbd>OrphicDev/pegasus</kbd>.</p>
-          <button class="btn sec" id="setPegBtn">Réinstaller la clé</button>
-          <div class="code-box" id="setPegBox" style="max-width:420px;">
-            <label>Nouveau code d'accès</label>
-            <input class="code-input" id="setPegCode" placeholder="XXXX-XXXX-XXXX-XXXX" maxlength="19" autocomplete="off" spellcheck="false" />
-            <button class="btn" id="setPegConnect">Connecter</button>
-            <div class="msg" id="setPegMsg"></div>
+
+        <!-- ── Volet Réglages ── -->
+        <div class="pg-view" id="pgViewReglages">
+          <div class="pg-scroll">
+            <div class="section" style="margin-top:14px;">
+              <h3>Environnement</h3>
+              <div class="env" id="envList">
+                <div class="env-row"><div class="st">…</div><div><div class="nm">Node.js</div><div class="meta">vérification…</div></div></div>
+                <div class="env-row"><div class="st">…</div><div><div class="nm">Claude Code</div><div class="meta">vérification…</div></div></div>
+                <div class="env-row"><div class="st">…</div><div><div class="nm">WordPress local</div><div class="meta">vérification…</div></div></div>
+              </div>
+            </div>
+            <div class="section">
+              <h3>Historique & retour arrière</h3>
+              <p class="desc">Bientôt : consulter les <b>anciennes versions</b> d'un site client et <b>revenir en arrière en un clic</b> si une modification a cassé quelque chose. (Nécessite un ajout côté plugin WordPress Pegasus : sauvegarde/restauration des versions.)</p>
+            </div>
+            <div class="section">
+              <h3>Clé d'équipe</h3>
+              <p class="desc" style="margin-bottom:12px;">Ta clé est installée dans <kbd>~/.pegasus/team-key</kbd>. Pense à ajouter le plugin dans Claude Code : Personnaliser → Plugins → <kbd>OrphicDev/pegasus</kbd>.</p>
+              <button class="btn sec" id="setPegBtn">Réinstaller la clé</button>
+              <div class="code-box" id="setPegBox" style="max-width:420px;">
+                <label>Nouveau code d'accès</label>
+                <input class="code-input" id="setPegCode" placeholder="XXXX-XXXX-XXXX-XXXX" maxlength="19" autocomplete="off" spellcheck="false" />
+                <button class="btn" id="setPegConnect">Connecter</button>
+                <div class="msg" id="setPegMsg"></div>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -984,45 +1335,92 @@
 
       <!-- ═══ IRIS (mailing + tracking) ═══ -->
       <section class="page" id="page-iris">
-        <div class="ir-topbar">
-          <div class="page-head" style="margin-bottom:0;"><h1>Iris</h1><p>Le mailing — envoi, ouvertures, lectures, pièces jointes.</p></div>
-          <button class="cal-btn primary" id="irComposeBtn" style="margin-left:auto;">＋ Nouveau message</button>
-        </div>
-        <div class="ir-notice" id="irNotice" style="display:none;">Gmail non connecté — <span class="link" id="irisGoProfile">connecte-le dans ton profil</span> pour envoyer réellement. Les mails ci-dessous sont des données de démo.</div>
-        <div class="ir-stats" id="irStats"></div>
-        <div class="ir-toolbar">
-          <input class="hm-search" id="irSearch" placeholder="Rechercher un mail, un client…" style="max-width:270px;margin:0;">
-          <div class="ir-filters" id="irFilters">
-            <span data-f="all" class="active">Tous</span><span data-f="opened">Ouverts</span><span data-f="unopened">Non ouverts</span><span data-f="attach">PJ téléchargées</span>
+        <div class="ir-gate" id="irGate" style="display:none;">
+          <div class="ir-gatebox">
+            <div class="ir-gateic">✉️</div>
+            <div class="ir-gatetitle">Connecte ta boîte mail</div>
+            <div class="ir-gatedesc">Iris a besoin d'une boîte Gmail pour fonctionner : envoi, suivi des ouvertures, catégories synchronisées.<br>La connexion se fait en une minute avec un mot de passe d'application.</div>
+            <button class="cal-btn primary" id="irisGoProfile" style="margin-top:22px;padding:11px 30px;border-radius:22px;">Connecter Gmail</button>
+            <div class="ir-gatedemo link" id="irDemoLink">Explorer avec des données de démo</div>
           </div>
         </div>
-        <div class="ir-split">
-          <div class="ir-list" id="irList"></div>
-          <div class="ir-detail" id="irDetail"><div class="rb-empty" style="padding:60px 20px;text-align:center;">Sélectionne un mail pour voir son suivi.</div></div>
+        <div class="ir-wrap">
+          <aside class="ir-side">
+            <div class="ir-acct" id="irAcct">
+              <div class="ir-acur" id="irAcctCur" title="Changer de boîte mail">
+                <div class="ir-aav" id="irAcctAv">—</div>
+                <div class="ir-ainfo"><div class="nm" id="irAcctEmail">—</div><div class="sub" id="irAcctLabel"></div></div>
+                <span class="chev">▾</span>
+              </div>
+              <div class="ir-amenu" id="irAcctMenu" style="display:none;"></div>
+            </div>
+            <button class="cal-btn primary" id="irComposeBtn" style="width:100%;margin-bottom:16px;">＋ Nouveau message</button>
+            <div class="ir-sidescroll">
+              <div id="irFolders"></div>
+              <div class="ir-catfoot">
+                <div class="hm-sec" style="margin-top:0;">Catégories<span class="hm-addg" id="irNewLabel" title="Nouvelle catégorie (créée aussi dans Gmail)">＋</span></div>
+                <div id="irLabels"></div>
+                <div id="irLabelGhosts"></div>
+              </div>
+            </div>
+            <div class="ir-syncnote" id="irSyncNote"></div>
+          </aside>
+          <div class="ir-main">
+            <div class="ir-topbar">
+              <div class="page-head" style="margin-bottom:0;"><h1>Iris</h1></div>
+            </div>
+            <div class="ir-stats" id="irStats"></div>
+            <div class="ir-toolbar">
+              <input class="hm-search" id="irSearch" placeholder="Rechercher un mail, un client…" style="max-width:270px;margin:0;">
+              <div class="ir-filters" id="irFilters">
+                <span data-f="all" class="active">Tous</span><span data-f="opened">Ouverts</span><span data-f="unopened">Non ouverts</span><span data-f="attach">PJ téléchargées</span>
+              </div>
+            </div>
+            <div class="ir-home" id="irHome" style="display:none;"></div>
+            <div class="ir-split full">
+              <div class="ir-list" id="irList"></div>
+              <div class="ir-detail" id="irDetail"><div class="rb-empty" style="padding:60px 20px;text-align:center;">Sélectionne un mail pour voir son suivi.</div></div>
+              <button class="ir-replysm ir-closefloat" id="irDetailClose" title="Fermer le panneau">✕</button>
+            </div>
+          </div>
         </div>
 
-        <div class="modal-overlay" id="irModal">
-          <div class="modal-panel">
-            <div class="modal-head"><h2>Nouveau message</h2><button class="modal-x" id="irCancel" aria-label="Fermer">✕</button></div>
-            <div class="modal-body">
-              <div class="auth-row2">
-                <div class="auth-field" style="flex:2"><label>Destinataire</label><input class="auth-input" id="irTo" type="email" placeholder="client@exemple.com"></div>
-                <div class="auth-field" style="flex:1"><label>Nom</label><input class="auth-input" id="irToName"></div>
-              </div>
-              <div class="auth-field"><label>Client / projet</label><input class="auth-input" id="irClient" placeholder="Maison Solène, Villa Riviera…"></div>
-              <div class="auth-field"><label>Sujet</label><input class="auth-input" id="irSubject"></div>
-              <div class="auth-field"><label>Message</label><textarea class="auth-input" id="irBody" rows="7"></textarea></div>
-              <div class="auth-field">
-                <label>Pièces jointes</label>
-                <div class="ev-actions" style="margin-top:2px;"><button class="btn sec" id="irAttachBtn" type="button">+ Joindre un fichier</button></div>
-                <div id="irAttachList" style="margin-top:8px;"></div>
-              </div>
-              <div class="toggle-row"><button class="toggle on" id="irTrack" type="button"><span class="dot"></span>Suivi (ouvertures · lectures · PJ)</button></div>
-            </div>
-            <div class="modal-foot">
-              <button class="cal-btn primary" id="irSend">Envoyer</button>
-              <div class="msg" id="irMsg" style="flex-basis:100%;"></div>
-            </div>
+        <div class="ir-comp" id="irModal">
+          <div class="ir-comphead">
+            <span class="t" id="irCompTitle">Nouveau message</span>
+            <select class="mn-evsel" id="irCompCat" title="Groupe du message — les prochains mails de cette adresse iront au même endroit" style="max-width:150px;"></select>
+            <span class="hbtn" id="irCompMin" title="Réduire">–</span>
+            <span class="hbtn" id="irCompMax" title="Agrandir">⤢</span>
+            <span class="hbtn" id="irCancel" title="Fermer">✕</span>
+          </div>
+          <div class="ir-crow">
+            <span class="lbl">À</span>
+            <input id="irTo" type="email" placeholder="Destinataires" autocomplete="off" spellcheck="false">
+            <span class="ctog" id="irTogCc">Cc</span>
+            <span class="ctog" id="irTogDet">Détails</span>
+          </div>
+          <div class="ir-crow" id="irCcRow" style="display:none;"><span class="lbl">Cc</span><input id="irCc" placeholder="adresse1@…, adresse2@…" autocomplete="off" spellcheck="false"></div>
+          <div class="ir-crow" id="irDetRow" style="display:none;">
+            <span class="lbl">Nom</span><input id="irToName" style="flex:.7;" autocomplete="off">
+            <span class="lbl">Client</span><input id="irClient" placeholder="Maison Solène…" autocomplete="off">
+          </div>
+          <div class="ir-crow"><input id="irSubject" placeholder="Objet" autocomplete="off"></div>
+          <textarea id="irBody" class="ir-cbody" placeholder="Écris ton message…" spellcheck="true"></textarea>
+          <div id="irAttachList" class="ir-catts"></div>
+          <div class="msg" id="irMsg" style="padding:2px 16px;"></div>
+          <div class="ir-schedpop" id="irSchedPop" style="display:none;">
+            <div class="sp-t">Programmer l'envoi</div>
+            <div class="sp-opt" data-sp></div>
+            <div class="sp-opt" data-sp></div>
+            <div class="sp-opt" data-sp></div>
+            <div class="sp-row"><input type="datetime-local" id="irSchedAt" class="mn-evsel" style="flex:1;"><button class="btn sec" id="irSchedOk" style="padding:6px 14px;font-size:12px;">OK</button></div>
+          </div>
+          <div class="ir-compside" id="irCompSide" style="display:none;"></div>
+          <div class="ir-compfoot">
+            <button class="cal-btn primary" id="irSend" style="border-radius:20px;padding:9px 28px;">Envoyer</button>
+            <button class="cal-btn" id="irSched" style="border-radius:20px;padding:9px 18px;" title="Programmer l'envoi">🕐 Programmer</button>
+            <span class="cico" id="irAttachBtn" title="Joindre des fichiers">📎</span>
+            <span class="cico" id="irDiscard" title="Abandonner le brouillon" style="margin-left:auto;">🗑️</span>
           </div>
         </div>
       </section>
@@ -1233,22 +1631,50 @@
     </aside>
 
     <aside id="rightbar">
-      <div class="rb-sec">
-        <h4>Projet en cours</h4>
-        <div class="rb-title" id="rbProject">—</div>
-        <div class="rb-sub" id="rbProjectSub">à définir</div>
+      <div class="rb-tabs" id="rbTabs">
+        <span data-rv="0" class="active" title="Agenda">📅</span>
+        <span data-rv="1" title="Chat d'équipe">💬</span>
+        <span data-rv="2" title="Mails">✉️</span>
       </div>
-      <div class="rb-sec">
-        <h4>Aujourd'hui</h4>
-        <div id="rbToday"><div class="rb-empty">Rien de prévu.</div></div>
-      </div>
-      <div class="rb-sec">
-        <h4>À venir</h4>
-        <div id="rbSoon"><div class="rb-empty">—</div></div>
-      </div>
-      <div class="rb-sec">
-        <h4>Équipe</h4>
-        <div id="rbOnline"><div class="rb-empty">—</div></div>
+      <div class="rb-carousel">
+        <div class="rb-slider" id="rbSlider">
+          <div class="rb-view">
+            <div class="rb-sec">
+              <h4>Projet en cours</h4>
+              <div class="rb-title" id="rbProject">—</div>
+              <div class="rb-sub" id="rbProjectSub">à définir</div>
+            </div>
+            <div class="rb-sec">
+              <h4>Aujourd'hui</h4>
+              <div id="rbToday"><div class="rb-empty">Rien de prévu.</div></div>
+            </div>
+            <div class="rb-sec">
+              <h4>À venir</h4>
+              <div id="rbSoon"><div class="rb-empty">—</div></div>
+            </div>
+            <div class="rb-sec">
+              <h4>Équipe</h4>
+              <div id="rbOnline"><div class="rb-empty">—</div></div>
+            </div>
+          </div>
+          <div class="rb-view">
+            <div class="rb-sec" style="flex:1;display:flex;flex-direction:column;min-height:0;">
+              <h4>Hermès — équipe</h4>
+              <div id="rbChatFeed" class="rb-chatfeed"></div>
+            </div>
+            <input class="hm-search" id="rbChatInput" placeholder="Message à l'équipe…" autocomplete="off" style="margin:10px 0 0;flex-shrink:0;">
+          </div>
+          <div class="rb-view">
+            <div class="rb-sec">
+              <h4>Non lus</h4>
+              <div id="rbMailUnread"></div>
+            </div>
+            <div class="rb-sec">
+              <h4>En direct</h4>
+              <div id="rbMailLive"></div>
+            </div>
+          </div>
+        </div>
       </div>
     </aside>
 

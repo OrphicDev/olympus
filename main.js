@@ -4,7 +4,7 @@ const { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync, readdirSy
 const { join } = require("node:path");
 const { homedir, tmpdir } = require("node:os");
 const { execFile } = require("node:child_process");
-const { randomUUID } = require("node:crypto");
+const { randomUUID, privateDecrypt, constants: cryptoConstants } = require("node:crypto");
 const nodemailer = require("nodemailer");
 
 const CFG = JSON.parse(readFileSync(join(__dirname, "app-config.json"), "utf8"));
@@ -587,6 +587,38 @@ ipcMain.handle("iris:connect", async (_e, email, appPassword) => {
 
 ipcMain.handle("iris:disconnect", () => { const s = loadSettings(); delete s.gmailEmail; saveSettings(s); return { ok: true }; });
 
+// Libellés Gmail via IMAP (un libellé = une boîte IMAP) — synchro réelle dans les deux sens.
+async function gmailImap() {
+  const email = loadSettings().gmailEmail; if (!email) return null;
+  const pass = await keychainGet(email); if (!pass) return null;
+  const { ImapFlow } = require("imapflow");
+  const c = new ImapFlow({ host: "imap.gmail.com", port: 993, secure: true, auth: { user: email, pass }, logger: false });
+  await c.connect();
+  return c;
+}
+ipcMain.handle("iris:labels", async () => {
+  try {
+    const c = await gmailImap();
+    if (!c) return { ok: false, error: "Gmail non connecté." };
+    const boxes = await c.list();
+    await c.logout();
+    // Dossiers système = INBOX et [Gmail]/… ; tout le reste = libellés créés par l'utilisateur.
+    const labels = boxes.filter((b) => b.path !== "INBOX" && !b.path.startsWith("[Gmail]")).map((b) => b.path);
+    return { ok: true, labels };
+  } catch (e) { return { ok: false, error: String(e.message || e) }; }
+});
+ipcMain.handle("iris:createLabel", async (_e, name) => {
+  name = String(name || "").trim();
+  if (!name) return { ok: false, error: "Nom requis." };
+  try {
+    const c = await gmailImap();
+    if (!c) return { ok: false, error: "Gmail non connecté." };
+    await c.mailboxCreate(name.split("/"));               // « Clients/SBM/Marlow » → libellé imbriqué Gmail
+    await c.logout();
+    return { ok: true };
+  } catch (e) { return { ok: false, error: String(e.message || e) }; }
+});
+
 ipcMain.handle("iris:send", async (_e, d) => {
   const email = loadSettings().gmailEmail;
   if (!email) return { ok: false, error: "Gmail non connecté." };
@@ -635,19 +667,151 @@ ipcMain.handle("claude:install", async () => {
   return { ok: true };
 });
 
-// ══════════ PEGASUS — clients connectés (registre via clé d'équipe) ══════════
-ipcMain.handle("pegasus:clients", async () => {
-  let d;
-  try { d = JSON.parse(Buffer.from(readFileSync(join(homedir(), ".pegasus", "team-key"), "utf8").trim(), "base64").toString("utf8")); }
-  catch { return { ok: false, error: "Clé Pegasus absente — installe Pegasus d'abord.", clients: [] }; }
+// ══════════ PEGASUS — le parc de sites + la bibliothèque Orphic ══════════
+// Tout passe par la clé d'équipe (~/.pegasus/team-key). Les mots de passe des
+// sites sont déchiffrés ICI (main) et ne sont JAMAIS envoyés au renderer.
+function pegTeam() {
+  try { return JSON.parse(Buffer.from(readFileSync(KEY_FILE, "utf8").trim(), "base64").toString("utf8")); }
+  catch { return null; }
+}
+async function pegSupa(path, opts = {}) {
+  const d = pegTeam();
+  if (!d || !d.supabase_url || !d.supabase_service_key) throw new Error("Clé Pegasus absente — installe Pegasus d'abord.");
+  const r = await fetch(`${d.supabase_url.replace(/\/$/, "")}/rest/v1${path}`, {
+    ...opts,
+    headers: {
+      apikey: d.supabase_service_key,
+      Authorization: `Bearer ${d.supabase_service_key}`,
+      "Content-Type": "application/json",
+      ...(opts.headers || {}),
+    },
+  });
+  const text = await r.text();
+  if (!r.ok) { const e = new Error(`Supabase ${r.status} : ${text.slice(0, 200)}`); e.status = r.status; e.body = text; throw e; }
+  try { return text ? JSON.parse(text) : null; } catch { return null; }
+}
+
+// Registre des sites, mots de passe déchiffrés (cache 30 s). Réservé au main.
+let _pegSites = { at: 0, sites: {} };
+async function pegSites() {
+  if (Date.now() - _pegSites.at < 30000) return _pegSites.sites;
+  const d = pegTeam();
+  if (!d || !d.private_key) throw new Error("Clé Pegasus absente — installe Pegasus d'abord.");
+  const rows = await pegSupa("/sites?select=*&order=id.desc");
+  const sites = {};
+  for (const row of rows) {
+    const host = new URL(row.site_url).hostname.replace(/^www\./, "");
+    const key = host.split(".")[0].toLowerCase();
+    if (sites[key]) continue; // tri id desc → la ligne la plus récente gagne
+    let pass;
+    try {
+      pass = privateDecrypt(
+        { key: d.private_key, padding: cryptoConstants.RSA_PKCS1_OAEP_PADDING },
+        Buffer.from(row.app_password_enc, "base64")
+      ).toString("utf8");
+    } catch { continue; }
+    sites[key] = { key, label: row.label || host, host, base_url: row.site_url.replace(/\/$/, ""), username: row.username, created_at: row.created_at, pass };
+  }
+  _pegSites = { at: Date.now(), sites };
+  return sites;
+}
+// Appel signé à l'API pegasus/v1 d'un site (?rest_route= : passe quels que soient les permaliens).
+async function pegCall(key, method, path, timeoutMs = 20000) {
+  const s = (await pegSites())[key];
+  if (!s) throw new Error(`Site inconnu : ${key}`);
+  const basic = Buffer.from(`${s.username}:${s.pass.replace(/\s+/g, "")}`).toString("base64");
+  const [p, qs] = path.split("?");
+  const url = `${s.base_url}/?rest_route=/pegasus/v1${p}` + (qs ? `&${qs}` : "");
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), timeoutMs);
   try {
-    const r = await fetch(`${d.supabase_url.replace(/\/$/, "")}/rest/v1/sites?select=site_url,username,label,created_at&order=created_at.desc`, { headers: { apikey: d.supabase_service_key, Authorization: `Bearer ${d.supabase_service_key}` } });
-    if (!r.ok) return { ok: false, error: "Registre inaccessible.", clients: [] };
-    const rows = await r.json();
-    const seen = new Set(); const clients = [];
-    for (const row of rows) { if (!seen.has(row.site_url)) { seen.add(row.site_url); clients.push(row); } }
-    return { ok: true, clients };
+    const r = await fetch(url, {
+      method,
+      headers: { Authorization: `Basic ${basic}`, "X-Pegasus-Auth": basic, "Content-Type": "application/json" },
+      signal: ctl.signal,
+    });
+    const text = await r.text();
+    let data; try { data = JSON.parse(text); } catch { data = { raw: text.slice(0, 300) }; }
+    if (!r.ok) throw new Error(`Pegasus ${r.status} : ${data?.message || data?.code || text.slice(0, 150)}`);
+    return data;
+  } finally { clearTimeout(t); }
+}
+
+// Conservé pour compat (ancienne liste simple)
+ipcMain.handle("pegasus:clients", async () => {
+  try {
+    const sites = await pegSites();
+    return { ok: true, clients: Object.values(sites).map(({ pass, ...s }) => ({ site_url: s.base_url, username: s.username, label: s.label, created_at: s.created_at })) };
   } catch (e) { return { ok: false, error: e.message, clients: [] }; }
+});
+
+// ── Le parc : sites (sans secrets), santé, structure, SEO
+ipcMain.handle("pegasus:sites", async () => {
+  try {
+    const sites = await pegSites();
+    return { ok: true, sites: Object.values(sites).map(({ pass, ...s }) => s) };
+  } catch (e) { return { ok: false, error: e.message, sites: [] }; }
+});
+ipcMain.handle("pegasus:siteHealth", async (_e, key) => {
+  try { return { ok: true, health: await pegCall(key, "GET", "/health", 12000) }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
+ipcMain.handle("pegasus:siteInspect", async (_e, key) => {
+  try { return { ok: true, inspect: await pegCall(key, "GET", "/inspect") }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
+ipcMain.handle("pegasus:siteSeo", async (_e, key, limit) => {
+  try { return { ok: true, seo: await pegCall(key, "GET", `/seo-audit${limit ? `?limit=${Number(limit)}` : ""}`, 60000) }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
+
+// ── Bibliothèque Orphic (table references_library — « méthode stable / données vivantes »)
+const PEG_REF_FIELDS = ["kind", "titre", "url", "niveau", "technique", "intention", "registre", "business", "ingredients", "notes", "auteur"];
+const pegRefsMissing = (e) => e.status === 404 || /references_library|42P01|PGRST205/.test(String(e.body || e.message));
+ipcMain.handle("pegasus:refs", async (_e, f = {}) => {
+  try {
+    const p = new URLSearchParams();
+    p.set("select", "*"); p.set("order", "created_at.desc"); p.set("limit", String(f.limit || 60));
+    for (const k of ["kind", "niveau", "registre", "intention"]) if (f[k]) p.set(k, `eq.${f[k]}`);
+    if (f.business) p.set("business", `ilike.*${f.business}*`);
+    const statut = f.statut || "tous";
+    if (statut !== "tous") p.set("statut", `eq.${statut}`);
+    if (f.q) p.set("or", `(titre.ilike.*${f.q}*,ingredients.ilike.*${f.q}*,technique.ilike.*${f.q}*,notes.ilike.*${f.q}*,business.ilike.*${f.q}*)`);
+    return { ok: true, refs: await pegSupa(`/references_library?${p.toString()}`) };
+  } catch (e) { return { ok: false, error: e.message, missing_table: pegRefsMissing(e) }; }
+});
+ipcMain.handle("pegasus:refAdd", async (_e, row = {}) => {
+  try {
+    if (!row.titre || !String(row.titre).trim()) return { ok: false, error: "Le titre est obligatoire." };
+    const clean = { statut: row.statut === "valide" ? "valide" : "candidat" };
+    for (const k of PEG_REF_FIELDS) if (row[k] !== undefined && row[k] !== "") clean[k] = String(row[k]);
+    const r = await pegSupa("/references_library", { method: "POST", body: JSON.stringify(clean), headers: { Prefer: "return=representation" } });
+    return { ok: true, ref: r && r[0] };
+  } catch (e) { return { ok: false, error: e.message, missing_table: pegRefsMissing(e) }; }
+});
+ipcMain.handle("pegasus:refSet", async (_e, id, statut) => {
+  try {
+    if (!id) return { ok: false, error: "id manquant." };
+    const st = ["valide", "candidat", "rejete"].includes(statut) ? statut : "valide";
+    const r = await pegSupa(`/references_library?id=eq.${Number(id)}`, { method: "PATCH", body: JSON.stringify({ statut: st }), headers: { Prefer: "return=representation" } });
+    return { ok: true, ref: r && r[0] };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+ipcMain.handle("pegasus:refDelete", async (_e, id) => {
+  try {
+    if (!id) return { ok: false, error: "id manquant." };
+    await pegSupa(`/references_library?id=eq.${Number(id)}`, { method: "DELETE" });
+    return { ok: true };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+// SQL d'installation de la table (copié depuis le dépôt local si présent) + lien SQL Editor
+ipcMain.handle("pegasus:refsSetup", async () => {
+  const d = pegTeam();
+  let editor = null;
+  try { editor = `https://supabase.com/dashboard/project/${new URL(d.supabase_url).hostname.split(".")[0]}/sql/new`; } catch {}
+  let sql = null;
+  try { sql = readFileSync(join(homedir(), "Projet de développement", "Orphic-Dev", "pegasus", "supabase", "references-library.sql"), "utf8"); } catch {}
+  return { ok: true, editor, sql };
 });
 
 // ══════════ CHRONOS — upload moodboard / références ══════════

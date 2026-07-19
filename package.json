@@ -43,6 +43,7 @@
     }
   },
   "dependencies": {
+    "imapflow": "^1.4.7",
     "nodemailer": "^9.0.3"
   }
 }

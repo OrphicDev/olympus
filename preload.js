@@ -45,6 +45,8 @@ contextBridge.exposeInMainWorld("olympus", {
   irisConnect: (email, pass) => ipcRenderer.invoke("iris:connect", email, pass),
   irisDisconnect: () => ipcRenderer.invoke("iris:disconnect"),
   irisSend: (d) => ipcRenderer.invoke("iris:send", d),
+  irisLabels: () => ipcRenderer.invoke("iris:labels"),
+  irisCreateLabel: (name) => ipcRenderer.invoke("iris:createLabel", name),
   crmEmails: () => ipcRenderer.invoke("crm:emails"),
   crmContacts: () => ipcRenderer.invoke("crm:contacts"),
   // Contrôle par Claude Code (MCP)
@@ -52,6 +54,16 @@ contextBridge.exposeInMainWorld("olympus", {
   claudeInstall: () => ipcRenderer.invoke("claude:install"),
   // Pegasus — clients connectés
   pegasusClients: () => ipcRenderer.invoke("pegasus:clients"),
+  // Pegasus — le parc + la bibliothèque Orphic
+  pegasusSites: () => ipcRenderer.invoke("pegasus:sites"),
+  pegasusSiteHealth: (key) => ipcRenderer.invoke("pegasus:siteHealth", key),
+  pegasusSiteInspect: (key) => ipcRenderer.invoke("pegasus:siteInspect", key),
+  pegasusSiteSeo: (key, limit) => ipcRenderer.invoke("pegasus:siteSeo", key, limit),
+  pegasusRefs: (filters) => ipcRenderer.invoke("pegasus:refs", filters),
+  pegasusRefAdd: (row) => ipcRenderer.invoke("pegasus:refAdd", row),
+  pegasusRefSet: (id, statut) => ipcRenderer.invoke("pegasus:refSet", id, statut),
+  pegasusRefDelete: (id) => ipcRenderer.invoke("pegasus:refDelete", id),
+  pegasusRefsSetup: () => ipcRenderer.invoke("pegasus:refsSetup"),
   // Chronos — upload moodboard / références
   chronosUpload: (folder) => ipcRenderer.invoke("chronos:upload", folder),
   // Divers
