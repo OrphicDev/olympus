@@ -120,7 +120,8 @@ const pgFacetOf = (el) => ({ kind: el.dataset.kind || "", niveau: el.dataset.niv
 const pgFacetEq = (el) => (el.dataset.kind || "") === (pgFacet.kind || "") && (el.dataset.niveau || "") === (pgFacet.niveau || "") && (el.dataset.registre || "") === (pgFacet.registre || "") && (el.dataset.business || "") === (pgFacet.business || "");
 const pgHealth = {}, pgInspect = {}, pgSeo = {}, pgPerf = {};
 let pgSiteTab = "general"; // onglet du détail site : general | seo | perf | secu
-const pgFolds = Object.assign({ parc: true, biblio: true, reglages: false }, JSON.parse(localStorage.getItem("pg-folds") || "{}"));
+let pgCarousel = 0; // vue de la colonne en carrousel : 0 Parc · 1 Bibliothèque · 2 Réglages
+const PG_CVIEWS = ["parc", "biblio", "reglages"];
 
 // Remplissage fantôme maison : on dépasse le bas, le fader mange la dernière ligne.
 function pgFillGhosts(el) {
@@ -136,18 +137,17 @@ function pgFillGhosts(el) {
   }
 }
 
-function pgSideGhosts() { const sc = $("pgSideScroll"); if (sc) pgFillGhosts(sc); }
-function pgSaveFolds() { localStorage.setItem("pg-folds", JSON.stringify(pgFolds)); }
-function pgApplyFolds() {
-  for (const cat of ["parc", "biblio", "reglages"]) {
-    const open = !!pgFolds[cat];
-    const body = $("pgBody-" + cat);
-    if (body) body.style.display = open ? "" : "none";
-    const tw = document.querySelector(`.pg-cat[data-cat="${cat}"] .tw`);
-    if (tw) tw.textContent = open ? "▾" : "▸";
-  }
-  pgSideGhosts();
+function pgSideGhosts() { const sc = $("pgScrollParc"); if (sc) pgFillGhosts(sc); }
+
+// Carrousel de la colonne : fait glisser + synchronise la vue du stage
+function pgSetCarousel(i) {
+  pgCarousel = i;
+  $("pgCSlider").style.transform = `translateX(-${i * 100}%)`;
+  $("pgCTabs").querySelectorAll("span").forEach((s) => s.classList.toggle("active", +s.dataset.pv === i));
+  $("pgFoot").style.display = i === 0 ? "" : "none"; // les boutons site n'ont de sens que sur le Parc
+  pgSetView(PG_CVIEWS[i]);
 }
+$("pgCTabs").querySelectorAll("span").forEach((s) => { s.onclick = () => pgSetCarousel(+s.dataset.pv); });
 
 function pgSetView(view) {
   pgView = view;
@@ -156,27 +156,11 @@ function pgSetView(view) {
   $("pgViewReglages").classList.toggle("show", view === "reglages");
   $("pgViewNew").classList.toggle("show", view === "new");
   $("pgViewConnect").classList.toggle("show", view === "connect");
-  // Les vues flux (new/connect) ne correspondent à aucune catégorie de la colonne
-  document.querySelectorAll(".pg-cat").forEach((c) => c.classList.toggle("active", c.dataset.cat === view));
   if (view !== "reglages") document.querySelectorAll(".pg-regfold").forEach((x) => x.classList.remove("active"));
   if (view !== "biblio") document.querySelectorAll(".pg-bibfold").forEach((x) => x.classList.remove("active"));
   if (view === "parc") pgLoadSites();
   if (view === "biblio") pgLoadRefs();
 }
-// Catégories : le chevron plie/déplie, le clic sur le titre sélectionne (et déplie si besoin)
-document.querySelectorAll(".pg-cat").forEach((c) => {
-  const cat = c.dataset.cat;
-  c.querySelector(".tw").addEventListener("click", (e) => {
-    e.stopPropagation();
-    pgFolds[cat] = !pgFolds[cat];
-    pgSaveFolds();
-    pgApplyFolds();
-  });
-  c.addEventListener("click", () => {
-    if (!pgFolds[cat]) { pgFolds[cat] = true; pgSaveFolds(); pgApplyFolds(); }
-    pgSetView(cat);
-  });
-});
 // Facettes de la bibliothèque (Racine, Secteur, par niveau, par type…) + ancres des réglages
 document.querySelectorAll(".pg-bibfold").forEach((el) => {
   el.onclick = () => { pgFacet = pgFacetOf(el); pgSetView("biblio"); };
@@ -287,7 +271,6 @@ async function pgBibCounts() {
   document.querySelectorAll(".cnt[data-cntkind]").forEach((cnt) => {
     cnt.textContent = refs.filter((x) => x.kind === cnt.dataset.cntkind).length || "";
   });
-  pgSideGhosts();
 }
 
 async function pgSelect(key) {
@@ -561,8 +544,7 @@ $("pgRfSave").onclick = async () => {
 
 document.querySelector('.nav-item[data-app="pegasus"]').addEventListener("click", (e) => {
   if (e.currentTarget.classList.contains("locked")) return;
-  pgApplyFolds();
-  pgSetView(pgView);
+  pgSetCarousel(pgCarousel);
 });
 
 // ── Footer : nouveau site & connexion d'un site existant (vues plein écran)
