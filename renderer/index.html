@@ -1342,7 +1342,12 @@
             <div class="pg-flow">
               <button class="btn sec" data-pgback style="padding:6px 14px;font-size:12px;">← Retour au parc</button>
               <h1 class="pg-flowtitle">Nouveau site</h1>
-              <p class="pg-mnote">Démarre un projet de site. On cadre l'essentiel maintenant (secteur, niveau, direction) ; tu connecteras le WordPress quand il sera en ligne.</p>
+              <p class="pg-mnote">Démarre un projet de site. On cadre l'essentiel, et Pegasus crée le dossier de travail dans <kbd>~/Pegasus/</kbd>.</p>
+              <label class="pg-flabel">Type de projet</label>
+              <div class="toggle-row" id="pgNsType" style="margin:0 0 16px;">
+                <button class="toggle on" data-t="wordpress"><span class="dot"></span>WordPress (local)</button>
+                <button class="toggle" data-t="custom"><span class="dot"></span>Site sur-mesure (code)</button>
+              </div>
               <label class="pg-flabel">Nom du client / du site *</label>
               <input class="hm-search" id="pgNsNom" placeholder="ex : Villa Ephrussi" style="margin:0 0 14px;max-width:420px;">
               <label class="pg-flabel">URL (si déjà connue)</label>

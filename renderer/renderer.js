@@ -232,6 +232,7 @@ function pgSelectProject(pid) {
     </div>
     <div class="pg-alert" style="border:0;color:var(--dim);">Projet en cours — pas encore connecté à Pegasus.</div>
     <div class="pg-sub">Cadrage</div>
+    ${line("Type de projet", p.type === "wordpress" ? "WordPress (local)" : p.type === "custom" ? "Site sur-mesure (code)" : "")}
     ${line("Secteur", p.secteur)}
     ${line("Niveau visé", NIV[p.niveau] || p.niveau)}
     ${line("Type de design", p.registre)}
@@ -239,12 +240,15 @@ function pgSelectProject(pid) {
     ${line("URL", p.url)}
     ${line("Créé le", p.created ? new Date(p.created).toLocaleDateString("fr-FR") : "")}
     ${p.notes ? `<div class="pg-sub">Notes</div><div class="pg-alert" style="border:0;">${escapeHtml(p.notes)}</div>` : ""}
+    <div class="pg-sub">Dossier de travail</div>
+    <div id="pgProjFolder"><div class="rb-empty">Vérification…</div></div>
     <div class="pg-sub">Actions</div>
     <div style="display:flex;gap:10px;margin-top:4px;">
       <button class="cal-btn primary" id="pgProjConnect">Connecter ce site</button>
       <button class="btn sec" id="pgProjDelete">Supprimer le projet</button>
     </div>`;
   box.querySelectorAll(".pg-open").forEach((b) => { b.onclick = () => window.olympus.openExternal(b.dataset.url); });
+  pgRenderProjFolder(p);
   $("pgProjConnect").onclick = () => pgSetView("connect");
   $("pgProjDelete").onclick = () => {
     pgProjects = pgProjects.filter((x) => x.id !== pid);
@@ -253,6 +257,33 @@ function pgSelectProject(pid) {
     if (pgSites.length) pgSelect(pgSites[0].key); else { $("pgDetail").innerHTML = ""; pgFillGhosts($("pgDetail")); }
   };
   pgFillGhosts(box);
+}
+
+// Section « Dossier de travail » d'un projet (état + révéler / (re)créer)
+async function pgRenderProjFolder(p) {
+  const box = $("pgProjFolder");
+  if (!box) return;
+  const slug = p.slug || p.nom;
+  const st = await window.olympus.pegasusFolderExists(slug);
+  const kindTxt = p.type === "wordpress" ? "WordPress local (./wordpress/)" : "fichiers de développement";
+  if (st.exists) {
+    box.innerHTML = `<div class="pg-line"><span class="k">Emplacement</span><span class="v">~/Pegasus/${escapeHtml(String(st.path).split("/").pop())}/</span></div>
+      <div class="pg-line"><span class="k">Contenu</span><span class="v">${escapeHtml(kindTxt)}</span></div>
+      <div style="margin-top:10px;"><button class="btn sec" id="pgProjReveal">Révéler dans le Finder</button></div>`;
+    $("pgProjReveal").onclick = async () => { await window.olympus.pegasusRevealFolder(slug); };
+  } else {
+    box.innerHTML = `<div class="rb-empty">Dossier non créé.</div>
+      <div style="margin-top:8px;"><button class="cal-btn" id="pgProjScaffold">${p.type === "wordpress" ? "Télécharger WordPress en local" : "Créer les fichiers de développement"}</button><span class="msg" id="pgProjScaffMsg" style="margin-left:8px;"></span></div>`;
+    $("pgProjScaffold").onclick = async () => {
+      const m = $("pgProjScaffMsg"), b = $("pgProjScaffold");
+      b.disabled = true; m.className = "msg"; m.textContent = p.type === "wordpress" ? "Téléchargement de WordPress…" : "Création…";
+      const r = await window.olympus.pegasusScaffold(p);
+      b.disabled = false;
+      if (!r.ok) { m.className = "msg err"; m.textContent = r.error || "Échec."; return; }
+      p.slug = r.slug; p.folder = r.path; p.scaffolded = true; pgSaveProjects();
+      pgRenderProjFolder(p);
+    };
+  }
 }
 
 // Compteurs de chaque facette de la colonne (kind/niveau/registre), tous statuts
@@ -310,6 +341,7 @@ function pgRenderDetail() {
   box.querySelectorAll(".pg-tabs span").forEach((el) => { el.onclick = () => { pgSiteTab = el.dataset.tab; pgRenderDetail(); }; });
   const sb = box.querySelector("#pgSeoBtn"); if (sb) sb.onclick = () => pgRunSeo(s.key);
   const pb = box.querySelector("#pgPerfBtn"); if (pb) pb.onclick = () => pgRunPerf(s.key);
+  if (pgSiteTab === "general") pgRenderSiteFolder(s);
   pgFillGhosts(box);
 }
 
@@ -350,7 +382,33 @@ function pgTabGeneral(s) {
   } else if (!ins) {
     html += `<div class="pg-sub">Structure</div><div class="rb-empty">Inspection…</div>`;
   }
+  html += `<div class="pg-sub">Copie locale</div><div id="pgSiteFolder"><div class="rb-empty">Vérification…</div></div>`;
   return html;
+}
+
+// Copie locale d'un site connecté (~/Pegasus/<host>/)
+async function pgRenderSiteFolder(s) {
+  const box = $("pgSiteFolder"); if (!box) return;
+  const slug = s.host || s.key;
+  const st = await window.olympus.pegasusFolderExists(slug);
+  if (st.exists) {
+    box.innerHTML = `<div class="pg-line"><span class="k">Emplacement</span><span class="v">~/Pegasus/${escapeHtml(String(st.path).split("/").pop())}/</span></div>
+      <div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;"><button class="btn sec" id="pgSiteReveal">Révéler</button><button class="cal-btn" id="pgSiteCopy">Rafraîchir la copie</button><span class="msg" id="pgSiteCopyMsg"></span></div>`;
+  } else {
+    box.innerHTML = `<p class="pg-mnote" style="margin:0 0 8px;">Crée une copie locale du site (structure, contenus, page d'accueil) dans son dossier. Snapshot via Pegasus, sans FTP.</p>
+      <div style="display:flex;gap:10px;align-items:center;"><button class="cal-btn" id="pgSiteCopy">Créer la copie locale</button><span class="msg" id="pgSiteCopyMsg"></span></div>`;
+  }
+  const rev = box.querySelector("#pgSiteReveal");
+  if (rev) rev.onclick = () => window.olympus.pegasusRevealFolder(slug);
+  box.querySelector("#pgSiteCopy").onclick = async () => {
+    const m = $("pgSiteCopyMsg"), b = box.querySelector("#pgSiteCopy");
+    b.disabled = true; m.className = "msg"; m.textContent = "Copie en cours…";
+    const r = await window.olympus.pegasusCopySite(s.key);
+    b.disabled = false;
+    if (!r.ok) { m.className = "msg err"; m.textContent = r.error || "Échec."; return; }
+    m.className = "msg ok"; m.textContent = "Copie créée.";
+    setTimeout(() => pgRenderSiteFolder(s), 600);
+  };
 }
 
 function pgTabSeo(s) {
@@ -565,14 +623,21 @@ $("pgRefreshParc").onclick = async () => {
   pgSetView("parc");
 };
 
-// Nouveau site : enregistre un projet (local) et l'affiche dans le Parc
-$("pgNsSave").onclick = () => {
+// Type de projet (WordPress local / sur-mesure)
+let pgNsType = "wordpress";
+$("pgNsType").querySelectorAll(".toggle").forEach((b) => {
+  b.onclick = () => { pgNsType = b.dataset.t; $("pgNsType").querySelectorAll(".toggle").forEach((x) => x.classList.toggle("on", x === b)); };
+});
+
+// Nouveau site : crée le projet + son dossier de travail (~/Pegasus/<slug>/)
+$("pgNsSave").onclick = async () => {
   const nom = $("pgNsNom").value.trim();
   const msg = $("pgNsMsg");
   if (!nom) { msg.className = "msg err"; msg.textContent = "Le nom du site est obligatoire."; return; }
   const proj = {
     id: "p" + Date.now().toString(36),
     nom,
+    type: pgNsType,
     url: $("pgNsUrl").value.trim(),
     secteur: $("pgNsSecteur").value,
     niveau: $("pgNsNiveau").value,
@@ -581,10 +646,18 @@ $("pgNsSave").onclick = () => {
     notes: $("pgNsNotes").value.trim(),
     created: Date.now(),
   };
+  const btn = $("pgNsSave"); btn.disabled = true;
+  msg.className = "msg"; msg.textContent = pgNsType === "wordpress" ? "Création du dossier + téléchargement de WordPress…" : "Création des fichiers de développement…";
+  const r = await window.olympus.pegasusScaffold(proj);
+  btn.disabled = false;
+  if (r.ok) { proj.slug = r.slug; proj.folder = r.path; proj.scaffolded = true; }
+  else { msg.className = "msg err"; msg.textContent = "Projet créé, mais dossier non généré : " + (r.error || "") + " — tu pourras réessayer depuis la fiche."; }
   pgProjects.unshift(proj);
   pgSaveProjects();
   ["pgNsNom", "pgNsUrl", "pgNsNotes"].forEach((id) => { $(id).value = ""; });
   ["pgNsSecteur", "pgNsNiveau", "pgNsRegistre", "pgNsIntention"].forEach((id) => { $(id).value = ""; });
+  pgNsType = "wordpress"; $("pgNsType").querySelectorAll(".toggle").forEach((x) => x.classList.toggle("on", x.dataset.t === "wordpress"));
+  msg.textContent = "";
   pgSetView("parc");
   pgSelectProject(proj.id);
 };

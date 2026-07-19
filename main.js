@@ -1,6 +1,6 @@
 "use strict";
 const { app, BrowserWindow, ipcMain, shell, dialog } = require("electron");
-const { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync, readdirSync } = require("node:fs");
+const { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync, readdirSync, rmSync } = require("node:fs");
 const { join } = require("node:path");
 const { homedir, tmpdir } = require("node:os");
 const { execFile } = require("node:child_process");
@@ -106,7 +106,100 @@ ipcMain.handle("pegasus:install", async (_e, code) => {
   } catch (e) {
     return { ok: false, error: "Écriture impossible : " + e.message };
   }
+  pegEnsureWorkspace(); // crée ~/Pegasus/ à l'installation
   return { ok: true };
+});
+
+// ══════════ PEGASUS — espace de travail sur disque (~/Pegasus, un dossier par site) ══════════
+const PEG_WORKSPACE = join(homedir(), "Pegasus");
+function pegEnsureWorkspace() {
+  try {
+    mkdirSync(PEG_WORKSPACE, { recursive: true });
+    // Un petit repère pour l'utilisateur, écrit une seule fois
+    const readme = join(PEG_WORKSPACE, "LISEZ-MOI.txt");
+    if (!existsSync(readme)) writeFileSync(readme, "Espace de travail Pegasus — Orphic Agency.\nChaque site/projet a son propre dossier ici.\n");
+    return PEG_WORKSPACE;
+  } catch { return null; }
+}
+function pegSlug(s) {
+  return String(s || "site").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "site";
+}
+function pegProjectDir(slug) {
+  pegEnsureWorkspace();
+  const dir = join(PEG_WORKSPACE, pegSlug(slug));
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+ipcMain.handle("pegasus:workspace", () => {
+  if (!existsSync(KEY_FILE)) return { ok: false, error: "Pegasus non installé." };
+  return { ok: true, path: pegEnsureWorkspace() };
+});
+ipcMain.handle("pegasus:revealFolder", (_e, slug) => {
+  const dir = join(PEG_WORKSPACE, pegSlug(slug));
+  if (!existsSync(dir)) return { ok: false, error: "Dossier introuvable." };
+  shell.showItemInFolder(dir);
+  return { ok: true, path: dir };
+});
+ipcMain.handle("pegasus:folderExists", (_e, slug) => {
+  const dir = join(PEG_WORKSPACE, pegSlug(slug));
+  return { exists: existsSync(dir), path: dir };
+});
+
+// Créer les fichiers d'un nouveau projet : WordPress local OU site sur-mesure
+ipcMain.handle("pegasus:scaffold", async (_e, project = {}) => {
+  try {
+    const slug = pegSlug(project.nom || project.slug);
+    const dir = pegProjectDir(slug);
+    writeFileSync(join(dir, "project.json"), JSON.stringify({ ...project, slug, created: project.created || Date.now() }, null, 2));
+
+    if (project.type === "wordpress") {
+      const zipPath = join(dir, "_wordpress.zip");
+      const res = await fetch("https://wordpress.org/latest.zip");
+      if (!res.ok) throw new Error(`Téléchargement WordPress ${res.status}`);
+      writeFileSync(zipPath, Buffer.from(await res.arrayBuffer()));
+      await new Promise((resolve, reject) =>
+        execFile("/usr/bin/ditto", ["-x", "-k", zipPath, dir], (err, _o, stderr) => err ? reject(new Error(String(stderr || err.message))) : resolve()));
+      try { rmSync(zipPath); } catch {}
+      writeFileSync(join(dir, "README.md"),
+        `# ${project.nom || slug}\n\nWordPress local téléchargé dans **./wordpress/**.\n\nPour le lancer en local :\n\n\`\`\`\nnpx @wp-now/wp-now start --path ./wordpress\n\`\`\`\n`);
+      return { ok: true, path: dir, slug, kind: "wordpress" };
+    }
+
+    // Site sur-mesure : scaffolding classique
+    writeFileSync(join(dir, "index.html"),
+      `<!doctype html>\n<html lang="fr">\n<head>\n  <meta charset="utf-8">\n  <meta name="viewport" content="width=device-width, initial-scale=1">\n  <title>${project.nom || "Nouveau site"}</title>\n  <link rel="stylesheet" href="styles.css">\n</head>\n<body>\n  <main>\n    <h1>${project.nom || "Nouveau site"}</h1>\n  </main>\n  <script src="main.js"></script>\n</body>\n</html>\n`);
+    writeFileSync(join(dir, "styles.css"),
+      `:root { color-scheme: dark; }\n* { margin: 0; box-sizing: border-box; }\nbody { min-height: 100vh; display: grid; place-items: center; background: #0a0a0c; color: #f2f2f4; font-family: system-ui, sans-serif; }\nh1 { font-weight: 600; letter-spacing: -.02em; }\n`);
+    writeFileSync(join(dir, "main.js"), `// ${project.nom || "Site"} — Orphic\n`);
+    writeFileSync(join(dir, "README.md"),
+      `# ${project.nom || slug}\n\nSite sur-mesure. Ouvre \`index.html\`, ou branche ton bundler (Vite, Next…).\nStack Orphic conseillée selon le niveau : GSAP + Lenis (N1), + shaders (N2), Blender→R3F (N3-N4).\n`);
+    return { ok: true, path: dir, slug, kind: "custom" };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
+// Créer une copie locale d'un site connecté (snapshot via Pegasus, sans FTP)
+ipcMain.handle("pegasus:copySite", async (_e, key) => {
+  try {
+    const sites = await pegSites();
+    const s = sites[key];
+    if (!s) throw new Error("Site inconnu.");
+    const slug = pegSlug(s.host || key);
+    const dir = pegProjectDir(slug);
+    let health = null, inspect = null, content = null;
+    try { health = await pegCall(key, "GET", "/health", 12000); } catch {}
+    try { inspect = await pegCall(key, "GET", "/inspect"); } catch {}
+    try { content = await pegCall(key, "GET", "/content"); } catch {}
+    writeFileSync(join(dir, "site.json"), JSON.stringify({ label: s.label, url: s.base_url, username: s.username, health, inspect, copied: Date.now() }, null, 2));
+    if (content) writeFileSync(join(dir, "content.json"), JSON.stringify(content, null, 2));
+    try {
+      const res = await fetch(s.base_url, { headers: { "User-Agent": "Olympus-Pegasus/1.0" } });
+      if (res.ok) writeFileSync(join(dir, "home.html"), await res.text());
+    } catch {}
+    writeFileSync(join(dir, "README.md"),
+      `# ${s.label} — copie locale\n\nSnapshot pris via Pegasus (**sans FTP**) :\n- \`site.json\` — structure (thème, extensions, permaliens…)\n- \`content.json\` — contenus (pages, articles)\n- \`home.html\` — page d'accueil rendue\n\n⚠️ Ce n'est pas un miroir complet du serveur (Pegasus n'a pas d'accès fichiers). Pour un vrai clone, il faudrait un export hébergeur.\n`);
+    return { ok: true, path: dir, slug };
+  } catch (e) { return { ok: false, error: e.message }; }
 });
 
 // Exécute une commande et rejette en cas d'erreur (pour les étapes d'install Zevs).
@@ -881,6 +974,9 @@ ipcMain.handle("chronos:upload", async (_e, folder) => {
   return { ok: true, files: out };
 });
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  if (existsSync(KEY_FILE)) pegEnsureWorkspace(); // ~/Pegasus/ dès que Pegasus est installé
+  createWindow();
+});
 app.on("window-all-closed", () => app.quit());
 app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
