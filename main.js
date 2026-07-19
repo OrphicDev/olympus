@@ -764,6 +764,36 @@ ipcMain.handle("pegasus:siteSeo", async (_e, key, limit) => {
   try { return { ok: true, seo: await pegCall(key, "GET", `/seo-audit${limit ? `?limit=${Number(limit)}` : ""}`, 60000) }; }
   catch (e) { return { ok: false, error: e.message }; }
 });
+// Rapport de performance via PageSpeed Insights (budgets Orphic : LCP<2,5s, CLS<0,1)
+ipcMain.handle("pegasus:sitePerf", async (_e, key, strategy) => {
+  try {
+    const sites = await pegSites();
+    const s = sites[key];
+    if (!s) throw new Error("Site inconnu.");
+    const api = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(s.base_url)}&strategy=${strategy === "desktop" ? "desktop" : "mobile"}&category=performance`;
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 90000);
+    let data;
+    try {
+      const r = await fetch(api, { signal: ctl.signal });
+      if (!r.ok) throw new Error(`PageSpeed ${r.status}`);
+      data = await r.json();
+    } finally { clearTimeout(t); }
+    const lh = data.lighthouseResult || {};
+    const au = lh.audits || {};
+    const dv = (id) => au[id]?.displayValue || null;
+    const nv = (id) => (typeof au[id]?.numericValue === "number" ? au[id].numericValue : null);
+    return { ok: true, perf: {
+      strategy: strategy === "desktop" ? "desktop" : "mobile",
+      score: Math.round((lh.categories?.performance?.score ?? 0) * 100),
+      lcp: dv("largest-contentful-paint"), lcp_ms: nv("largest-contentful-paint"),
+      cls: dv("cumulative-layout-shift"), cls_val: nv("cumulative-layout-shift"),
+      fcp: dv("first-contentful-paint"),
+      tbt: dv("total-blocking-time"),
+      si: dv("speed-index"),
+    } };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
 
 // ── Bibliothèque Orphic (table references_library — « méthode stable / données vivantes »)
 const PEG_REF_FIELDS = ["kind", "titre", "url", "niveau", "technique", "intention", "registre", "business", "ingredients", "notes", "auteur"];

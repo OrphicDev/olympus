@@ -118,7 +118,8 @@ const pgSaveProjects = () => localStorage.setItem("pg-projets", JSON.stringify(p
 let pgFacet = { label: "Toutes les références" };
 const pgFacetOf = (el) => ({ kind: el.dataset.kind || "", niveau: el.dataset.niveau || "", registre: el.dataset.registre || "", business: el.dataset.business || "", label: el.dataset.label || el.querySelector(".lname").textContent });
 const pgFacetEq = (el) => (el.dataset.kind || "") === (pgFacet.kind || "") && (el.dataset.niveau || "") === (pgFacet.niveau || "") && (el.dataset.registre || "") === (pgFacet.registre || "") && (el.dataset.business || "") === (pgFacet.business || "");
-const pgHealth = {}, pgInspect = {}, pgSeo = {};
+const pgHealth = {}, pgInspect = {}, pgSeo = {}, pgPerf = {};
+let pgSiteTab = "general"; // onglet du détail site : general | seo | perf | secu
 const pgFolds = Object.assign({ parc: true, biblio: true, reglages: false }, JSON.parse(localStorage.getItem("pg-folds") || "{}"));
 
 // Remplissage fantôme maison : on dépasse le bas, le fader mange la dernière ligne.
@@ -153,6 +154,9 @@ function pgSetView(view) {
   $("pgViewParc").classList.toggle("show", view === "parc");
   $("pgViewBiblio").classList.toggle("show", view === "biblio");
   $("pgViewReglages").classList.toggle("show", view === "reglages");
+  $("pgViewNew").classList.toggle("show", view === "new");
+  $("pgViewConnect").classList.toggle("show", view === "connect");
+  // Les vues flux (new/connect) ne correspondent à aucune catégorie de la colonne
   document.querySelectorAll(".pg-cat").forEach((c) => c.classList.toggle("active", c.dataset.cat === view));
   if (view !== "reglages") document.querySelectorAll(".pg-regfold").forEach((x) => x.classList.remove("active"));
   if (view !== "biblio") document.querySelectorAll(".pg-bibfold").forEach((x) => x.classList.remove("active"));
@@ -257,7 +261,7 @@ function pgSelectProject(pid) {
       <button class="btn sec" id="pgProjDelete">Supprimer le projet</button>
     </div>`;
   box.querySelectorAll(".pg-open").forEach((b) => { b.onclick = () => window.olympus.openExternal(b.dataset.url); });
-  $("pgProjConnect").onclick = () => pgOpenModal("pgConnectModal");
+  $("pgProjConnect").onclick = () => pgSetView("connect");
   $("pgProjDelete").onclick = () => {
     pgProjects = pgProjects.filter((x) => x.id !== pid);
     pgSaveProjects(); pgSelProj = null;
@@ -287,7 +291,7 @@ async function pgBibCounts() {
 }
 
 async function pgSelect(key) {
-  pgSel = key; pgSelProj = null;
+  pgSel = key; pgSelProj = null; pgSiteTab = "general";
   pgRenderSide();
   pgRenderDetail();
   if (!pgInspect[key]) {
@@ -297,29 +301,55 @@ async function pgSelect(key) {
   }
 }
 
+const PG_TABS = [
+  { id: "general", label: "Général" },
+  { id: "seo", label: "SEO" },
+  { id: "perf", label: "Performance" },
+  { id: "secu", label: "Sécurité" },
+];
+
 function pgRenderDetail() {
   const box = $("pgDetail");
   const s = pgSites.find((x) => x.key === pgSel);
   if (!s) { box.innerHTML = ""; pgFillGhosts(box); return; }
-  const h = pgHealth[s.key], ins = pgInspect[s.key], seo = pgSeo[s.key];
-  const since = s.created_at ? new Date(s.created_at).toLocaleDateString("fr-FR") : "";
+  const h = pgHealth[s.key];
   let html = `<div class="pg-dhead">
     <span class="pg-dot ${!h ? "wait" : h.ok ? "ok" : "err"}"></span>
     <h2>${escapeHtml(s.label)}</h2>
     <button class="btn sec pg-open" data-url="${escapeHtml(s.base_url)}" style="padding:6px 14px;font-size:12px;">Ouvrir ↗</button>
     <button class="btn sec pg-open" data-url="${escapeHtml(s.base_url)}/wp-admin" style="padding:6px 14px;font-size:12px;">wp-admin</button>
   </div>`;
+  html += `<div class="pg-tabs">${PG_TABS.map((t) => `<span data-tab="${t.id}" class="${pgSiteTab === t.id ? "active" : ""}">${t.label}</span>`).join("")}</div>`;
+  html += `<div class="pg-tabcontent">${pgTabHTML(pgSiteTab, s)}</div>`;
 
-  if (h && !h.ok) html += `<div class="rb-empty">Site injoignable : ${escapeHtml(h.error || "")}</div>`;
+  box.innerHTML = html;
+  box.querySelectorAll(".pg-open").forEach((b) => { b.onclick = () => window.olympus.openExternal(b.dataset.url); });
+  box.querySelectorAll(".pg-tabs span").forEach((el) => { el.onclick = () => { pgSiteTab = el.dataset.tab; pgRenderDetail(); }; });
+  const sb = box.querySelector("#pgSeoBtn"); if (sb) sb.onclick = () => pgRunSeo(s.key);
+  const pb = box.querySelector("#pgPerfBtn"); if (pb) pb.onclick = () => pgRunPerf(s.key);
+  pgFillGhosts(box);
+}
 
+function pgTabHTML(tab, s) {
+  if (tab === "general") return pgTabGeneral(s);
+  if (tab === "seo") return pgTabSeo(s);
+  if (tab === "perf") return pgTabPerf(s);
+  if (tab === "secu") return pgTabSecu(s);
+  return "";
+}
+
+function pgTabGeneral(s) {
+  const h = pgHealth[s.key], ins = pgInspect[s.key];
+  const since = s.created_at ? new Date(s.created_at).toLocaleDateString("fr-FR") : "";
   const hh = h && h.ok ? h.health : null;
+  let html = `<p class="pg-mnote">Fiche du site telle que Pegasus la voit à distance (aucun FTP). Les onglets ci-dessus donnent un rapport par thème : <b>SEO</b>, <b>Performance</b>, <b>Sécurité</b>.</p>`;
+  if (h && !h.ok) html += `<div class="rb-empty">Site injoignable : ${escapeHtml(h.error || "")}</div>`;
   html += `<div class="pg-kpis">
     <div class="pg-kpi"><div class="n">${hh ? escapeHtml(hh.wp) : "—"}</div><div class="l">WordPress</div></div>
     <div class="pg-kpi"><div class="n">${hh ? escapeHtml(String(hh.php).split("-")[0]) : "—"}</div><div class="l">PHP</div></div>
     <div class="pg-kpi"><div class="n">${hh ? escapeHtml(hh.pegasus) : "—"}</div><div class="l">Pegasus</div></div>
     <div class="pg-kpi"><div class="n">${ins && ins.ok ? (ins.inspect.counts?.page ?? "—") : "—"}</div><div class="l">Pages</div></div>
   </div>`;
-
   if (ins && ins.ok) {
     const d = ins.inspect;
     const actifs = (d.plugins || []).filter((p) => p.active);
@@ -337,33 +367,74 @@ function pgRenderDetail() {
   } else if (!ins) {
     html += `<div class="pg-sub">Structure</div><div class="rb-empty">Inspection…</div>`;
   }
+  return html;
+}
 
-  html += `<div class="pg-sub">SEO</div>`;
-  if (!seo) {
-    html += `<button class="cal-btn" id="pgSeoBtn" style="margin-top:4px;">Lancer l'audit SEO</button>`;
-  } else if (seo.loading) {
-    html += `<div class="rb-empty">Audit en cours… (lecture du HTML rendu de chaque page)</div>`;
-  } else if (!seo.ok) {
-    html += `<div class="rb-empty">Audit impossible : ${escapeHtml(seo.error || "")}</div><button class="cal-btn" id="pgSeoBtn" style="margin-top:8px;">Réessayer</button>`;
-  } else {
-    const a = seo.seo;
-    html += `<div class="pg-line"><span class="k">Plugin SEO</span><span class="v">${escapeHtml(a.plugin_seo)}</span></div>`;
-    html += `<div class="pg-line"><span class="k">Sitemap</span><span class="v">${escapeHtml(a.sitemap)}</span></div>`;
-    html += `<div class="pg-line"><span class="k">robots.txt</span><span class="v">${escapeHtml(a.robots_txt)}</span></div>`;
-    const res = Object.entries(a.resume_problemes || {}).filter(([, n]) => n > 0);
-    if (!res.length) html += `<div class="pg-alert"><span>✓</span> Aucun problème détecté sur ${a.pages_auditees} page(s).</div>`;
-    else res.forEach(([k, n]) => { html += `<div class="pg-alert"><span>·</span> ${escapeHtml(k.replace(/_/g, " "))} : <b style="color:var(--txt)">${n}</b></div>`; });
-    (a.detail || []).filter((p) => p.problemes && p.problemes[0] !== "aucun").slice(0, 8).forEach((p) => {
-      html += `<div class="pg-alert"><span style="color:var(--dim)">${escapeHtml(p.page)}</span> ${escapeHtml((p.problemes || []).join(" · "))}</div>`;
-    });
-    html += `<button class="cal-btn" id="pgSeoBtn" style="margin-top:12px;">Relancer l'audit</button>`;
+function pgTabSeo(s) {
+  const seo = pgSeo[s.key];
+  if (!seo) return `<p class="pg-mnote">Audit SEO : lecture du HTML rendu de chaque page (title, meta description, H1, canonical, Open Graph, alt, langue) + détection du plugin SEO, sitemap et robots.txt.</p><button class="cal-btn" id="pgSeoBtn" style="margin-top:4px;">Lancer l'audit SEO</button>`;
+  if (seo.loading) return `<div class="rb-empty">Audit en cours… (lecture du HTML rendu de chaque page)</div>`;
+  if (!seo.ok) return `<div class="rb-empty">Audit impossible : ${escapeHtml(seo.error || "")}</div><button class="cal-btn" id="pgSeoBtn" style="margin-top:8px;">Réessayer</button>`;
+  const a = seo.seo;
+  let html = `<div class="pg-line"><span class="k">Plugin SEO</span><span class="v">${escapeHtml(a.plugin_seo)}</span></div>`;
+  html += `<div class="pg-line"><span class="k">Sitemap</span><span class="v">${escapeHtml(a.sitemap)}</span></div>`;
+  html += `<div class="pg-line"><span class="k">robots.txt</span><span class="v">${escapeHtml(a.robots_txt)}</span></div>`;
+  const res = Object.entries(a.resume_problemes || {}).filter(([, n]) => n > 0);
+  html += `<div class="pg-sub">Problèmes · ${a.pages_auditees} page(s)</div>`;
+  if (!res.length) html += `<div class="pg-alert"><span>✓</span> Aucun problème détecté.</div>`;
+  else res.forEach(([k, n]) => { html += `<div class="pg-alert"><span>·</span> ${escapeHtml(k.replace(/_/g, " "))} : <b style="color:var(--txt)">${n}</b></div>`; });
+  (a.detail || []).filter((p) => p.problemes && p.problemes[0] !== "aucun").slice(0, 10).forEach((p) => {
+    html += `<div class="pg-alert"><span style="color:var(--dim)">${escapeHtml(p.page)}</span> ${escapeHtml((p.problemes || []).join(" · "))}</div>`;
+  });
+  html += `<button class="cal-btn" id="pgSeoBtn" style="margin-top:12px;">Relancer l'audit</button>`;
+  return html;
+}
+
+function pgTabPerf(s) {
+  const perf = pgPerf[s.key];
+  if (!perf) return `<p class="pg-mnote">Rapport de performance via Google PageSpeed (budgets Orphic : LCP &lt; 2,5 s, CLS &lt; 0,1). L'analyse prend 20 à 60 s.</p><button class="cal-btn" id="pgPerfBtn" style="margin-top:4px;">Lancer l'analyse (mobile)</button>`;
+  if (perf.loading) return `<div class="rb-empty">Analyse PageSpeed en cours… (20-60 s)</div>`;
+  if (!perf.ok) return `<div class="rb-empty">Analyse impossible : ${escapeHtml(perf.error || "")}</div><button class="cal-btn" id="pgPerfBtn" style="margin-top:8px;">Réessayer</button>`;
+  const p = perf.perf;
+  const lcpOk = p.lcp_ms != null ? p.lcp_ms <= 2500 : null;
+  const clsOk = p.cls_val != null ? p.cls_val <= 0.1 : null;
+  const mark = (ok) => ok == null ? "" : ok ? ` <b style="color:var(--ok)">✓</b>` : ` <b style="color:var(--err)">✕ hors budget</b>`;
+  let html = `<div class="pg-kpis">
+    <div class="pg-kpi"><div class="n" style="color:${p.score >= 90 ? "var(--ok)" : p.score >= 50 ? "var(--warn)" : "var(--err)"}">${p.score}</div><div class="l">Score perf · ${escapeHtml(p.strategy)}</div></div>
+  </div>`;
+  html += `<div class="pg-sub">Métriques (terrain / labo PageSpeed)</div>`;
+  html += `<div class="pg-line"><span class="k">LCP</span><span class="v">${escapeHtml(p.lcp || "—")}${mark(lcpOk)}</span></div>`;
+  html += `<div class="pg-line"><span class="k">CLS</span><span class="v">${escapeHtml(p.cls || "—")}${mark(clsOk)}</span></div>`;
+  html += `<div class="pg-line"><span class="k">First Contentful Paint</span><span class="v">${escapeHtml(p.fcp || "—")}</span></div>`;
+  html += `<div class="pg-line"><span class="k">Total Blocking Time</span><span class="v">${escapeHtml(p.tbt || "—")}</span></div>`;
+  html += `<div class="pg-line"><span class="k">Speed Index</span><span class="v">${escapeHtml(p.si || "—")}</span></div>`;
+  html += `<button class="cal-btn" id="pgPerfBtn" style="margin-top:12px;">Relancer l'analyse</button>`;
+  return html;
+}
+
+function pgTabSecu(s) {
+  const h = pgHealth[s.key], ins = pgInspect[s.key];
+  const hh = h && h.ok ? h.health : null;
+  const https = /^https:\/\//i.test(s.base_url);
+  const phpMajor = hh ? parseFloat(String(hh.php)) : null;
+  let html = `<p class="pg-mnote">Points de vigilance dérivés de ce que Pegasus lit à distance. Un vrai suivi CVE/uptime viendra avec l'agent de monitoring.</p>`;
+  html += `<div class="pg-sub">Vigilance</div>`;
+  html += `<div class="pg-alert"><span style="color:${https ? "var(--ok)" : "var(--err)"}">${https ? "✓" : "✕"}</span> Connexion HTTPS ${https ? "active" : "absente — requise par les mots de passe d'application"}</div>`;
+  if (hh) {
+    html += `<div class="pg-alert"><span style="color:var(--dim)">·</span> WordPress <b style="color:var(--txt)">${escapeHtml(hh.wp)}</b> — garder à jour</div>`;
+    const phpFlag = phpMajor != null && phpMajor < 8.1;
+    html += `<div class="pg-alert"><span style="color:${phpFlag ? "var(--warn)" : "var(--ok)"}">${phpFlag ? "!" : "✓"}</span> PHP <b style="color:var(--txt)">${escapeHtml(String(hh.php).split("-")[0])}</b>${phpFlag ? " — version un peu ancienne, envisager une mise à niveau" : ""}</div>`;
   }
-
-  box.innerHTML = html;
-  box.querySelectorAll(".pg-open").forEach((b) => { b.onclick = () => window.olympus.openExternal(b.dataset.url); });
-  const sb = box.querySelector("#pgSeoBtn");
-  if (sb) sb.onclick = () => pgRunSeo(s.key);
-  pgFillGhosts(box);
+  if (ins && ins.ok) {
+    const d = ins.inspect;
+    const total = (d.plugins || []).length, actifs = (d.plugins || []).filter((p) => p.active).length;
+    html += `<div class="pg-alert"><span style="color:var(--dim)">·</span> ${total} extension(s) installée(s), ${actifs} active(s) — surface à tenir à jour</div>`;
+    html += `<div class="pg-sub">Versions des extensions actives</div>`;
+    html += (d.plugins || []).filter((p) => p.active).map((p) => `<div class="pg-line"><span class="k">${escapeHtml(p.name)}</span><span class="v">${escapeHtml(p.version || "?")}</span></div>`).join("");
+  } else if (!ins) {
+    html += `<div class="rb-empty">Inspection…</div>`;
+  }
+  return html;
 }
 
 async function pgRunSeo(key) {
@@ -371,6 +442,13 @@ async function pgRunSeo(key) {
   pgRenderDetail();
   const r = await window.olympus.pegasusSiteSeo(key, 10);
   pgSeo[key] = r;
+  if (pgSel === key) pgRenderDetail();
+}
+async function pgRunPerf(key) {
+  pgPerf[key] = { loading: true };
+  pgRenderDetail();
+  const r = await window.olympus.pegasusSitePerf(key, "mobile");
+  pgPerf[key] = r;
   if (pgSel === key) pgRenderDetail();
 }
 
@@ -487,15 +565,10 @@ document.querySelector('.nav-item[data-app="pegasus"]').addEventListener("click"
   pgSetView(pgView);
 });
 
-// ── Footer : nouveau site & connexion d'un site existant
-function pgOpenModal(id) { $(id).classList.add("show"); }
-function pgCloseModal(id) { $(id).classList.remove("show"); }
-document.querySelectorAll("#pgConnectModal, #pgNewModal").forEach((m) => {
-  m.querySelectorAll("[data-pgclose]").forEach((b) => { b.onclick = () => m.classList.remove("show"); });
-  m.addEventListener("click", (e) => { if (e.target === m) m.classList.remove("show"); });
-});
-$("pgConnectSite").onclick = () => pgOpenModal("pgConnectModal");
-$("pgNewSite").onclick = () => { $("pgNsMsg").textContent = ""; pgOpenModal("pgNewModal"); };
+// ── Footer : nouveau site & connexion d'un site existant (vues plein écran)
+document.querySelectorAll("[data-pgback]").forEach((b) => { b.onclick = () => pgSetView("parc"); });
+$("pgConnectSite").onclick = () => pgSetView("connect");
+$("pgNewSite").onclick = () => { $("pgNsMsg").textContent = ""; pgSetView("new"); };
 
 // Connexion : révéler le plugin WordPress + rafraîchir le parc
 $("pgRevealPlugin").onclick = async () => {
@@ -505,10 +578,9 @@ $("pgRevealPlugin").onclick = async () => {
   else { m.className = "msg err"; m.textContent = r.error || "Introuvable."; }
 };
 $("pgRefreshParc").onclick = async () => {
-  pgHealth && Object.keys(pgHealth).forEach((k) => delete pgHealth[k]);
+  Object.keys(pgHealth).forEach((k) => delete pgHealth[k]);
   Object.keys(pgInspect).forEach((k) => delete pgInspect[k]);
-  await pgLoadSites();
-  pgCloseModal("pgConnectModal");
+  pgSetView("parc");
 };
 
 // Nouveau site : enregistre un projet (local) et l'affiche dans le Parc
@@ -531,8 +603,7 @@ $("pgNsSave").onclick = () => {
   pgSaveProjects();
   ["pgNsNom", "pgNsUrl", "pgNsNotes"].forEach((id) => { $(id).value = ""; });
   ["pgNsSecteur", "pgNsNiveau", "pgNsRegistre", "pgNsIntention"].forEach((id) => { $(id).value = ""; });
-  pgCloseModal("pgNewModal");
-  if (pgView !== "parc") pgSetView("parc"); else pgRenderSide();
+  pgSetView("parc");
   pgSelectProject(proj.id);
 };
 

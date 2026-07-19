@@ -59,6 +59,7 @@ contextBridge.exposeInMainWorld("olympus", {
   pegasusSiteHealth: (key) => ipcRenderer.invoke("pegasus:siteHealth", key),
   pegasusSiteInspect: (key) => ipcRenderer.invoke("pegasus:siteInspect", key),
   pegasusSiteSeo: (key, limit) => ipcRenderer.invoke("pegasus:siteSeo", key, limit),
+  pegasusSitePerf: (key, strategy) => ipcRenderer.invoke("pegasus:sitePerf", key, strategy),
   pegasusRefs: (filters) => ipcRenderer.invoke("pegasus:refs", filters),
   pegasusRefAdd: (row) => ipcRenderer.invoke("pegasus:refAdd", row),
   pegasusRefSet: (id, statut) => ipcRenderer.invoke("pegasus:refSet", id, statut),
