@@ -116,8 +116,8 @@ let pgProjects = JSON.parse(localStorage.getItem("pg-projets") || "[]");
 const pgSaveProjects = () => localStorage.setItem("pg-projets", JSON.stringify(pgProjects));
 // Facette de bibliothèque active : n'importe quelle combinaison kind / niveau / registre
 let pgFacet = { label: "Toutes les références" };
-const pgFacetOf = (el) => ({ kind: el.dataset.kind || "", niveau: el.dataset.niveau || "", registre: el.dataset.registre || "", label: el.dataset.label || el.querySelector(".lname").textContent });
-const pgFacetEq = (el) => (el.dataset.kind || "") === (pgFacet.kind || "") && (el.dataset.niveau || "") === (pgFacet.niveau || "") && (el.dataset.registre || "") === (pgFacet.registre || "");
+const pgFacetOf = (el) => ({ kind: el.dataset.kind || "", niveau: el.dataset.niveau || "", registre: el.dataset.registre || "", business: el.dataset.business || "", label: el.dataset.label || el.querySelector(".lname").textContent });
+const pgFacetEq = (el) => (el.dataset.kind || "") === (pgFacet.kind || "") && (el.dataset.niveau || "") === (pgFacet.niveau || "") && (el.dataset.registre || "") === (pgFacet.registre || "") && (el.dataset.business || "") === (pgFacet.business || "");
 const pgHealth = {}, pgInspect = {}, pgSeo = {};
 const pgFolds = Object.assign({ parc: true, biblio: true, reglages: false }, JSON.parse(localStorage.getItem("pg-folds") || "{}"));
 
@@ -274,10 +274,14 @@ async function pgBibCounts() {
   const refs = r.refs || [];
   $("pgCntBib").textContent = refs.length || "";
   document.querySelectorAll(".pg-bibfold").forEach((el) => {
-    const k = el.dataset.kind || "", n = el.dataset.niveau || "", g = el.dataset.registre || "";
-    const c = refs.filter((x) => (!k || x.kind === k) && (!n || x.niveau === n) && (!g || x.registre === g)).length;
+    const k = el.dataset.kind || "", n = el.dataset.niveau || "", g = el.dataset.registre || "", b = el.dataset.business || "";
+    const c = refs.filter((x) => (!k || x.kind === k) && (!n || x.niveau === n) && (!g || x.registre === g) && (!b || x.business === b)).length;
     const cnt = el.querySelector(".cnt");
     if (cnt) cnt.textContent = c || "";
+  });
+  // Compteur de l'en-tête « Sites » (non cliquable)
+  document.querySelectorAll(".cnt[data-cntkind]").forEach((cnt) => {
+    cnt.textContent = refs.filter((x) => x.kind === cnt.dataset.cntkind).length || "";
   });
   pgSideGhosts();
 }
@@ -377,6 +381,7 @@ function pgRefFilters() {
     kind: pgFacet.kind || "",
     niveau: pgFacet.niveau || "",
     registre: pgFacet.registre || "",
+    business: pgFacet.business || "",
     statut: $("pgRefStatut").value,
   };
 }

@@ -800,6 +800,13 @@
   .pg-cat.active .cnt{color:var(--txt);text-shadow:0 0 8px var(--accent2);}
   .pg-sidenote{font-size:11.5px;color:var(--dim);padding:6px 4px;line-height:1.5;}
   .pg-subh{font-size:9.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--dim);opacity:.65;margin:13px 0 3px 4px;}
+  /* Grandes catégories (Sites, Animations, Matières, Autres) — même niveau */
+  .pg-bigcat{display:flex;align-items:center;gap:10px;padding:9px 8px;margin:14px -8px 2px;border-radius:9px;font-size:13.5px;font-weight:640;color:var(--txt);}
+  .pg-bigcat .cnt{margin-left:auto;font-size:10px;color:var(--dim);font-variant-numeric:tabular-nums;font-weight:400;}
+  .pg-bigcat.active .cnt{color:var(--txt);text-shadow:0 0 8px var(--accent2);}
+  /* Sous-catégories de Sites : légèrement en retrait */
+  .pg-siteswrap{padding-left:11px;border-left:1px solid var(--line);margin:2px 0 2px 5px;}
+  .pg-siteswrap .pg-subh{margin-top:10px;}
   /* Footer de la colonne : les deux gros boutons */
   .pg-foot{flex-shrink:0;display:flex;flex-direction:column;gap:9px;padding:13px 0 2px;border-top:1px solid var(--line);}
   .pg-bigbtn{display:flex;align-items:center;gap:12px;padding:13px 14px;border-radius:14px;border:1px solid var(--line);background:var(--card);color:var(--txt);cursor:pointer;font-size:13.5px;font-weight:600;text-align:left;transition:border-color .12s,background .12s,transform .1s;box-shadow:var(--neu);}
@@ -1175,23 +1182,31 @@
             <div class="pg-cat" data-cat="biblio"><span class="tw">▾</span><span class="lbl">Bibliothèque</span><span class="cnt" id="pgCntBib"></span></div>
             <div class="pg-catbody" id="pgBody-biblio">
               <div class="ir-folder pg-bibfold active" data-label="Toutes les références"><span class="fic">≡</span><span class="lname">Toutes</span><span class="cnt"></span></div>
-              <div class="pg-subh">Sites</div>
-              <div class="ir-folder pg-bibfold" data-kind="site" data-label="Sites — racine"><span class="fic">🌐</span><span class="lname">Racine</span><span class="cnt"></span></div>
-              <div class="ir-folder pg-bibfold" data-kind="secteur" data-label="Sites par secteur"><span class="fic">🏛️</span><span class="lname">Secteur</span><span class="cnt"></span></div>
-              <div class="pg-subh">Par niveau</div>
-              <div class="ir-folder pg-bibfold" data-kind="site" data-niveau="N1" data-label="Sites — N1 · Premium"><span class="fic">①</span><span class="lname">N1 · Premium</span><span class="cnt"></span></div>
-              <div class="ir-folder pg-bibfold" data-kind="site" data-niveau="N2" data-label="Sites — N2 · Luxe"><span class="fic">②</span><span class="lname">N2 · Luxe</span><span class="cnt"></span></div>
-              <div class="ir-folder pg-bibfold" data-kind="site" data-niveau="N3" data-label="Sites — N3 · Luxe supérieur"><span class="fic">③</span><span class="lname">N3 · Luxe sup.</span><span class="cnt"></span></div>
-              <div class="ir-folder pg-bibfold" data-kind="site" data-niveau="N4" data-label="Sites — N4 · Ultra luxe"><span class="fic">④</span><span class="lname">N4 · Ultra luxe</span><span class="cnt"></span></div>
-              <div class="pg-subh">Par type de design</div>
-              <div class="ir-folder pg-bibfold" data-kind="site" data-registre="sombre-dramatique" data-label="Sites — Sombre-dramatique"><span class="fic">◆</span><span class="lname">Sombre-dramatique</span><span class="cnt"></span></div>
-              <div class="ir-folder pg-bibfold" data-kind="site" data-registre="clair-epure" data-label="Sites — Clair-épuré"><span class="fic">◇</span><span class="lname">Clair-épuré</span><span class="cnt"></span></div>
-              <div class="ir-folder pg-bibfold" data-kind="site" data-registre="chaleureux-ludique" data-label="Sites — Chaleureux-ludique"><span class="fic">❖</span><span class="lname">Chaleureux-ludique</span><span class="cnt"></span></div>
-              <div class="ir-folder pg-bibfold" data-kind="site" data-registre="clair-conversion" data-label="Sites — Clair-conversion"><span class="fic">◈</span><span class="lname">Clair-conversion</span><span class="cnt"></span></div>
-              <div class="pg-subh">Autres types</div>
-              <div class="ir-folder pg-bibfold" data-kind="animation" data-label="Animations"><span class="fic">🎞️</span><span class="lname">Animations</span><span class="cnt"></span></div>
-              <div class="ir-folder pg-bibfold" data-kind="matiere" data-label="Matières"><span class="fic">🧊</span><span class="lname">Matières</span><span class="cnt"></span></div>
-              <div class="ir-folder pg-bibfold" data-kind="autre" data-label="Autres"><span class="fic">✦</span><span class="lname">Autres</span><span class="cnt"></span></div>
+
+              <div class="pg-bigcat"><span class="fic">🌐</span><span class="lname">Sites</span><span class="cnt" data-cntkind="site"></span></div>
+              <div class="pg-siteswrap">
+                <div class="ir-folder pg-bibfold" data-kind="site" data-label="Sites — racine"><span class="fic">◆</span><span class="lname">Racine</span><span class="cnt"></span></div>
+                <div class="pg-subh">par secteur</div>
+                <div class="ir-folder pg-bibfold" data-kind="secteur" data-business="restaurant" data-label="Secteur — Restaurant"><span class="fic">·</span><span class="lname">Restaurant</span><span class="cnt"></span></div>
+                <div class="ir-folder pg-bibfold" data-kind="secteur" data-business="bijou" data-label="Secteur — Bijou"><span class="fic">·</span><span class="lname">Bijou</span><span class="cnt"></span></div>
+                <div class="ir-folder pg-bibfold" data-kind="secteur" data-business="mode" data-label="Secteur — Mode"><span class="fic">·</span><span class="lname">Mode</span><span class="cnt"></span></div>
+                <div class="ir-folder pg-bibfold" data-kind="secteur" data-business="corporate" data-label="Secteur — Corporate"><span class="fic">·</span><span class="lname">Corporate</span><span class="cnt"></span></div>
+                <div class="ir-folder pg-bibfold" data-kind="secteur" data-business="artistique" data-label="Secteur — Artistique"><span class="fic">·</span><span class="lname">Artistique</span><span class="cnt"></span></div>
+                <div class="pg-subh">par niveau</div>
+                <div class="ir-folder pg-bibfold" data-kind="site" data-niveau="N1" data-label="Sites — N1 · Premium"><span class="fic">①</span><span class="lname">N1 · Premium</span><span class="cnt"></span></div>
+                <div class="ir-folder pg-bibfold" data-kind="site" data-niveau="N2" data-label="Sites — N2 · Luxe"><span class="fic">②</span><span class="lname">N2 · Luxe</span><span class="cnt"></span></div>
+                <div class="ir-folder pg-bibfold" data-kind="site" data-niveau="N3" data-label="Sites — N3 · Luxe supérieur"><span class="fic">③</span><span class="lname">N3 · Luxe sup.</span><span class="cnt"></span></div>
+                <div class="ir-folder pg-bibfold" data-kind="site" data-niveau="N4" data-label="Sites — N4 · Ultra luxe"><span class="fic">④</span><span class="lname">N4 · Ultra luxe</span><span class="cnt"></span></div>
+                <div class="pg-subh">par type de design</div>
+                <div class="ir-folder pg-bibfold" data-kind="site" data-registre="sombre-dramatique" data-label="Sites — Sombre-dramatique"><span class="fic">◆</span><span class="lname">Sombre-dramatique</span><span class="cnt"></span></div>
+                <div class="ir-folder pg-bibfold" data-kind="site" data-registre="clair-epure" data-label="Sites — Clair-épuré"><span class="fic">◇</span><span class="lname">Clair-épuré</span><span class="cnt"></span></div>
+                <div class="ir-folder pg-bibfold" data-kind="site" data-registre="chaleureux-ludique" data-label="Sites — Chaleureux-ludique"><span class="fic">❖</span><span class="lname">Chaleureux-ludique</span><span class="cnt"></span></div>
+                <div class="ir-folder pg-bibfold" data-kind="site" data-registre="clair-conversion" data-label="Sites — Clair-conversion"><span class="fic">◈</span><span class="lname">Clair-conversion</span><span class="cnt"></span></div>
+              </div>
+
+              <div class="ir-folder pg-bibfold pg-bigcat" data-kind="animation" data-label="Animations"><span class="fic">🎞️</span><span class="lname">Animations</span><span class="cnt"></span></div>
+              <div class="ir-folder pg-bibfold pg-bigcat" data-kind="matiere" data-label="Matières"><span class="fic">🧊</span><span class="lname">Matières</span><span class="cnt"></span></div>
+              <div class="ir-folder pg-bibfold pg-bigcat" data-kind="autre" data-label="Autres"><span class="fic">✦</span><span class="lname">Autres</span><span class="cnt"></span></div>
             </div>
             <div class="pg-cat" data-cat="reglages"><span class="tw">▸</span><span class="lbl">Réglages</span></div>
             <div class="pg-catbody" id="pgBody-reglages" style="display:none;">
