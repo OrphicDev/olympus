@@ -351,10 +351,13 @@ async function pgLoadRefs() {
   if (!r.ok) { box.innerHTML = `<div class="rb-empty">${escapeHtml(r.error || "Bibliothèque indisponible.")}</div>`; pgFillGhosts(box); return; }
   const refs = r.refs || [];
   if (!refs.length) { box.innerHTML = '<div class="rb-empty">Aucune référence — la bibliothèque se remplit par l\'usage (veille, projets).</div>'; pgFillGhosts(box); return; }
-  box.innerHTML = refs.map((x) => {
+
+  const rowHTML = (x, opts = {}) => {
     const dot = x.statut === "valide" ? "ok" : x.statut === "rejete" ? "err" : "warn";
-    const badges = [x.kind, x.niveau, x.registre].filter(Boolean).map((b) => `<span class="pg-badge">${escapeHtml(b)}</span>`).join("");
-    const metaBits = [x.business, x.technique, x.ingredients, x.auteur ? "par " + x.auteur : "", x.created_at ? new Date(x.created_at).toLocaleDateString("fr-FR") : ""].filter(Boolean);
+    const badgeVals = (opts.showKind === false ? [] : [x.kind]).concat([x.niveau, x.registre]).filter(Boolean);
+    const badges = badgeVals.map((b) => `<span class="pg-badge">${escapeHtml(b)}</span>`).join("");
+    const metaBits = [opts.hideBusiness ? "" : x.business, x.technique, x.ingredients, x.auteur ? "par " + x.auteur : "", opts.hideDate ? "" : (x.created_at ? new Date(x.created_at).toLocaleDateString("fr-FR") : "")].filter(Boolean);
+    const title = opts.label || x.titre;
     const acts = x.statut === "candidat"
       ? `<button data-act="valide">Valider</button><button data-act="rejete">Rejeter</button>`
       : x.statut === "valide"
@@ -363,13 +366,31 @@ async function pgLoadRefs() {
     return `<div class="pg-ref" data-id="${x.id}">
       <span class="pg-dot ${dot}"></span>
       <div>
-        <div class="t">${x.url ? `<a data-url="${escapeHtml(x.url)}">${escapeHtml(x.titre)} ↗</a>` : escapeHtml(x.titre)}</div>
+        <div class="t">${x.url ? `<a data-url="${escapeHtml(x.url)}">${escapeHtml(title)} ↗</a>` : escapeHtml(title)}</div>
         <div class="meta">${escapeHtml(metaBits.join(" · "))}</div>
       </div>
       ${badges}
       <div class="pg-ract">${acts}</div>
     </div>`;
-  }).join("");
+  };
+
+  if (pgKind === "secteur") {
+    // Groupé par secteur, niveaux de luxe ordonnés (Ultra luxe → Luxe → Mainstream)
+    const secOrder = ["restaurant", "bijou", "mode", "corporate", "artistique"];
+    const TIERS = ["Ultra luxe", "Luxe", "Mainstream"];
+    const tierRank = (t) => { for (let i = 0; i < TIERS.length; i++) if ((t || "").includes(TIERS[i])) return i; return 9; };
+    const groups = {};
+    for (const x of refs) { const k = (x.business || "autre").toLowerCase(); (groups[k] = groups[k] || []).push(x); }
+    const keys = Object.keys(groups).sort((a, b) => { const ia = secOrder.indexOf(a), ib = secOrder.indexOf(b); return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib); });
+    box.innerHTML = keys.map((k) => {
+      const items = groups[k].sort((a, b) => tierRank(a.titre) - tierRank(b.titre));
+      const name = k.charAt(0).toUpperCase() + k.slice(1);
+      const rows = items.map((x) => rowHTML(x, { label: TIERS.find((t) => (x.titre || "").includes(t)) || x.titre, hideBusiness: true, hideDate: true, showKind: false })).join("");
+      return `<div class="pg-sub">${escapeHtml(name)}</div>${rows}`;
+    }).join("");
+  } else {
+    box.innerHTML = refs.map((x) => rowHTML(x)).join("");
+  }
   box.querySelectorAll(".pg-ref .t a[data-url]").forEach((a) => { a.onclick = () => window.olympus.openExternal(a.dataset.url); });
   box.querySelectorAll(".pg-ract button").forEach((b) => {
     b.onclick = async () => {
