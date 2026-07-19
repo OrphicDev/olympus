@@ -783,17 +783,28 @@
   .section h3{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);margin-bottom:13px;}
   .desc{color:#c3cbda;font-size:14px;line-height:1.7;}
   .env{display:flex;flex-direction:column;gap:8px;}
-  /* ── Pegasus : le parc + bibliothèque Orphic ── */
-  #page-pegasus.show{display:flex;flex-direction:column;height:100%;max-width:none;padding-bottom:0;}
-  .pg-tabs{display:flex;gap:6px;flex-shrink:0;margin-bottom:4px;}
-  .pg-tabs span{font-size:12.5px;color:var(--dim);cursor:pointer;padding:6px 15px;border-radius:20px;transition:color .12s,background .12s;}
-  .pg-tabs span:hover{color:var(--muted);}
-  .pg-tabs span.active{color:var(--txt);background:var(--card2);text-shadow:0 0 10px var(--accent2);}
+  /* ── Pegasus : colonne catégories (collée à la colonne Olympus) + vues ── */
+  #page-pegasus.show{display:flex;height:100%;max-width:none;padding:0 30px 0 0;}
+  .pg-side{width:218px;flex-shrink:0;display:flex;flex-direction:column;padding:24px 16px 14px 40px;border-right:1px solid var(--line);}
+  .pg-shead{flex-shrink:0;padding:2px 0 14px;}
+  .pg-shead .t{font-size:17px;font-weight:680;letter-spacing:-.01em;}
+  .pg-shead .s{font-size:11px;color:var(--dim);margin-top:3px;}
+  .pg-cat{display:flex;align-items:center;gap:7px;padding:7px 6px;margin:12px -6px 2px;border-radius:9px;cursor:pointer;font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--dim);transition:color .12s;}
+  .pg-cat:first-child{margin-top:0;}
+  .pg-cat:hover{color:var(--muted);}
+  .pg-cat.active{color:var(--txt);}
+  .pg-cat.active .lbl{text-shadow:0 0 10px var(--accent2);}
+  .pg-cat .tw{width:14px;text-align:center;font-size:9px;flex-shrink:0;border-radius:5px;transition:color .12s,background .12s;}
+  .pg-cat .tw:hover{color:var(--txt);background:var(--card2);}
+  .pg-cat .cnt{margin-left:auto;font-size:10px;color:var(--dim);font-variant-numeric:tabular-nums;letter-spacing:0;}
+  .pg-cat.active .cnt{color:var(--txt);text-shadow:0 0 8px var(--accent2);}
+  .pg-sidenote{font-size:11.5px;color:var(--dim);padding:6px 4px;line-height:1.5;}
+  .pg-side .ir-folder{font-size:12.5px;padding:7px 8px;margin:0 -8px;}
+  .pg-side .ir-folder .cnt{margin-left:auto;font-size:10.5px;color:var(--dim);font-variant-numeric:tabular-nums;}
+  .pg-side .ir-folder.active .cnt{color:var(--txt);text-shadow:0 0 8px var(--accent2);}
+  .pg-main{flex:1;min-width:0;display:flex;flex-direction:column;padding:24px 16px 0 34px;}
   .pg-view{display:none;flex:1;min-height:0;flex-direction:column;}
   .pg-view.show{display:flex;}
-  .pg-cols{display:flex;gap:30px;flex:1;min-height:0;}
-  .pg-sites-col{width:300px;flex-shrink:0;}
-  .pg-detail-col{flex:1;min-width:0;}
   .pg-scroll{flex:1;min-height:0;overflow-y:auto;scrollbar-width:none;padding:10px 2px 70px;-webkit-mask-image:linear-gradient(to bottom,transparent,#000 16px,#000 calc(100% - 50px),transparent);mask-image:linear-gradient(to bottom,transparent,#000 16px,#000 calc(100% - 50px),transparent);}
   .pg-scroll::-webkit-scrollbar{display:none;}
   .pg-site{display:flex;align-items:center;gap:11px;padding:12px 10px;margin:0 -10px;border-radius:12px;cursor:pointer;transition:background .12s;}
@@ -1129,23 +1140,34 @@
         </div>
       </section>
 
-      <!-- ═══ PEGASUS (le parc + bibliothèque Orphic, déverrouillé après install) ═══ -->
+      <!-- ═══ PEGASUS (colonne catégories dépliables + parc/bibliothèque/réglages) ═══ -->
       <section class="page" id="page-pegasus">
-        <div class="page-head" style="margin-bottom:0;">
-          <h1>Pegasus</h1><p style="margin-bottom:14px;">Le parc WordPress des clients — santé, structure, SEO & bibliothèque Orphic.</p>
-        </div>
-        <div class="pg-tabs" id="pgTabs">
-          <span data-tab="parc" class="active">Parc</span>
-          <span data-tab="biblio">Bibliothèque</span>
-          <span data-tab="reglages">Réglages</span>
-        </div>
+        <aside class="pg-side">
+          <div class="pg-shead"><div class="t">Pegasus</div><div class="s">Le parc & la bibliothèque</div></div>
+          <div class="ir-sidescroll" id="pgSideScroll">
+            <div class="pg-cat active" data-cat="parc"><span class="tw">▾</span><span class="lbl">Parc</span><span class="cnt" id="pgCntParc"></span></div>
+            <div class="pg-catbody" id="pgBody-parc"><div class="pg-sidenote">Chargement…</div></div>
+            <div class="pg-cat" data-cat="biblio"><span class="tw">▾</span><span class="lbl">Bibliothèque</span><span class="cnt" id="pgCntBib"></span></div>
+            <div class="pg-catbody" id="pgBody-biblio">
+              <div class="ir-folder pg-bibfold" data-st="tous"><span class="pg-dot"></span><span class="lname">Toutes</span><span class="cnt" id="pgCntTous"></span></div>
+              <div class="ir-folder pg-bibfold" data-st="valide"><span class="pg-dot ok"></span><span class="lname">Validées</span><span class="cnt" id="pgCntValide"></span></div>
+              <div class="ir-folder pg-bibfold" data-st="candidat"><span class="pg-dot warn"></span><span class="lname">Candidates</span><span class="cnt" id="pgCntCandidat"></span></div>
+              <div class="ir-folder pg-bibfold" data-st="rejete"><span class="pg-dot err"></span><span class="lname">Rejetées</span><span class="cnt" id="pgCntRejete"></span></div>
+            </div>
+            <div class="pg-cat" data-cat="reglages"><span class="tw">▸</span><span class="lbl">Réglages</span></div>
+            <div class="pg-catbody" id="pgBody-reglages" style="display:none;">
+              <div class="ir-folder pg-regfold" data-sec="pgSecEnv"><span class="fic">🖥️</span><span class="lname">Environnement</span></div>
+              <div class="ir-folder pg-regfold" data-sec="pgSecHist"><span class="fic">🕘</span><span class="lname">Historique</span></div>
+              <div class="ir-folder pg-regfold" data-sec="pgSecKey"><span class="fic">🔑</span><span class="lname">Clé d'équipe</span></div>
+            </div>
+            <div id="pgSideGhosts"></div>
+          </div>
+        </aside>
+        <div class="pg-main">
 
         <!-- ── Volet Parc ── -->
         <div class="pg-view show" id="pgViewParc">
-          <div class="pg-cols">
-            <div class="pg-scroll pg-sites-col" id="pgSites"><div class="rb-empty">Chargement du registre…</div></div>
-            <div class="pg-scroll pg-detail-col" id="pgDetail"></div>
-          </div>
+          <div class="pg-scroll" id="pgDetail"></div>
         </div>
 
         <!-- ── Volet Bibliothèque ── -->
@@ -1181,7 +1203,7 @@
         <!-- ── Volet Réglages ── -->
         <div class="pg-view" id="pgViewReglages">
           <div class="pg-scroll">
-            <div class="section" style="margin-top:14px;">
+            <div class="section" id="pgSecEnv" style="margin-top:14px;">
               <h3>Environnement</h3>
               <div class="env" id="envList">
                 <div class="env-row"><div class="st">…</div><div><div class="nm">Node.js</div><div class="meta">vérification…</div></div></div>
@@ -1189,11 +1211,11 @@
                 <div class="env-row"><div class="st">…</div><div><div class="nm">WordPress local</div><div class="meta">vérification…</div></div></div>
               </div>
             </div>
-            <div class="section">
+            <div class="section" id="pgSecHist">
               <h3>Historique & retour arrière</h3>
               <p class="desc">Bientôt : consulter les <b>anciennes versions</b> d'un site client et <b>revenir en arrière en un clic</b> si une modification a cassé quelque chose. (Nécessite un ajout côté plugin WordPress Pegasus : sauvegarde/restauration des versions.)</p>
             </div>
-            <div class="section">
+            <div class="section" id="pgSecKey">
               <h3>Clé d'équipe</h3>
               <p class="desc" style="margin-bottom:12px;">Ta clé est installée dans <kbd>~/.pegasus/team-key</kbd>. Pense à ajouter le plugin dans Claude Code : Personnaliser → Plugins → <kbd>OrphicDev/pegasus</kbd>.</p>
               <button class="btn sec" id="setPegBtn">Réinstaller la clé</button>
@@ -1206,6 +1228,8 @@
             </div>
           </div>
         </div>
+
+        </div><!-- /pg-main -->
       </section>
 
       <!-- ═══ ZEVS (calibration) ═══ -->

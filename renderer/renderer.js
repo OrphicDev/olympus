@@ -110,9 +110,10 @@ $("setPegBtn").onclick = () => $("setPegBox").classList.toggle("show");
 wireInstaller("libPegCode", "libPegConnect", "libPegMsg", "libPegBox");
 wireInstaller("setPegCode", "setPegConnect", "setPegMsg", "setPegBox");
 
-// ══════════ PEGASUS — le parc de sites + la bibliothèque Orphic ══════════
-let pgSites = [], pgSel = null, pgTab = "parc";
+// ══════════ PEGASUS — colonne à catégories dépliables + parc/bibliothèque ══════════
+let pgSites = [], pgSel = null, pgView = "parc";
 const pgHealth = {}, pgInspect = {}, pgSeo = {};
+const pgFolds = Object.assign({ parc: true, biblio: true, reglages: false }, JSON.parse(localStorage.getItem("pg-folds") || "{}"));
 
 // Remplissage fantôme maison : on dépasse le bas, le fader mange la dernière ligne.
 function pgFillGhosts(el) {
@@ -128,57 +129,105 @@ function pgFillGhosts(el) {
   }
 }
 
-function pgSetTab(tab) {
-  pgTab = tab;
-  document.querySelectorAll("#pgTabs span").forEach((s) => s.classList.toggle("active", s.dataset.tab === tab));
-  $("pgViewParc").classList.toggle("show", tab === "parc");
-  $("pgViewBiblio").classList.toggle("show", tab === "biblio");
-  $("pgViewReglages").classList.toggle("show", tab === "reglages");
-  if (tab === "parc") pgLoadSites();
-  if (tab === "biblio") pgLoadRefs();
+function pgSideGhosts() { const sc = $("pgSideScroll"); if (sc) pgFillGhosts(sc); }
+function pgSaveFolds() { localStorage.setItem("pg-folds", JSON.stringify(pgFolds)); }
+function pgApplyFolds() {
+  for (const cat of ["parc", "biblio", "reglages"]) {
+    const open = !!pgFolds[cat];
+    const body = $("pgBody-" + cat);
+    if (body) body.style.display = open ? "" : "none";
+    const tw = document.querySelector(`.pg-cat[data-cat="${cat}"] .tw`);
+    if (tw) tw.textContent = open ? "▾" : "▸";
+  }
+  pgSideGhosts();
 }
-document.querySelectorAll("#pgTabs span").forEach((s) => { s.onclick = () => pgSetTab(s.dataset.tab); });
 
-// ── Le parc : registre + santé en direct
+function pgSetView(view) {
+  pgView = view;
+  $("pgViewParc").classList.toggle("show", view === "parc");
+  $("pgViewBiblio").classList.toggle("show", view === "biblio");
+  $("pgViewReglages").classList.toggle("show", view === "reglages");
+  document.querySelectorAll(".pg-cat").forEach((c) => c.classList.toggle("active", c.dataset.cat === view));
+  if (view !== "reglages") document.querySelectorAll(".pg-regfold").forEach((x) => x.classList.remove("active"));
+  if (view !== "biblio") document.querySelectorAll(".pg-bibfold").forEach((x) => x.classList.remove("active"));
+  if (view === "parc") pgLoadSites();
+  if (view === "biblio") pgLoadRefs();
+}
+// Catégories : le chevron plie/déplie, le clic sur le titre sélectionne (et déplie si besoin)
+document.querySelectorAll(".pg-cat").forEach((c) => {
+  const cat = c.dataset.cat;
+  c.querySelector(".tw").addEventListener("click", (e) => {
+    e.stopPropagation();
+    pgFolds[cat] = !pgFolds[cat];
+    pgSaveFolds();
+    pgApplyFolds();
+  });
+  c.addEventListener("click", () => {
+    if (!pgFolds[cat]) { pgFolds[cat] = true; pgSaveFolds(); pgApplyFolds(); }
+    pgSetView(cat);
+  });
+});
+// Sous-entrées : statuts de la bibliothèque, ancres des réglages
+document.querySelectorAll(".pg-bibfold").forEach((el) => {
+  el.onclick = () => { $("pgRefStatut").value = el.dataset.st; pgSetView("biblio"); };
+});
+document.querySelectorAll(".pg-regfold").forEach((el) => {
+  el.onclick = () => {
+    pgSetView("reglages");
+    document.querySelectorAll(".pg-regfold").forEach((x) => x.classList.toggle("active", x === el));
+    const sec = $(el.dataset.sec);
+    if (sec) sec.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+});
+
+// ── Le parc : registre + santé en direct (les sites vivent dans la colonne)
 async function pgLoadSites() {
-  const box = $("pgSites");
+  const box = $("pgBody-parc");
   const r = await window.olympus.pegasusSites();
-  if (!r.ok) { box.innerHTML = `<div class="rb-empty">${escapeHtml(r.error || "Registre indisponible.")}</div>`; pgFillGhosts(box); return; }
+  if (!r.ok) { box.innerHTML = `<div class="pg-sidenote">${escapeHtml(r.error || "Registre indisponible.")}</div>`; pgSideGhosts(); return; }
   pgSites = r.sites || [];
-  pgRenderSites();
+  $("pgCntParc").textContent = pgSites.length || "";
+  pgRenderSide();
   for (const s of pgSites) {
     if (pgHealth[s.key]) continue;
     window.olympus.pegasusSiteHealth(s.key).then((h) => {
       pgHealth[s.key] = h;
-      pgRenderSites();
+      pgRenderSide();
       if (pgSel === s.key) pgRenderDetail();
     });
   }
   if (pgSites.length && !pgSel) pgSelect(pgSites[0].key);
-  else if (!pgSites.length) { $("pgDetail").innerHTML = ""; pgFillGhosts($("pgDetail")); }
+  else pgRenderDetail();
 }
 
-function pgRenderSites() {
-  const box = $("pgSites");
-  if (!pgSites.length) { box.innerHTML = '<div class="rb-empty">Aucun site connecté — passe par /pegasus:connecter dans Claude Code.</div>'; pgFillGhosts(box); return; }
-  box.innerHTML = pgSites.map((s) => {
+function pgRenderSide() {
+  const box = $("pgBody-parc");
+  box.innerHTML = pgSites.length ? pgSites.map((s) => {
     const h = pgHealth[s.key];
     const dot = !h ? "wait" : h.ok ? "ok" : "err";
-    const meta = h && h.ok
-      ? `WP ${escapeHtml(h.health.wp || "?")} · PHP ${escapeHtml(String(h.health.php || "?").split("-")[0])} · Pegasus ${escapeHtml(h.health.pegasus || "?")}`
-      : h ? "injoignable" : escapeHtml(s.host);
-    return `<div class="pg-site ${pgSel === s.key ? "active" : ""}" data-key="${escapeHtml(s.key)}">
-      <span class="pg-dot ${dot}"></span>
-      <div><div class="nm">${escapeHtml(s.label)}</div><div class="meta">${meta}</div></div>
-    </div>`;
-  }).join("");
-  box.querySelectorAll(".pg-site").forEach((el) => { el.onclick = () => pgSelect(el.dataset.key); });
-  pgFillGhosts(box);
+    return `<div class="ir-folder pg-sitefold ${pgSel === s.key ? "active" : ""}" data-key="${escapeHtml(s.key)}"><span class="pg-dot ${dot}"></span><span class="lname">${escapeHtml(s.label)}</span></div>`;
+  }).join("") : '<div class="pg-sidenote">Aucun site — passe par /pegasus:connecter dans Claude Code.</div>';
+  box.querySelectorAll(".pg-sitefold").forEach((el) => { el.onclick = () => { if (pgView !== "parc") pgSetView("parc"); pgSelect(el.dataset.key); }; });
+  pgSideGhosts();
+}
+
+// Compteurs de la bibliothèque par statut (colonne)
+async function pgBibCounts() {
+  const r = await window.olympus.pegasusRefs({ statut: "tous", limit: 200 });
+  if (!r.ok) return;
+  const n = { tous: (r.refs || []).length, valide: 0, candidat: 0, rejete: 0 };
+  for (const x of r.refs || []) if (n[x.statut] !== undefined) n[x.statut]++;
+  $("pgCntBib").textContent = n.tous || "";
+  $("pgCntTous").textContent = n.tous || "";
+  $("pgCntValide").textContent = n.valide || "";
+  $("pgCntCandidat").textContent = n.candidat || "";
+  $("pgCntRejete").textContent = n.rejete || "";
+  pgSideGhosts();
 }
 
 async function pgSelect(key) {
   pgSel = key;
-  pgRenderSites();
+  pgRenderSide();
   pgRenderDetail();
   if (!pgInspect[key]) {
     const r = await window.olympus.pegasusSiteInspect(key);
@@ -276,6 +325,8 @@ function pgRefFilters() {
 }
 async function pgLoadRefs() {
   const box = $("pgRefs");
+  document.querySelectorAll(".pg-bibfold").forEach((el) => el.classList.toggle("active", el.dataset.st === $("pgRefStatut").value));
+  pgBibCounts();
   const r = await window.olympus.pegasusRefs(pgRefFilters());
   if (!r.ok && r.missing_table) {
     const setup = await window.olympus.pegasusRefsSetup();
@@ -357,7 +408,8 @@ $("pgRfSave").onclick = async () => {
 
 document.querySelector('.nav-item[data-app="pegasus"]').addEventListener("click", (e) => {
   if (e.currentTarget.classList.contains("locked")) return;
-  pgSetTab(pgTab);
+  pgApplyFolds();
+  pgSetView(pgView);
 });
 
 // ══════════ CHRONOS — support de la modal (équipe · fichiers · lieu) ══════════
