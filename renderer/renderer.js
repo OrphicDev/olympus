@@ -120,6 +120,7 @@ const pgFacetOf = (el) => ({ kind: el.dataset.kind || "", niveau: el.dataset.niv
 const pgFacetEq = (el) => (el.dataset.kind || "") === (pgFacet.kind || "") && (el.dataset.niveau || "") === (pgFacet.niveau || "") && (el.dataset.registre || "") === (pgFacet.registre || "") && (el.dataset.business || "") === (pgFacet.business || "");
 const pgHealth = {}, pgInspect = {}, pgSeo = {}, pgPerf = {};
 let pgSiteTab = "general"; // onglet du détail site : general | seo | perf | secu
+let pgSecAction = null; // panneau des 3 gros boutons : copy | push | rollback | null
 let pgCarousel = 0; // vue de la colonne en carrousel : 0 Parc · 1 Bibliothèque · 2 Réglages
 const PG_CVIEWS = ["parc", "biblio", "reglages"];
 
@@ -305,7 +306,7 @@ async function pgBibCounts() {
 }
 
 async function pgSelect(key) {
-  pgSel = key; pgSelProj = null; pgSiteTab = "general";
+  pgSel = key; pgSelProj = null; pgSiteTab = "general"; pgSecAction = null;
   pgRenderSide();
   pgRenderDetail();
   if (!pgInspect[key]) {
@@ -341,7 +342,10 @@ function pgRenderDetail() {
   box.querySelectorAll(".pg-tabs span").forEach((el) => { el.onclick = () => { pgSiteTab = el.dataset.tab; pgRenderDetail(); }; });
   const sb = box.querySelector("#pgSeoBtn"); if (sb) sb.onclick = () => pgRunSeo(s.key);
   const pb = box.querySelector("#pgPerfBtn"); if (pb) pb.onclick = () => pgRunPerf(s.key);
-  if (pgSiteTab === "general") pgRenderSiteFolder(s);
+  box.querySelectorAll(".pg-gbtns [data-sec]").forEach((b) => {
+    b.onclick = () => { pgSecAction = pgSecAction === b.dataset.sec ? null : b.dataset.sec; pgRenderDetail(); };
+  });
+  if (pgSiteTab === "general") pgRenderSecPanel(s);
   pgFillGhosts(box);
 }
 
@@ -357,7 +361,13 @@ function pgTabGeneral(s) {
   const h = pgHealth[s.key], ins = pgInspect[s.key];
   const since = s.created_at ? new Date(s.created_at).toLocaleDateString("fr-FR") : "";
   const hh = h && h.ok ? h.health : null;
-  let html = `<p class="pg-mnote">Fiche du site telle que Pegasus la voit à distance (aucun FTP). Les onglets ci-dessus donnent un rapport par thème : <b>SEO</b>, <b>Performance</b>, <b>Sécurité</b>.</p>`;
+  let html = `<div class="pg-gbtns">
+      <button class="pg-bigbtn ${pgSecAction === "copy" ? "on" : ""}" data-sec="copy"><span class="ic">↓</span><span>Télécharger la copie<small>en local</small></span></button>
+      <button class="pg-bigbtn primary ${pgSecAction === "push" ? "on" : ""}" data-sec="push"><span class="ic">↑</span><span>Pousser en ligne<small>déployer</small></span></button>
+      <button class="pg-bigbtn ${pgSecAction === "rollback" ? "on" : ""}" data-sec="rollback"><span class="ic">⟲</span><span>Revenir en arrière<small>restaurer</small></span></button>
+    </div>
+    <div id="pgSecPanel"></div>`;
+  html += `<p class="pg-mnote">Fiche du site telle que Pegasus la voit à distance (aucun FTP). Les onglets ci-dessus donnent un rapport par thème : <b>SEO</b>, <b>Performance</b>, <b>Sécurité</b>.</p>`;
   if (h && !h.ok) html += `<div class="rb-empty">Site injoignable : ${escapeHtml(h.error || "")}</div>`;
   html += `<div class="pg-kpis">
     <div class="pg-kpi"><div class="n">${hh ? escapeHtml(hh.wp) : "—"}</div><div class="l">WordPress</div></div>
@@ -382,49 +392,78 @@ function pgTabGeneral(s) {
   } else if (!ins) {
     html += `<div class="pg-sub">Structure</div><div class="rb-empty">Inspection…</div>`;
   }
-  html += `<div class="pg-sub">Sécurité & versions</div><div id="pgSiteFolder"><div class="rb-empty">Chargement…</div></div>`;
   return html;
 }
 
-// Sécurité & versions d'un site connecté : copie locale + sauvegardes cloud + retour arrière
-async function pgRenderSiteFolder(s) {
-  const box = $("pgSiteFolder"); if (!box) return;
+// Panneau des 3 gros boutons (copie / push / retour arrière)
+function pgRenderSecPanel(s) {
+  const box = $("pgSecPanel"); if (!box) return;
+  if (pgSecAction === "copy") return pgSecCopy(s, box);
+  if (pgSecAction === "push") return pgSecPush(s, box);
+  if (pgSecAction === "rollback") return pgSecRollback(s, box);
+  box.innerHTML = "";
+}
+
+// ↓ Télécharger la copie locale (deux boutons, pas de fenêtre qui demande)
+async function pgSecCopy(s, box) {
   const slug = s.host || s.key;
+  box.innerHTML = `<div class="pg-panel"><div class="rb-empty">Vérification du dossier…</div></div>`;
   const st = await window.olympus.pegasusFolderExists(slug);
-
-  let copyBlock;
-  if (st.exists) {
-    copyBlock = `<div class="pg-line"><span class="k">Dossier</span><span class="v">~/Pegasus/${escapeHtml(String(st.path).split("/").pop())}/</span></div>
-      <div class="pg-actrow"><button class="btn sec" id="pgSiteReveal">Révéler</button><button class="cal-btn" id="pgSiteCopyOver">Rafraîchir (écrase)</button><button class="cal-btn" id="pgSiteCopyVer">Nouvelle version</button><span class="msg" id="pgSiteCopyMsg"></span></div>`;
-  } else {
-    copyBlock = `<p class="pg-mnote" style="margin:0 0 8px;">Télécharge une copie locale (structure, contenus, accueil) dans le dossier du site.</p>
-      <div class="pg-actrow"><button class="cal-btn" id="pgSiteCopyOver">Télécharger la copie</button><span class="msg" id="pgSiteCopyMsg"></span></div>`;
-  }
-
-  box.innerHTML = `
-    <div class="pg-mini">Copie locale</div>${copyBlock}
-    <div class="pg-mini">Sauvegarde cloud</div>
-    <p class="pg-mnote" style="margin:0 0 8px;">Enregistre l'état actuel du site en ligne sur Supabase — un point de restauration pour revenir en arrière si le site casse.</p>
-    <div class="pg-actrow"><button class="cal-btn" id="pgSiteBackup">Enregistrer un point de restauration</button><span class="msg" id="pgSiteBackupMsg"></span></div>
-    <div class="pg-mini">Revenir en arrière</div>
-    <div id="pgSiteBackups"><div class="rb-empty">Chargement des sauvegardes…</div></div>`;
-
-  const rev = box.querySelector("#pgSiteReveal");
-  if (rev) rev.onclick = () => window.olympus.pegasusRevealFolder(slug);
+  const inner = st.exists
+    ? `<div class="pg-line"><span class="k">Dossier</span><span class="v">~/Pegasus/${escapeHtml(String(st.path).split("/").pop())}/</span></div>
+       <div class="pg-actrow"><button class="cal-btn primary" id="pgCopyVer">Nouvelle version</button><button class="cal-btn" id="pgCopyOver">Rafraîchir (écrase)</button><button class="btn sec" id="pgCopyReveal">Révéler</button><span class="msg" id="pgCopyMsg"></span></div>
+       <p class="pg-mnote dim" style="margin-top:6px;">« Nouvelle version » garde l'historique (dossier daté) · « Rafraîchir » écrase pour économiser la place.</p>`
+    : `<p class="pg-mnote">Télécharge une copie locale (structure, contenus, page d'accueil) dans le dossier du site.</p>
+       <div class="pg-actrow"><button class="cal-btn primary" id="pgCopyVer">Télécharger la copie</button><span class="msg" id="pgCopyMsg"></span></div>`;
+  box.innerHTML = `<div class="pg-panel">${inner}</div>`;
   const doCopy = async (mode, btn) => {
-    const m = $("pgSiteCopyMsg"); btn.disabled = true; m.className = "msg"; m.textContent = "Copie en cours…";
+    const m = box.querySelector("#pgCopyMsg"); btn.disabled = true; m.className = "msg"; m.textContent = "Copie en cours…";
     const r = await window.olympus.pegasusCopySite(s.key, mode);
     btn.disabled = false;
     if (!r.ok) { m.className = "msg err"; m.textContent = r.error || "Échec."; return; }
     m.className = "msg ok"; m.textContent = r.version ? "Nouvelle version enregistrée." : "Copie à jour.";
-    setTimeout(() => pgRenderSiteFolder(s), 700);
+    setTimeout(() => pgSecCopy(s, box), 800);
   };
-  box.querySelector("#pgSiteCopyOver").onclick = (e) => doCopy("overwrite", e.currentTarget);
-  const cv = box.querySelector("#pgSiteCopyVer");
-  if (cv) cv.onclick = (e) => doCopy("version", e.currentTarget);
+  box.querySelector("#pgCopyVer").onclick = (e) => doCopy(st.exists ? "version" : "overwrite", e.currentTarget);
+  const ov = box.querySelector("#pgCopyOver"); if (ov) ov.onclick = (e) => doCopy("overwrite", e.currentTarget);
+  const rv = box.querySelector("#pgCopyReveal"); if (rv) rv.onclick = () => window.olympus.pegasusRevealFolder(slug);
+}
 
-  box.querySelector("#pgSiteBackup").onclick = async (e) => {
-    const m = $("pgSiteBackupMsg"), b = e.currentTarget;
+// ↑ Pousser en ligne : sauvegarde de l'ancien → déploie le thème local → sauvegarde du nouveau
+async function pgSecPush(s, box) {
+  box.innerHTML = `<div class="pg-panel"><div class="rb-empty">Analyse du dossier local…</div></div>`;
+  const info = await window.olympus.pegasusPushInfo(s.key);
+  if (!info.ok) { box.innerHTML = `<div class="pg-panel"><p class="pg-mnote">${escapeHtml(info.error || "Rien à déployer.")}</p></div>`; return; }
+  box.innerHTML = `<div class="pg-panel">
+      <p class="pg-mnote">Déployer le thème local <b>« ${escapeHtml(info.theme)} »</b> vers le site <b>EN LIGNE</b> (${escapeHtml(info.label || info.url)}).</p>
+      <p class="pg-mnote dim">Sécurité automatique : une sauvegarde de l'ancien site est prise <b>avant</b>, et une du nouveau <b>après</b> — tu pourras revenir en arrière depuis « Revenir en arrière ».</p>
+      <div class="pg-actrow"><button class="cal-btn primary" id="pgPushGo">Déployer maintenant</button><button class="btn sec" id="pgPushCancel">Annuler</button><span class="msg" id="pgPushMsg"></span></div>
+    </div>`;
+  box.querySelector("#pgPushCancel").onclick = () => { pgSecAction = null; pgRenderDetail(); };
+  box.querySelector("#pgPushGo").onclick = async (e) => {
+    const m = box.querySelector("#pgPushMsg"), b = e.currentTarget;
+    b.disabled = true; box.querySelector("#pgPushCancel").disabled = true;
+    m.className = "msg"; m.textContent = "Sauvegarde de sécurité + déploiement…";
+    const r = await window.olympus.pegasusPush(s.key);
+    b.disabled = false; box.querySelector("#pgPushCancel").disabled = false;
+    if (!r.ok) { m.className = "msg err"; m.textContent = "Échec (site inchangé si la sauvegarde a bloqué) : " + (r.error || ""); return; }
+    m.className = "msg ok"; m.textContent = `Thème « ${r.theme} » déployé. Sauvegardes avant/après créées.`;
+    delete pgInspect[s.key]; delete pgHealth[s.key];
+    window.olympus.pegasusSiteHealth(s.key).then((h) => { pgHealth[s.key] = h; });
+    window.olympus.pegasusSiteInspect(s.key).then((i) => { pgInspect[s.key] = i; });
+  };
+}
+
+// ⟲ Revenir en arrière : point de restauration manuel + liste des sauvegardes
+function pgSecRollback(s, box) {
+  box.innerHTML = `<div class="pg-panel">
+      <p class="pg-mnote">Enregistre l'état actuel du site en ligne, ou restaure une version précédente (la version restaurée revient en local, prête à re-déployer — le site en ligne n'est pas touché).</p>
+      <div class="pg-actrow"><button class="cal-btn" id="pgBkNow">Enregistrer un point de restauration</button><span class="msg" id="pgBkNowMsg"></span></div>
+      <div class="pg-mini">Versions sauvegardées</div>
+      <div id="pgSiteBackups"><div class="rb-empty">Chargement…</div></div>
+    </div>`;
+  box.querySelector("#pgBkNow").onclick = async (e) => {
+    const m = box.querySelector("#pgBkNowMsg"), b = e.currentTarget;
     b.disabled = true; m.className = "msg"; m.textContent = "Sauvegarde en cours…";
     const r = await window.olympus.pegasusBackup(s.key, "manual");
     b.disabled = false;
@@ -432,7 +471,6 @@ async function pgRenderSiteFolder(s) {
     m.className = "msg ok"; m.textContent = "Point de restauration enregistré.";
     pgRenderBackups(s);
   };
-
   pgRenderBackups(s);
 }
 

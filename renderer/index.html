@@ -857,6 +857,11 @@
   @keyframes pgPulse{50%{opacity:.3;}}
   .pg-dhead{display:flex;align-items:center;gap:12px;padding:6px 0 14px;border-bottom:1px solid var(--line);}
   .pg-dhead h2{font-size:19px;font-weight:650;letter-spacing:-.01em;flex:1;min-width:0;}
+  /* 3 gros boutons en tête du Général */
+  .pg-gbtns{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:6px 0 4px;}
+  .pg-gbtns .pg-bigbtn.on{border-color:var(--txt);}
+  .pg-gbtns .pg-bigbtn.primary.on{box-shadow:0 0 0 2px var(--accent2);}
+  .pg-panel{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:15px;margin:12px 0 6px;animation:fadeUp .25s both;}
   /* Sécurité & versions (onglet Général) */
   .pg-mini{font-size:11px;letter-spacing:.05em;color:var(--muted);font-weight:560;margin:16px 0 6px;}
   .pg-actrow{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:2px;}

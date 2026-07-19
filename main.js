@@ -218,22 +218,24 @@ ipcMain.handle("pegasus:copySite", async (_e, key, mode) => {
 
 // ── Sauvegardes sur Supabase (filet de sécurité / retour arrière) — table site_backups
 const pegTblMissing = (e) => e.status === 404 || /42P01|PGRST205|Could not find the table/i.test(String(e.body || e.message));
+async function pegBackupInsert(key, kind, note) {
+  const snap = await pegSnapshot(key);
+  const row = {
+    site_key: key,
+    label: snap.structure.label,
+    kind: ["manual", "pre-push", "post-push"].includes(kind) ? kind : "manual",
+    structure: snap.structure,
+    content: snap.content || null,
+    home_html: snap.home || null,
+    note: note || null,
+  };
+  const r = await pegSupa("/site_backups", { method: "POST", body: JSON.stringify(row), headers: { Prefer: "return=representation" } });
+  return r && r[0];
+}
 // Créer un point de restauration (snapshot du site en ligne → Supabase)
 ipcMain.handle("pegasus:backup", async (_e, key, kind, note) => {
-  try {
-    const snap = await pegSnapshot(key);
-    const row = {
-      site_key: key,
-      label: snap.structure.label,
-      kind: ["manual", "pre-push", "post-push"].includes(kind) ? kind : "manual",
-      structure: snap.structure,
-      content: snap.content || null,
-      home_html: snap.home || null,
-      note: note || null,
-    };
-    const r = await pegSupa("/site_backups", { method: "POST", body: JSON.stringify(row), headers: { Prefer: "return=representation" } });
-    return { ok: true, backup: r && r[0] };
-  } catch (e) { return { ok: false, error: e.message, missing_table: pegTblMissing(e) }; }
+  try { return { ok: true, backup: await pegBackupInsert(key, kind, note) }; }
+  catch (e) { return { ok: false, error: e.message, missing_table: pegTblMissing(e) }; }
 });
 // Lister les sauvegardes d'un site (métadonnées, sans les gros blobs)
 ipcMain.handle("pegasus:backups", async (_e, key) => {
@@ -271,6 +273,57 @@ ipcMain.handle("pegasus:backupsSetup", async () => {
   let sql = null;
   try { sql = readFileSync(join(homedir(), "Projet de développement", "Orphic-Dev", "pegasus", "supabase", "site-backups.sql"), "utf8"); } catch {}
   return { ok: true, editor, sql };
+});
+
+// ── Déploiement : pousser le thème local vers le site en ligne (avec sauvegardes avant/après)
+// Trouve le thème custom déployable dans le dossier local du site.
+function pegFindTheme(dir) {
+  const themesDir = join(dir, "wordpress", "wp-content", "themes");
+  if (existsSync(themesDir)) {
+    const dirs = readdirSync(themesDir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && !e.name.startsWith("twenty") && !e.name.startsWith("."))
+      .map((e) => e.name);
+    if (dirs.length === 1) return { name: dirs[0], path: join(themesDir, dirs[0]) };
+    if (dirs.length > 1) return { multiple: dirs };
+  }
+  return null;
+}
+ipcMain.handle("pegasus:pushInfo", async (_e, key) => {
+  try {
+    const sites = await pegSites(); const s = sites[key];
+    if (!s) throw new Error("Site inconnu.");
+    const dir = join(PEG_WORKSPACE, pegSlug(s.host || key));
+    if (!existsSync(dir)) return { ok: false, error: "Pas de dossier local pour ce site. Télécharge d'abord une copie ou crée un WordPress local." };
+    const theme = pegFindTheme(dir);
+    if (!theme) return { ok: false, error: "Aucun thème custom trouvé dans le WordPress local (wordpress/wp-content/themes/). Le déploiement pousse un thème — Pegasus ne fait pas de synchro FTP." };
+    if (theme.multiple) return { ok: false, error: `Plusieurs thèmes custom en local (${theme.multiple.join(", ")}). Garde-en un seul.` };
+    return { ok: true, theme: theme.name, url: s.base_url, label: s.label };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+ipcMain.handle("pegasus:push", async (_e, key) => {
+  try {
+    const sites = await pegSites(); const s = sites[key];
+    if (!s) throw new Error("Site inconnu.");
+    const dir = join(PEG_WORKSPACE, pegSlug(s.host || key));
+    const theme = pegFindTheme(dir);
+    if (!theme || theme.multiple) throw new Error("Thème local introuvable ou ambigu.");
+    // 1. Sauvegarde AVANT (rollback) — bloquante : pas de déploiement sans filet
+    let pre;
+    try { pre = await pegBackupInsert(key, "pre-push", `Avant déploiement du thème « ${theme.name} »`); }
+    catch (e) { throw new Error("Sauvegarde de sécurité impossible — déploiement annulé : " + (pegTblMissing(e) ? "table de sauvegardes non installée." : e.message)); }
+    // 2. Zip du thème puis installation + activation via Pegasus (installeur natif WP)
+    const zipPath = join(dir, `_deploy-${theme.name}.zip`);
+    try { rmSync(zipPath); } catch {}
+    await new Promise((res, rej) => execFile("/usr/bin/ditto", ["-c", "-k", "--keepParent", theme.path, zipPath], (err, _o, se) => err ? rej(new Error(String(se || err.message))) : res()));
+    const zipB64 = readFileSync(zipPath).toString("base64");
+    try { rmSync(zipPath); } catch {}
+    await pegCall(key, "POST", "/theme/install", 90000, { zip_b64: zipB64 });
+    await pegCall(key, "POST", "/theme/activate", 30000, { stylesheet: theme.name });
+    // 3. Sauvegarde APRÈS (au cas où) — non bloquante
+    let post = null;
+    try { post = await pegBackupInsert(key, "post-push", `Après déploiement du thème « ${theme.name} »`); } catch {}
+    return { ok: true, theme: theme.name, preId: pre && pre.id, postId: post && post.id };
+  } catch (e) { return { ok: false, error: e.message }; }
 });
 
 // Exécute une commande et rejette en cas d'erreur (pour les étapes d'install Zevs).
@@ -880,7 +933,7 @@ async function pegSites() {
   return sites;
 }
 // Appel signé à l'API pegasus/v1 d'un site (?rest_route= : passe quels que soient les permaliens).
-async function pegCall(key, method, path, timeoutMs = 20000) {
+async function pegCall(key, method, path, timeoutMs = 20000, body) {
   const s = (await pegSites())[key];
   if (!s) throw new Error(`Site inconnu : ${key}`);
   const basic = Buffer.from(`${s.username}:${s.pass.replace(/\s+/g, "")}`).toString("base64");
@@ -892,6 +945,7 @@ async function pegCall(key, method, path, timeoutMs = 20000) {
     const r = await fetch(url, {
       method,
       headers: { Authorization: `Basic ${basic}`, "X-Pegasus-Auth": basic, "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
       signal: ctl.signal,
     });
     const text = await r.text();

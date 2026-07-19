@@ -75,6 +75,8 @@ contextBridge.exposeInMainWorld("olympus", {
   pegasusBackups: (key) => ipcRenderer.invoke("pegasus:backups", key),
   pegasusRestore: (key, backupId) => ipcRenderer.invoke("pegasus:restore", key, backupId),
   pegasusBackupsSetup: () => ipcRenderer.invoke("pegasus:backupsSetup"),
+  pegasusPushInfo: (key) => ipcRenderer.invoke("pegasus:pushInfo", key),
+  pegasusPush: (key) => ipcRenderer.invoke("pegasus:push", key),
   // Chronos — upload moodboard / références
   chronosUpload: (folder) => ipcRenderer.invoke("chronos:upload", folder),
   // Divers
