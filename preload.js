@@ -70,7 +70,11 @@ contextBridge.exposeInMainWorld("olympus", {
   pegasusRevealFolder: (slug) => ipcRenderer.invoke("pegasus:revealFolder", slug),
   pegasusFolderExists: (slug) => ipcRenderer.invoke("pegasus:folderExists", slug),
   pegasusScaffold: (project) => ipcRenderer.invoke("pegasus:scaffold", project),
-  pegasusCopySite: (key) => ipcRenderer.invoke("pegasus:copySite", key),
+  pegasusCopySite: (key, mode) => ipcRenderer.invoke("pegasus:copySite", key, mode),
+  pegasusBackup: (key, kind, note) => ipcRenderer.invoke("pegasus:backup", key, kind, note),
+  pegasusBackups: (key) => ipcRenderer.invoke("pegasus:backups", key),
+  pegasusRestore: (key, backupId) => ipcRenderer.invoke("pegasus:restore", key, backupId),
+  pegasusBackupsSetup: () => ipcRenderer.invoke("pegasus:backupsSetup"),
   // Chronos — upload moodboard / références
   chronosUpload: (folder) => ipcRenderer.invoke("chronos:upload", folder),
   // Divers

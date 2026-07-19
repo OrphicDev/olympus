@@ -382,33 +382,91 @@ function pgTabGeneral(s) {
   } else if (!ins) {
     html += `<div class="pg-sub">Structure</div><div class="rb-empty">Inspection…</div>`;
   }
-  html += `<div class="pg-sub">Copie locale</div><div id="pgSiteFolder"><div class="rb-empty">Vérification…</div></div>`;
+  html += `<div class="pg-sub">Sécurité & versions</div><div id="pgSiteFolder"><div class="rb-empty">Chargement…</div></div>`;
   return html;
 }
 
-// Copie locale d'un site connecté (~/Pegasus/<host>/)
+// Sécurité & versions d'un site connecté : copie locale + sauvegardes cloud + retour arrière
 async function pgRenderSiteFolder(s) {
   const box = $("pgSiteFolder"); if (!box) return;
   const slug = s.host || s.key;
   const st = await window.olympus.pegasusFolderExists(slug);
+
+  let copyBlock;
   if (st.exists) {
-    box.innerHTML = `<div class="pg-line"><span class="k">Emplacement</span><span class="v">~/Pegasus/${escapeHtml(String(st.path).split("/").pop())}/</span></div>
-      <div style="margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;"><button class="btn sec" id="pgSiteReveal">Révéler</button><button class="cal-btn" id="pgSiteCopy">Rafraîchir la copie</button><span class="msg" id="pgSiteCopyMsg"></span></div>`;
+    copyBlock = `<div class="pg-line"><span class="k">Dossier</span><span class="v">~/Pegasus/${escapeHtml(String(st.path).split("/").pop())}/</span></div>
+      <div class="pg-actrow"><button class="btn sec" id="pgSiteReveal">Révéler</button><button class="cal-btn" id="pgSiteCopyOver">Rafraîchir (écrase)</button><button class="cal-btn" id="pgSiteCopyVer">Nouvelle version</button><span class="msg" id="pgSiteCopyMsg"></span></div>`;
   } else {
-    box.innerHTML = `<p class="pg-mnote" style="margin:0 0 8px;">Crée une copie locale du site (structure, contenus, page d'accueil) dans son dossier. Snapshot via Pegasus, sans FTP.</p>
-      <div style="display:flex;gap:10px;align-items:center;"><button class="cal-btn" id="pgSiteCopy">Créer la copie locale</button><span class="msg" id="pgSiteCopyMsg"></span></div>`;
+    copyBlock = `<p class="pg-mnote" style="margin:0 0 8px;">Télécharge une copie locale (structure, contenus, accueil) dans le dossier du site.</p>
+      <div class="pg-actrow"><button class="cal-btn" id="pgSiteCopyOver">Télécharger la copie</button><span class="msg" id="pgSiteCopyMsg"></span></div>`;
   }
+
+  box.innerHTML = `
+    <div class="pg-mini">Copie locale</div>${copyBlock}
+    <div class="pg-mini">Sauvegarde cloud</div>
+    <p class="pg-mnote" style="margin:0 0 8px;">Enregistre l'état actuel du site en ligne sur Supabase — un point de restauration pour revenir en arrière si le site casse.</p>
+    <div class="pg-actrow"><button class="cal-btn" id="pgSiteBackup">Enregistrer un point de restauration</button><span class="msg" id="pgSiteBackupMsg"></span></div>
+    <div class="pg-mini">Revenir en arrière</div>
+    <div id="pgSiteBackups"><div class="rb-empty">Chargement des sauvegardes…</div></div>`;
+
   const rev = box.querySelector("#pgSiteReveal");
   if (rev) rev.onclick = () => window.olympus.pegasusRevealFolder(slug);
-  box.querySelector("#pgSiteCopy").onclick = async () => {
-    const m = $("pgSiteCopyMsg"), b = box.querySelector("#pgSiteCopy");
-    b.disabled = true; m.className = "msg"; m.textContent = "Copie en cours…";
-    const r = await window.olympus.pegasusCopySite(s.key);
-    b.disabled = false;
+  const doCopy = async (mode, btn) => {
+    const m = $("pgSiteCopyMsg"); btn.disabled = true; m.className = "msg"; m.textContent = "Copie en cours…";
+    const r = await window.olympus.pegasusCopySite(s.key, mode);
+    btn.disabled = false;
     if (!r.ok) { m.className = "msg err"; m.textContent = r.error || "Échec."; return; }
-    m.className = "msg ok"; m.textContent = "Copie créée.";
-    setTimeout(() => pgRenderSiteFolder(s), 600);
+    m.className = "msg ok"; m.textContent = r.version ? "Nouvelle version enregistrée." : "Copie à jour.";
+    setTimeout(() => pgRenderSiteFolder(s), 700);
   };
+  box.querySelector("#pgSiteCopyOver").onclick = (e) => doCopy("overwrite", e.currentTarget);
+  const cv = box.querySelector("#pgSiteCopyVer");
+  if (cv) cv.onclick = (e) => doCopy("version", e.currentTarget);
+
+  box.querySelector("#pgSiteBackup").onclick = async (e) => {
+    const m = $("pgSiteBackupMsg"), b = e.currentTarget;
+    b.disabled = true; m.className = "msg"; m.textContent = "Sauvegarde en cours…";
+    const r = await window.olympus.pegasusBackup(s.key, "manual");
+    b.disabled = false;
+    if (!r.ok) { m.className = "msg err"; m.textContent = r.missing_table ? "Table de sauvegardes non installée (voir ci-dessous)." : (r.error || "Échec."); pgRenderBackups(s); return; }
+    m.className = "msg ok"; m.textContent = "Point de restauration enregistré.";
+    pgRenderBackups(s);
+  };
+
+  pgRenderBackups(s);
+}
+
+async function pgRenderBackups(s) {
+  const box = $("pgSiteBackups"); if (!box) return;
+  const r = await window.olympus.pegasusBackups(s.key);
+  if (!r.ok && r.missing_table) {
+    const setup = await window.olympus.pegasusBackupsSetup();
+    box.innerHTML = `<div class="pg-setup">
+      <p><b>Le filet de sauvegarde n'est pas encore installé.</b><br>Colle le SQL <kbd>site-backups.sql</kbd> dans le SQL Editor du Supabase Pegasus, puis reviens ici.</p>
+      <div class="act">${setup.sql ? '<button class="cal-btn primary" id="pgBkCopySql">Copier le SQL</button>' : ""}${setup.editor ? `<button class="btn sec pg-open" data-url="${escapeHtml(setup.editor)}" style="padding:8px 16px;font-size:12.5px;">Ouvrir le SQL Editor ↗</button>` : ""}</div>
+      <div class="msg" id="pgBkSqlMsg"></div></div>`;
+    const cp = box.querySelector("#pgBkCopySql");
+    if (cp) cp.onclick = async () => { await navigator.clipboard.writeText(setup.sql); const m = box.querySelector("#pgBkSqlMsg"); m.className = "msg ok"; m.textContent = "SQL copié."; };
+    box.querySelectorAll(".pg-open").forEach((b) => { b.onclick = () => window.olympus.openExternal(b.dataset.url); });
+    return;
+  }
+  if (!r.ok) { box.innerHTML = `<div class="rb-empty">${escapeHtml(r.error || "Indisponible.")}</div>`; return; }
+  const bks = r.backups || [];
+  if (!bks.length) { box.innerHTML = '<div class="rb-empty">Aucune sauvegarde pour l\'instant.</div>'; return; }
+  const KIND = { manual: "Manuelle", "pre-push": "Avant déploiement", "post-push": "Après déploiement" };
+  box.innerHTML = bks.map((b) => `<div class="pg-bk" data-id="${b.id}">
+      <div><div class="t">${escapeHtml(KIND[b.kind] || b.kind)}${b.note ? " · " + escapeHtml(b.note) : ""}</div><div class="meta">${new Date(b.created_at).toLocaleString("fr-FR")}</div></div>
+      <button class="btn sec" data-restore="${b.id}">Restaurer</button>
+    </div>`).join("");
+  box.querySelectorAll("[data-restore]").forEach((btn) => {
+    btn.onclick = async () => {
+      btn.disabled = true; const prev = btn.textContent; btn.textContent = "Restauration…";
+      const rr = await window.olympus.pegasusRestore(s.key, btn.dataset.restore);
+      btn.disabled = false; btn.textContent = prev;
+      if (rr.ok) { btn.textContent = "Restaurée ↓"; window.olympus.pegasusRevealFolder(s.host || s.key); }
+      else { btn.textContent = "Échec"; }
+    };
+  });
 }
 
 function pgTabSeo(s) {

@@ -179,27 +179,98 @@ ipcMain.handle("pegasus:scaffold", async (_e, project = {}) => {
 });
 
 // Créer une copie locale d'un site connecté (snapshot via Pegasus, sans FTP)
-ipcMain.handle("pegasus:copySite", async (_e, key) => {
+// Snapshot d'un site (structure + contenus + accueil rendu) — sans FTP
+async function pegSnapshot(key) {
+  const sites = await pegSites();
+  const s = sites[key];
+  if (!s) throw new Error("Site inconnu.");
+  let health = null, inspect = null, content = null, home = null;
+  try { health = await pegCall(key, "GET", "/health", 12000); } catch {}
+  try { inspect = await pegCall(key, "GET", "/inspect"); } catch {}
+  try { content = await pegCall(key, "GET", "/content"); } catch {}
+  try { const res = await fetch(s.base_url, { headers: { "User-Agent": "Olympus-Pegasus/1.0" } }); if (res.ok) home = await res.text(); } catch {}
+  return { site: s, structure: { label: s.label, url: s.base_url, username: s.username, health, inspect }, content, home };
+}
+function pegWriteSnapshot(dir, snap) {
+  writeFileSync(join(dir, "site.json"), JSON.stringify({ ...snap.structure, copied: Date.now() }, null, 2));
+  if (snap.content) writeFileSync(join(dir, "content.json"), JSON.stringify(snap.content, null, 2));
+  if (snap.home) writeFileSync(join(dir, "home.html"), snap.home);
+  writeFileSync(join(dir, "README.md"),
+    `# ${snap.structure.label} — copie locale\n\nSnapshot pris via Pegasus (**sans FTP**) :\n- \`site.json\` — structure (thème, extensions, permaliens…)\n- \`content.json\` — contenus (pages, articles)\n- \`home.html\` — page d'accueil rendue\n\n⚠️ Ce n'est pas un miroir complet du serveur. Pour un clone total, il faudrait un export hébergeur.\n`);
+}
+
+// Télécharger/rafraîchir la copie locale. mode: "overwrite" (place disque) | "version" (garde l'historique)
+ipcMain.handle("pegasus:copySite", async (_e, key, mode) => {
   try {
-    const sites = await pegSites();
-    const s = sites[key];
-    if (!s) throw new Error("Site inconnu.");
-    const slug = pegSlug(s.host || key);
-    const dir = pegProjectDir(slug);
-    let health = null, inspect = null, content = null;
-    try { health = await pegCall(key, "GET", "/health", 12000); } catch {}
-    try { inspect = await pegCall(key, "GET", "/inspect"); } catch {}
-    try { content = await pegCall(key, "GET", "/content"); } catch {}
-    writeFileSync(join(dir, "site.json"), JSON.stringify({ label: s.label, url: s.base_url, username: s.username, health, inspect, copied: Date.now() }, null, 2));
-    if (content) writeFileSync(join(dir, "content.json"), JSON.stringify(content, null, 2));
-    try {
-      const res = await fetch(s.base_url, { headers: { "User-Agent": "Olympus-Pegasus/1.0" } });
-      if (res.ok) writeFileSync(join(dir, "home.html"), await res.text());
-    } catch {}
-    writeFileSync(join(dir, "README.md"),
-      `# ${s.label} — copie locale\n\nSnapshot pris via Pegasus (**sans FTP**) :\n- \`site.json\` — structure (thème, extensions, permaliens…)\n- \`content.json\` — contenus (pages, articles)\n- \`home.html\` — page d'accueil rendue\n\n⚠️ Ce n'est pas un miroir complet du serveur (Pegasus n'a pas d'accès fichiers). Pour un vrai clone, il faudrait un export hébergeur.\n`);
-    return { ok: true, path: dir, slug };
+    const snap = await pegSnapshot(key);
+    const slug = pegSlug(snap.site.host || key);
+    const base = pegProjectDir(slug);
+    let dir = base, version = null;
+    if (mode === "version") {
+      version = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+      dir = join(base, "versions", version);
+      mkdirSync(dir, { recursive: true });
+    }
+    pegWriteSnapshot(dir, snap);
+    return { ok: true, path: dir, slug, version };
   } catch (e) { return { ok: false, error: e.message }; }
+});
+
+// ── Sauvegardes sur Supabase (filet de sécurité / retour arrière) — table site_backups
+const pegTblMissing = (e) => e.status === 404 || /42P01|PGRST205|Could not find the table/i.test(String(e.body || e.message));
+// Créer un point de restauration (snapshot du site en ligne → Supabase)
+ipcMain.handle("pegasus:backup", async (_e, key, kind, note) => {
+  try {
+    const snap = await pegSnapshot(key);
+    const row = {
+      site_key: key,
+      label: snap.structure.label,
+      kind: ["manual", "pre-push", "post-push"].includes(kind) ? kind : "manual",
+      structure: snap.structure,
+      content: snap.content || null,
+      home_html: snap.home || null,
+      note: note || null,
+    };
+    const r = await pegSupa("/site_backups", { method: "POST", body: JSON.stringify(row), headers: { Prefer: "return=representation" } });
+    return { ok: true, backup: r && r[0] };
+  } catch (e) { return { ok: false, error: e.message, missing_table: pegTblMissing(e) }; }
+});
+// Lister les sauvegardes d'un site (métadonnées, sans les gros blobs)
+ipcMain.handle("pegasus:backups", async (_e, key) => {
+  try {
+    const p = new URLSearchParams();
+    p.set("select", "id,site_key,label,kind,note,created_at");
+    p.set("site_key", `eq.${key}`);
+    p.set("order", "created_at.desc");
+    p.set("limit", "50");
+    return { ok: true, backups: await pegSupa(`/site_backups?${p.toString()}`) };
+  } catch (e) { return { ok: false, error: e.message, missing_table: pegTblMissing(e) }; }
+});
+// Restaurer une sauvegarde → l'écrit en local (prête à re-déployer), sans toucher au site en ligne
+ipcMain.handle("pegasus:restore", async (_e, key, backupId) => {
+  try {
+    const rows = await pegSupa(`/site_backups?id=eq.${Number(backupId)}&select=*`);
+    if (!rows || !rows.length) throw new Error("Sauvegarde introuvable.");
+    const b = rows[0];
+    const slug = pegSlug((b.structure && b.structure.url ? new URL(b.structure.url).hostname.replace(/^www\./, "") : key));
+    const stamp = new Date(b.created_at).toISOString().replace(/[:.]/g, "-").slice(0, 19);
+    const dir = join(pegProjectDir(slug), "restaurations", `${b.kind}-${stamp}`);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "site.json"), JSON.stringify({ ...(b.structure || {}), restored_from: b.id, backup_date: b.created_at }, null, 2));
+    if (b.content) writeFileSync(join(dir, "content.json"), JSON.stringify(b.content, null, 2));
+    if (b.home_html) writeFileSync(join(dir, "home.html"), b.home_html);
+    writeFileSync(join(dir, "README.md"), `# Restauration — ${b.label || key}\n\nSauvegarde ${b.kind} du ${new Date(b.created_at).toLocaleString("fr-FR")}, restaurée en local.\nPrête à être re-déployée (déploiement à brancher).\n`);
+    return { ok: true, path: dir };
+  } catch (e) { return { ok: false, error: e.message, missing_table: pegTblMissing(e) }; }
+});
+// SQL d'installation de la table + lien SQL Editor (cas table absente)
+ipcMain.handle("pegasus:backupsSetup", async () => {
+  const d = pegTeam();
+  let editor = null;
+  try { editor = `https://supabase.com/dashboard/project/${new URL(d.supabase_url).hostname.split(".")[0]}/sql/new`; } catch {}
+  let sql = null;
+  try { sql = readFileSync(join(homedir(), "Projet de développement", "Orphic-Dev", "pegasus", "supabase", "site-backups.sql"), "utf8"); } catch {}
+  return { ok: true, editor, sql };
 });
 
 // Exécute une commande et rejette en cas d'erreur (pour les étapes d'install Zevs).
