@@ -804,6 +804,19 @@ ipcMain.handle("pegasus:refDelete", async (_e, id) => {
     return { ok: true };
   } catch (e) { return { ok: false, error: e.message }; }
 });
+// Révèle le zip du plugin WordPress Pegasus dans le Finder (à installer sur le site client)
+ipcMain.handle("pegasus:revealPlugin", async () => {
+  const candidates = [
+    join(homedir(), "Projet de développement", "Orphic-Dev", "pegasus", "pegasus", "wordpress-plugin", "pegasus.zip"),
+    join(homedir(), "Projet de développement", "Pegasus", "pegasus", "wordpress-plugin", "pegasus.zip"),
+    join(homedir(), "Projet de développement", "Pegasus", "wordpress-plugin", "pegasus.zip"),
+  ];
+  const path = candidates.find((p) => existsSync(p));
+  if (!path) return { ok: false, error: "Plugin introuvable sur ce Mac (dépôt Pegasus manquant)." };
+  shell.showItemInFolder(path);
+  return { ok: true, path };
+});
+
 // SQL d'installation de la table (copié depuis le dépôt local si présent) + lien SQL Editor
 ipcMain.handle("pegasus:refsSetup", async () => {
   const d = pegTeam();

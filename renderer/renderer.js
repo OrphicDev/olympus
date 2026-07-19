@@ -111,7 +111,9 @@ wireInstaller("libPegCode", "libPegConnect", "libPegMsg", "libPegBox");
 wireInstaller("setPegCode", "setPegConnect", "setPegMsg", "setPegBox");
 
 // ══════════ PEGASUS — colonne à catégories dépliables + parc/bibliothèque ══════════
-let pgSites = [], pgSel = null, pgView = "parc";
+let pgSites = [], pgSel = null, pgView = "parc", pgSelProj = null;
+let pgProjects = JSON.parse(localStorage.getItem("pg-projets") || "[]");
+const pgSaveProjects = () => localStorage.setItem("pg-projets", JSON.stringify(pgProjects));
 // Facette de bibliothèque active : n'importe quelle combinaison kind / niveau / registre
 let pgFacet = { label: "Toutes les références" };
 const pgFacetOf = (el) => ({ kind: el.dataset.kind || "", niveau: el.dataset.niveau || "", registre: el.dataset.registre || "", label: el.dataset.label || el.querySelector(".lname").textContent });
@@ -200,19 +202,69 @@ async function pgLoadSites() {
       if (pgSel === s.key) pgRenderDetail();
     });
   }
-  if (pgSites.length && !pgSel) pgSelect(pgSites[0].key);
-  else pgRenderDetail();
+  if (pgSites.length && !pgSel && !pgSelProj) pgSelect(pgSites[0].key);
+  else if (!pgSelProj) pgRenderDetail();
 }
 
 function pgRenderSide() {
   const box = $("pgBody-parc");
-  box.innerHTML = pgSites.length ? pgSites.map((s) => {
-    const h = pgHealth[s.key];
-    const dot = !h ? "wait" : h.ok ? "ok" : "err";
-    return `<div class="ir-folder pg-sitefold ${pgSel === s.key ? "active" : ""}" data-key="${escapeHtml(s.key)}"><span class="pg-dot ${dot}"></span><span class="lname">${escapeHtml(s.label)}</span></div>`;
-  }).join("") : '<div class="pg-sidenote">Aucun site — passe par /pegasus:connecter dans Claude Code.</div>';
+  let html = "";
+  if (pgProjects.length) {
+    html += `<div class="pg-subh" style="margin-top:2px;">Projets</div>`;
+    html += pgProjects.map((p) => `<div class="ir-folder pg-projfold ${pgSelProj === p.id ? "active" : ""}" data-pid="${p.id}"><span class="pg-dot draft"></span><span class="lname">${escapeHtml(p.nom)}</span><span class="cnt">à connecter</span></div>`).join("");
+    html += `<div class="pg-subh">Connectés</div>`;
+  }
+  if (pgSites.length) {
+    html += pgSites.map((s) => {
+      const h = pgHealth[s.key];
+      const dot = !h ? "wait" : h.ok ? "ok" : "err";
+      return `<div class="ir-folder pg-sitefold ${pgSel === s.key ? "active" : ""}" data-key="${escapeHtml(s.key)}"><span class="pg-dot ${dot}"></span><span class="lname">${escapeHtml(s.label)}</span></div>`;
+    }).join("");
+  } else if (!pgProjects.length) {
+    html = '<div class="pg-sidenote">Aucun site connecté. Utilise les boutons ci-dessous pour démarrer un projet ou connecter un site existant.</div>';
+  }
+  box.innerHTML = html;
   box.querySelectorAll(".pg-sitefold").forEach((el) => { el.onclick = () => { if (pgView !== "parc") pgSetView("parc"); pgSelect(el.dataset.key); }; });
+  box.querySelectorAll(".pg-projfold").forEach((el) => { el.onclick = () => { if (pgView !== "parc") pgSetView("parc"); pgSelectProject(el.dataset.pid); }; });
   pgSideGhosts();
+}
+
+function pgSelectProject(pid) {
+  pgSelProj = pid; pgSel = null;
+  pgRenderSide();
+  const p = pgProjects.find((x) => x.id === pid);
+  const box = $("pgDetail");
+  if (!p) { box.innerHTML = ""; pgFillGhosts(box); return; }
+  const line = (k, v) => v ? `<div class="pg-line"><span class="k">${k}</span><span class="v">${escapeHtml(v)}</span></div>` : "";
+  const NIV = { N1: "N1 · Premium", N2: "N2 · Luxe", N3: "N3 · Luxe supérieur", N4: "N4 · Ultra luxe" };
+  box.innerHTML = `<div class="pg-dhead">
+      <span class="pg-dot draft"></span>
+      <h2>${escapeHtml(p.nom)}</h2>
+      ${p.url ? `<button class="btn sec pg-open" data-url="${escapeHtml(p.url)}" style="padding:6px 14px;font-size:12px;">Ouvrir ↗</button>` : ""}
+    </div>
+    <div class="pg-alert" style="border:0;color:var(--dim);">Projet en cours — pas encore connecté à Pegasus.</div>
+    <div class="pg-sub">Cadrage</div>
+    ${line("Secteur", p.secteur)}
+    ${line("Niveau visé", NIV[p.niveau] || p.niveau)}
+    ${line("Type de design", p.registre)}
+    ${line("Intention", p.intention)}
+    ${line("URL", p.url)}
+    ${line("Créé le", p.created ? new Date(p.created).toLocaleDateString("fr-FR") : "")}
+    ${p.notes ? `<div class="pg-sub">Notes</div><div class="pg-alert" style="border:0;">${escapeHtml(p.notes)}</div>` : ""}
+    <div class="pg-sub">Actions</div>
+    <div style="display:flex;gap:10px;margin-top:4px;">
+      <button class="cal-btn primary" id="pgProjConnect">Connecter ce site</button>
+      <button class="btn sec" id="pgProjDelete">Supprimer le projet</button>
+    </div>`;
+  box.querySelectorAll(".pg-open").forEach((b) => { b.onclick = () => window.olympus.openExternal(b.dataset.url); });
+  $("pgProjConnect").onclick = () => pgOpenModal("pgConnectModal");
+  $("pgProjDelete").onclick = () => {
+    pgProjects = pgProjects.filter((x) => x.id !== pid);
+    pgSaveProjects(); pgSelProj = null;
+    pgRenderSide();
+    if (pgSites.length) pgSelect(pgSites[0].key); else { $("pgDetail").innerHTML = ""; pgFillGhosts($("pgDetail")); }
+  };
+  pgFillGhosts(box);
 }
 
 // Compteurs de chaque facette de la colonne (kind/niveau/registre), tous statuts
@@ -231,7 +283,7 @@ async function pgBibCounts() {
 }
 
 async function pgSelect(key) {
-  pgSel = key;
+  pgSel = key; pgSelProj = null;
   pgRenderSide();
   pgRenderDetail();
   if (!pgInspect[key]) {
@@ -429,6 +481,55 @@ document.querySelector('.nav-item[data-app="pegasus"]').addEventListener("click"
   pgApplyFolds();
   pgSetView(pgView);
 });
+
+// ── Footer : nouveau site & connexion d'un site existant
+function pgOpenModal(id) { $(id).classList.add("show"); }
+function pgCloseModal(id) { $(id).classList.remove("show"); }
+document.querySelectorAll("#pgConnectModal, #pgNewModal").forEach((m) => {
+  m.querySelectorAll("[data-pgclose]").forEach((b) => { b.onclick = () => m.classList.remove("show"); });
+  m.addEventListener("click", (e) => { if (e.target === m) m.classList.remove("show"); });
+});
+$("pgConnectSite").onclick = () => pgOpenModal("pgConnectModal");
+$("pgNewSite").onclick = () => { $("pgNsMsg").textContent = ""; pgOpenModal("pgNewModal"); };
+
+// Connexion : révéler le plugin WordPress + rafraîchir le parc
+$("pgRevealPlugin").onclick = async () => {
+  const m = $("pgRevealMsg");
+  const r = await window.olympus.pegasusRevealPlugin();
+  if (r.ok) { m.className = "msg ok"; m.textContent = "Ouvert dans le Finder."; }
+  else { m.className = "msg err"; m.textContent = r.error || "Introuvable."; }
+};
+$("pgRefreshParc").onclick = async () => {
+  pgHealth && Object.keys(pgHealth).forEach((k) => delete pgHealth[k]);
+  Object.keys(pgInspect).forEach((k) => delete pgInspect[k]);
+  await pgLoadSites();
+  pgCloseModal("pgConnectModal");
+};
+
+// Nouveau site : enregistre un projet (local) et l'affiche dans le Parc
+$("pgNsSave").onclick = () => {
+  const nom = $("pgNsNom").value.trim();
+  const msg = $("pgNsMsg");
+  if (!nom) { msg.className = "msg err"; msg.textContent = "Le nom du site est obligatoire."; return; }
+  const proj = {
+    id: "p" + Date.now().toString(36),
+    nom,
+    url: $("pgNsUrl").value.trim(),
+    secteur: $("pgNsSecteur").value,
+    niveau: $("pgNsNiveau").value,
+    registre: $("pgNsRegistre").value,
+    intention: $("pgNsIntention").value,
+    notes: $("pgNsNotes").value.trim(),
+    created: Date.now(),
+  };
+  pgProjects.unshift(proj);
+  pgSaveProjects();
+  ["pgNsNom", "pgNsUrl", "pgNsNotes"].forEach((id) => { $(id).value = ""; });
+  ["pgNsSecteur", "pgNsNiveau", "pgNsRegistre", "pgNsIntention"].forEach((id) => { $(id).value = ""; });
+  pgCloseModal("pgNewModal");
+  if (pgView !== "parc") pgSetView("parc"); else pgRenderSide();
+  pgSelectProject(proj.id);
+};
 
 // ══════════ CHRONOS — support de la modal (équipe · fichiers · lieu) ══════════
 async function renderParticipantChips(selected) {

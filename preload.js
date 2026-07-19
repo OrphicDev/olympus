@@ -64,6 +64,7 @@ contextBridge.exposeInMainWorld("olympus", {
   pegasusRefSet: (id, statut) => ipcRenderer.invoke("pegasus:refSet", id, statut),
   pegasusRefDelete: (id) => ipcRenderer.invoke("pegasus:refDelete", id),
   pegasusRefsSetup: () => ipcRenderer.invoke("pegasus:refsSetup"),
+  pegasusRevealPlugin: () => ipcRenderer.invoke("pegasus:revealPlugin"),
   // Chronos — upload moodboard / références
   chronosUpload: (folder) => ipcRenderer.invoke("chronos:upload", folder),
   // Divers
