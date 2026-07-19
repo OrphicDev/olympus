@@ -341,6 +341,14 @@ function pgRenderDetail() {
     <button class="btn sec pg-open" data-url="${escapeHtml(s.base_url)}" style="padding:6px 14px;font-size:12px;">Ouvrir ↗</button>
     <button class="btn sec pg-open" data-url="${escapeHtml(s.base_url)}/wp-admin" style="padding:6px 14px;font-size:12px;">wp-admin</button>
   </div>`;
+  html += `<button class="pg-workbtn" id="pgWorkBtn"><span class="ic">▶</span><span>Travailler sur le site<small>Lance le site en local et ouvre une session Claude Code</small></span></button>
+    <div class="msg" id="pgWorkMsg" style="margin:2px 0 6px;"></div>
+    <div class="pg-gbtns">
+      <button class="pg-bigbtn ${pgSecAction === "copy" ? "on" : ""}" data-sec="copy"><span class="ic">↓</span><span>Télécharger la copie<small>en local</small></span></button>
+      <button class="pg-bigbtn primary ${pgSecAction === "push" ? "on" : ""}" data-sec="push"><span class="ic">↑</span><span>Pousser en ligne<small>déployer</small></span></button>
+      <button class="pg-bigbtn ${pgSecAction === "rollback" ? "on" : ""}" data-sec="rollback"><span class="ic">⟲</span><span>Revenir en arrière<small>restaurer</small></span></button>
+    </div>
+    <div id="pgSecPanel"></div>`;
   html += `<div class="pg-tabcontent">${pgTabHTML(pgSiteTab, s)}</div>`;
 
   box.innerHTML = html;
@@ -359,7 +367,7 @@ function pgRenderDetail() {
     m.className = "msg ok";
     m.textContent = (r.copied ? "Copie créée. " : "") + (r.mode === "wordpress" ? "WordPress lancé en local (wp-now) + Claude Code ouvert." : r.mode === "static" ? "Site ouvert dans le navigateur + Claude Code ouvert." : "Dossier prêt + Claude Code ouvert.");
   };
-  if (pgSiteTab === "general") pgRenderSecPanel(s);
+  pgRenderSecPanel(s);
   pgFillGhosts(box);
 }
 
@@ -375,15 +383,7 @@ function pgTabGeneral(s) {
   const h = pgHealth[s.key], ins = pgInspect[s.key];
   const since = s.created_at ? new Date(s.created_at).toLocaleDateString("fr-FR") : "";
   const hh = h && h.ok ? h.health : null;
-  let html = `<button class="pg-workbtn" id="pgWorkBtn"><span class="ic">▶</span><span>Travailler sur le site<small>Lance le site en local et ouvre une session Claude Code</small></span></button>
-    <div class="msg" id="pgWorkMsg" style="margin:2px 0 6px;"></div>
-    <div class="pg-gbtns">
-      <button class="pg-bigbtn ${pgSecAction === "copy" ? "on" : ""}" data-sec="copy"><span class="ic">↓</span><span>Télécharger la copie<small>en local</small></span></button>
-      <button class="pg-bigbtn primary ${pgSecAction === "push" ? "on" : ""}" data-sec="push"><span class="ic">↑</span><span>Pousser en ligne<small>déployer</small></span></button>
-      <button class="pg-bigbtn ${pgSecAction === "rollback" ? "on" : ""}" data-sec="rollback"><span class="ic">⟲</span><span>Revenir en arrière<small>restaurer</small></span></button>
-    </div>
-    <div id="pgSecPanel"></div>`;
-  html += `<p class="pg-mnote">Fiche du site telle que Pegasus la voit à distance (aucun FTP). Les onglets ci-dessus donnent un rapport par thème : <b>SEO</b>, <b>Performance</b>, <b>Sécurité</b>.</p>`;
+  let html = `<p class="pg-mnote">Fiche du site telle que Pegasus la voit à distance (aucun FTP). Les onglets dans la colonne donnent un rapport par thème : <b>SEO</b>, <b>Performance</b>, <b>Sécurité</b>.</p>`;
   if (h && !h.ok) html += `<div class="rb-empty">Site injoignable : ${escapeHtml(h.error || "")}</div>`;
   html += `<div class="pg-kpis">
     <div class="pg-kpi"><div class="n">${hh ? escapeHtml(hh.wp) : "—"}</div><div class="l">WordPress</div></div>
