@@ -830,6 +830,7 @@
   .pg-line .v{color:var(--txt);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;}
   .pg-alert{display:flex;gap:9px;align-items:baseline;padding:7px 0;font-size:12.5px;color:var(--muted);border-bottom:1px solid var(--line);}
   .pg-bar{display:flex;gap:8px;align-items:center;flex-shrink:0;flex-wrap:wrap;padding:6px 0 2px;}
+  .pg-libtitle{font-size:16px;font-weight:640;letter-spacing:-.01em;margin-right:6px;}
   .pg-select{padding:8px 11px;border-radius:20px;background:var(--card);border:1px solid var(--line);color:var(--muted);font-size:12.5px;outline:none;-webkit-appearance:none;}
   .pg-select:focus{border-color:var(--line2);}
   .pg-ref{display:flex;align-items:center;gap:12px;padding:12px 10px;margin:0 -10px;border-radius:12px;transition:background .12s;}
@@ -1149,10 +1150,12 @@
             <div class="pg-catbody" id="pgBody-parc"><div class="pg-sidenote">Chargement…</div></div>
             <div class="pg-cat" data-cat="biblio"><span class="tw">▾</span><span class="lbl">Bibliothèque</span><span class="cnt" id="pgCntBib"></span></div>
             <div class="pg-catbody" id="pgBody-biblio">
-              <div class="ir-folder pg-bibfold" data-st="tous"><span class="pg-dot"></span><span class="lname">Toutes</span><span class="cnt" id="pgCntTous"></span></div>
-              <div class="ir-folder pg-bibfold" data-st="valide"><span class="pg-dot ok"></span><span class="lname">Validées</span><span class="cnt" id="pgCntValide"></span></div>
-              <div class="ir-folder pg-bibfold" data-st="candidat"><span class="pg-dot warn"></span><span class="lname">Candidates</span><span class="cnt" id="pgCntCandidat"></span></div>
-              <div class="ir-folder pg-bibfold" data-st="rejete"><span class="pg-dot err"></span><span class="lname">Rejetées</span><span class="cnt" id="pgCntRejete"></span></div>
+              <div class="ir-folder pg-bibfold active" data-kind=""><span class="fic">≡</span><span class="lname">Toutes</span><span class="cnt" id="pgCntTous"></span></div>
+              <div class="ir-folder pg-bibfold" data-kind="site"><span class="fic">🌐</span><span class="lname">Sites</span><span class="cnt" id="pgCntSite"></span></div>
+              <div class="ir-folder pg-bibfold" data-kind="animation"><span class="fic">🎞️</span><span class="lname">Animations</span><span class="cnt" id="pgCntAnimation"></span></div>
+              <div class="ir-folder pg-bibfold" data-kind="matiere"><span class="fic">🧊</span><span class="lname">Matières</span><span class="cnt" id="pgCntMatiere"></span></div>
+              <div class="ir-folder pg-bibfold" data-kind="secteur"><span class="fic">🏛️</span><span class="lname">Secteurs</span><span class="cnt" id="pgCntSecteur"></span></div>
+              <div class="ir-folder pg-bibfold" data-kind="autre"><span class="fic">✦</span><span class="lname">Autres</span><span class="cnt" id="pgCntAutre"></span></div>
             </div>
             <div class="pg-cat" data-cat="reglages"><span class="tw">▸</span><span class="lbl">Réglages</span></div>
             <div class="pg-catbody" id="pgBody-reglages" style="display:none;">
@@ -1173,8 +1176,8 @@
         <!-- ── Volet Bibliothèque ── -->
         <div class="pg-view" id="pgViewBiblio">
           <div class="pg-bar">
-            <input class="hm-search" id="pgRefQ" placeholder="Rechercher (titre, ingrédients, technique…)" style="max-width:240px;margin:0;">
-            <select class="pg-select" id="pgRefKind"><option value="">Type</option><option value="site">Site</option><option value="animation">Animation</option><option value="matiere">Matière</option><option value="secteur">Secteur</option><option value="autre">Autre</option></select>
+            <div class="pg-libtitle" id="pgLibTitle">Toutes les références</div>
+            <input class="hm-search" id="pgRefQ" placeholder="Rechercher…" style="max-width:200px;margin:0;">
             <select class="pg-select" id="pgRefNiveau"><option value="">Niveau</option><option>N1</option><option>N2</option><option>N3</option><option>N4</option></select>
             <select class="pg-select" id="pgRefRegistre"><option value="">Registre</option><option value="sombre-dramatique">Sombre-dramatique</option><option value="clair-epure">Clair-épuré</option><option value="chaleureux-ludique">Chaleureux-ludique</option><option value="clair-conversion">Clair-conversion</option></select>
             <select class="pg-select" id="pgRefStatut"><option value="tous">Tous statuts</option><option value="valide">Validées</option><option value="candidat">Candidates</option><option value="rejete">Rejetées</option></select>

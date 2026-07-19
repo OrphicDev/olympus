@@ -111,7 +111,8 @@ wireInstaller("libPegCode", "libPegConnect", "libPegMsg", "libPegBox");
 wireInstaller("setPegCode", "setPegConnect", "setPegMsg", "setPegBox");
 
 // ══════════ PEGASUS — colonne à catégories dépliables + parc/bibliothèque ══════════
-let pgSites = [], pgSel = null, pgView = "parc";
+let pgSites = [], pgSel = null, pgView = "parc", pgKind = "";
+const PG_KIND_LABEL = { "": "Toutes les références", site: "Sites", animation: "Animations", matiere: "Matières", secteur: "Secteurs", autre: "Autres" };
 const pgHealth = {}, pgInspect = {}, pgSeo = {};
 const pgFolds = Object.assign({ parc: true, biblio: true, reglages: false }, JSON.parse(localStorage.getItem("pg-folds") || "{}"));
 
@@ -167,9 +168,9 @@ document.querySelectorAll(".pg-cat").forEach((c) => {
     pgSetView(cat);
   });
 });
-// Sous-entrées : statuts de la bibliothèque, ancres des réglages
+// Sous-bibliothèques (par type) + ancres des réglages
 document.querySelectorAll(".pg-bibfold").forEach((el) => {
-  el.onclick = () => { $("pgRefStatut").value = el.dataset.st; pgSetView("biblio"); };
+  el.onclick = () => { pgKind = el.dataset.kind; pgSetView("biblio"); };
 });
 document.querySelectorAll(".pg-regfold").forEach((el) => {
   el.onclick = () => {
@@ -211,17 +212,19 @@ function pgRenderSide() {
   pgSideGhosts();
 }
 
-// Compteurs de la bibliothèque par statut (colonne)
+// Compteurs par bibliothèque (type) — taille de chaque sous-bibliothèque, tous statuts
 async function pgBibCounts() {
-  const r = await window.olympus.pegasusRefs({ statut: "tous", limit: 200 });
+  const r = await window.olympus.pegasusRefs({ statut: "tous", limit: 500 });
   if (!r.ok) return;
-  const n = { tous: (r.refs || []).length, valide: 0, candidat: 0, rejete: 0 };
-  for (const x of r.refs || []) if (n[x.statut] !== undefined) n[x.statut]++;
-  $("pgCntBib").textContent = n.tous || "";
-  $("pgCntTous").textContent = n.tous || "";
-  $("pgCntValide").textContent = n.valide || "";
-  $("pgCntCandidat").textContent = n.candidat || "";
-  $("pgCntRejete").textContent = n.rejete || "";
+  const refs = r.refs || [];
+  const byKind = { site: 0, animation: 0, matiere: 0, secteur: 0, autre: 0 };
+  for (const x of refs) { const k = byKind[x.kind] !== undefined ? x.kind : "autre"; byKind[k]++; }
+  $("pgCntBib").textContent = refs.length || "";
+  $("pgCntTous").textContent = refs.length || "";
+  for (const k of Object.keys(byKind)) {
+    const el = $("pgCnt" + k.charAt(0).toUpperCase() + k.slice(1));
+    if (el) el.textContent = byKind[k] || "";
+  }
   pgSideGhosts();
 }
 
@@ -317,7 +320,7 @@ async function pgRunSeo(key) {
 function pgRefFilters() {
   return {
     q: $("pgRefQ").value.trim(),
-    kind: $("pgRefKind").value,
+    kind: pgKind,
     niveau: $("pgRefNiveau").value,
     registre: $("pgRefRegistre").value,
     statut: $("pgRefStatut").value,
@@ -325,7 +328,8 @@ function pgRefFilters() {
 }
 async function pgLoadRefs() {
   const box = $("pgRefs");
-  document.querySelectorAll(".pg-bibfold").forEach((el) => el.classList.toggle("active", el.dataset.st === $("pgRefStatut").value));
+  document.querySelectorAll(".pg-bibfold").forEach((el) => el.classList.toggle("active", el.dataset.kind === pgKind));
+  $("pgLibTitle").textContent = PG_KIND_LABEL[pgKind] || "Bibliothèque";
   pgBibCounts();
   const r = await window.olympus.pegasusRefs(pgRefFilters());
   if (!r.ok && r.missing_table) {
@@ -379,10 +383,13 @@ async function pgLoadRefs() {
 }
 let pgRefQTimer;
 $("pgRefQ").addEventListener("input", () => { clearTimeout(pgRefQTimer); pgRefQTimer = setTimeout(pgLoadRefs, 300); });
-["pgRefKind", "pgRefNiveau", "pgRefRegistre", "pgRefStatut"].forEach((id) => { $(id).addEventListener("change", pgLoadRefs); });
+["pgRefNiveau", "pgRefRegistre", "pgRefStatut"].forEach((id) => { $(id).addEventListener("change", pgLoadRefs); });
 
 // ── Proposer une référence
-$("pgRefNew").onclick = () => { $("pgRefForm").classList.toggle("show"); };
+$("pgRefNew").onclick = () => {
+  const open = $("pgRefForm").classList.toggle("show");
+  if (open && pgKind) $("pgRfKind").value = pgKind; // classe d'emblée dans la bibliothèque ouverte
+};
 $("pgRfCancel").onclick = () => { $("pgRefForm").classList.remove("show"); };
 $("pgRfSave").onclick = async () => {
   const msg = $("pgRfMsg");
