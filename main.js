@@ -300,6 +300,44 @@ ipcMain.handle("pegasus:pushInfo", async (_e, key) => {
     return { ok: true, theme: theme.name, url: s.base_url, label: s.label };
   } catch (e) { return { ok: false, error: e.message }; }
 });
+// ── Travailler sur le site : prépare le local (copie si besoin) → lance en local + ouvre Claude Code
+function pegTerminal(cmd) {
+  // Ouvre une nouvelle fenêtre Terminal.app qui exécute `cmd` (via le shell de login → PATH complet)
+  return new Promise((res) => execFile("/usr/bin/osascript", ["-e", `tell application "Terminal" to do script ${JSON.stringify(cmd)}`], () => res()));
+}
+ipcMain.handle("pegasus:workOn", async (_e, key) => {
+  try {
+    const sites = await pegSites(); const s = sites[key];
+    if (!s) throw new Error("Site inconnu.");
+    const slug = pegSlug(s.host || key);
+    const dir = join(PEG_WORKSPACE, slug);
+    // 1. Copie locale si le dossier n'existe pas encore
+    let copied = false;
+    if (!existsSync(dir)) {
+      const snap = await pegSnapshot(key);
+      mkdirSync(dir, { recursive: true });
+      pegWriteSnapshot(dir, snap);
+      copied = true;
+    }
+    // 2. Lancer le site en local + ouvrir le navigateur
+    const hasWP = existsSync(join(dir, "wordpress"));
+    const indexFile = existsSync(join(dir, "index.html")) ? "index.html" : existsSync(join(dir, "home.html")) ? "home.html" : null;
+    let mode;
+    if (hasWP) {
+      // wp-now sert le WordPress local et ouvre le navigateur lui-même
+      await pegTerminal(`cd '${dir}' && npx @wp-now/wp-now start --path wordpress`);
+      mode = "wordpress";
+    } else if (indexFile) {
+      await shell.openExternal("file://" + join(dir, indexFile));
+      mode = "static";
+    } else {
+      mode = "vide";
+    }
+    // 3. Ouvrir une session Claude Code dans le dossier du projet
+    await pegTerminal(`cd '${dir}' && claude`);
+    return { ok: true, dir, mode, copied };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
 ipcMain.handle("pegasus:push", async (_e, key) => {
   try {
     const sites = await pegSites(); const s = sites[key];

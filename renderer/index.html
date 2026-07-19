@@ -857,6 +857,12 @@
   @keyframes pgPulse{50%{opacity:.3;}}
   .pg-dhead{display:flex;align-items:center;gap:12px;padding:6px 0 14px;border-bottom:1px solid var(--line);}
   .pg-dhead h2{font-size:19px;font-weight:650;letter-spacing:-.01em;flex:1;min-width:0;}
+  /* Bouton principal « Travailler sur le site » + 3 gros boutons */
+  .pg-workbtn{display:flex;align-items:center;gap:13px;width:100%;padding:15px 18px;border-radius:15px;border:0;background:linear-gradient(180deg,var(--accent2),var(--accent3));color:var(--accent-fg);cursor:pointer;font-size:15px;font-weight:650;text-align:left;box-shadow:0 8px 26px -8px var(--accent2);transition:transform .1s,box-shadow .12s;margin:4px 0;}
+  .pg-workbtn:hover{box-shadow:0 10px 30px -8px var(--accent2);}
+  .pg-workbtn:active{transform:translateY(1px);}
+  .pg-workbtn .ic{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;font-size:15px;background:rgba(0,0,0,.14);flex-shrink:0;}
+  .pg-workbtn small{display:block;font-size:11px;font-weight:400;color:rgba(0,0,0,.5);margin-top:2px;}
   /* 3 gros boutons en tête du Général */
   .pg-gbtns{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:6px 0 4px;}
   .pg-gbtns .pg-bigbtn.on{border-color:var(--txt);}
