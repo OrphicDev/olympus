@@ -111,8 +111,11 @@ wireInstaller("libPegCode", "libPegConnect", "libPegMsg", "libPegBox");
 wireInstaller("setPegCode", "setPegConnect", "setPegMsg", "setPegBox");
 
 // ══════════ PEGASUS — colonne à catégories dépliables + parc/bibliothèque ══════════
-let pgSites = [], pgSel = null, pgView = "parc", pgKind = "";
-const PG_KIND_LABEL = { "": "Toutes les références", site: "Sites", animation: "Animations", matiere: "Matières", secteur: "Secteurs", autre: "Autres" };
+let pgSites = [], pgSel = null, pgView = "parc";
+// Facette de bibliothèque active : n'importe quelle combinaison kind / niveau / registre
+let pgFacet = { label: "Toutes les références" };
+const pgFacetOf = (el) => ({ kind: el.dataset.kind || "", niveau: el.dataset.niveau || "", registre: el.dataset.registre || "", label: el.dataset.label || el.querySelector(".lname").textContent });
+const pgFacetEq = (el) => (el.dataset.kind || "") === (pgFacet.kind || "") && (el.dataset.niveau || "") === (pgFacet.niveau || "") && (el.dataset.registre || "") === (pgFacet.registre || "");
 const pgHealth = {}, pgInspect = {}, pgSeo = {};
 const pgFolds = Object.assign({ parc: true, biblio: true, reglages: false }, JSON.parse(localStorage.getItem("pg-folds") || "{}"));
 
@@ -168,9 +171,9 @@ document.querySelectorAll(".pg-cat").forEach((c) => {
     pgSetView(cat);
   });
 });
-// Sous-bibliothèques (par type) + ancres des réglages
+// Facettes de la bibliothèque (Racine, Secteur, par niveau, par type…) + ancres des réglages
 document.querySelectorAll(".pg-bibfold").forEach((el) => {
-  el.onclick = () => { pgKind = el.dataset.kind; pgSetView("biblio"); };
+  el.onclick = () => { pgFacet = pgFacetOf(el); pgSetView("biblio"); };
 });
 document.querySelectorAll(".pg-regfold").forEach((el) => {
   el.onclick = () => {
@@ -212,19 +215,18 @@ function pgRenderSide() {
   pgSideGhosts();
 }
 
-// Compteurs par bibliothèque (type) — taille de chaque sous-bibliothèque, tous statuts
+// Compteurs de chaque facette de la colonne (kind/niveau/registre), tous statuts
 async function pgBibCounts() {
   const r = await window.olympus.pegasusRefs({ statut: "tous", limit: 500 });
   if (!r.ok) return;
   const refs = r.refs || [];
-  const byKind = { site: 0, animation: 0, matiere: 0, secteur: 0, autre: 0 };
-  for (const x of refs) { const k = byKind[x.kind] !== undefined ? x.kind : "autre"; byKind[k]++; }
   $("pgCntBib").textContent = refs.length || "";
-  $("pgCntTous").textContent = refs.length || "";
-  for (const k of Object.keys(byKind)) {
-    const el = $("pgCnt" + k.charAt(0).toUpperCase() + k.slice(1));
-    if (el) el.textContent = byKind[k] || "";
-  }
+  document.querySelectorAll(".pg-bibfold").forEach((el) => {
+    const k = el.dataset.kind || "", n = el.dataset.niveau || "", g = el.dataset.registre || "";
+    const c = refs.filter((x) => (!k || x.kind === k) && (!n || x.niveau === n) && (!g || x.registre === g)).length;
+    const cnt = el.querySelector(".cnt");
+    if (cnt) cnt.textContent = c || "";
+  });
   pgSideGhosts();
 }
 
@@ -320,16 +322,16 @@ async function pgRunSeo(key) {
 function pgRefFilters() {
   return {
     q: $("pgRefQ").value.trim(),
-    kind: pgKind,
-    niveau: $("pgRefNiveau").value,
-    registre: $("pgRefRegistre").value,
+    kind: pgFacet.kind || "",
+    niveau: pgFacet.niveau || "",
+    registre: pgFacet.registre || "",
     statut: $("pgRefStatut").value,
   };
 }
 async function pgLoadRefs() {
   const box = $("pgRefs");
-  document.querySelectorAll(".pg-bibfold").forEach((el) => el.classList.toggle("active", el.dataset.kind === pgKind));
-  $("pgLibTitle").textContent = PG_KIND_LABEL[pgKind] || "Bibliothèque";
+  document.querySelectorAll(".pg-bibfold").forEach((el) => el.classList.toggle("active", pgFacetEq(el)));
+  $("pgLibTitle").textContent = pgFacet.label || "Bibliothèque";
   pgBibCounts();
   const r = await window.olympus.pegasusRefs(pgRefFilters());
   if (!r.ok && r.missing_table) {
@@ -374,23 +376,7 @@ async function pgLoadRefs() {
     </div>`;
   };
 
-  if (pgKind === "secteur") {
-    // Groupé par secteur, niveaux de luxe ordonnés (Ultra luxe → Luxe → Mainstream)
-    const secOrder = ["restaurant", "bijou", "mode", "corporate", "artistique"];
-    const TIERS = ["Ultra luxe", "Luxe", "Mainstream"];
-    const tierRank = (t) => { for (let i = 0; i < TIERS.length; i++) if ((t || "").includes(TIERS[i])) return i; return 9; };
-    const groups = {};
-    for (const x of refs) { const k = (x.business || "autre").toLowerCase(); (groups[k] = groups[k] || []).push(x); }
-    const keys = Object.keys(groups).sort((a, b) => { const ia = secOrder.indexOf(a), ib = secOrder.indexOf(b); return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib); });
-    box.innerHTML = keys.map((k) => {
-      const items = groups[k].sort((a, b) => tierRank(a.titre) - tierRank(b.titre));
-      const name = k.charAt(0).toUpperCase() + k.slice(1);
-      const rows = items.map((x) => rowHTML(x, { label: TIERS.find((t) => (x.titre || "").includes(t)) || x.titre, hideBusiness: true, hideDate: true, showKind: false })).join("");
-      return `<div class="pg-sub">${escapeHtml(name)}</div>${rows}`;
-    }).join("");
-  } else {
-    box.innerHTML = refs.map((x) => rowHTML(x)).join("");
-  }
+  box.innerHTML = refs.map((x) => rowHTML(x)).join("");
   box.querySelectorAll(".pg-ref .t a[data-url]").forEach((a) => { a.onclick = () => window.olympus.openExternal(a.dataset.url); });
   box.querySelectorAll(".pg-ract button").forEach((b) => {
     b.onclick = async () => {
@@ -404,12 +390,16 @@ async function pgLoadRefs() {
 }
 let pgRefQTimer;
 $("pgRefQ").addEventListener("input", () => { clearTimeout(pgRefQTimer); pgRefQTimer = setTimeout(pgLoadRefs, 300); });
-["pgRefNiveau", "pgRefRegistre", "pgRefStatut"].forEach((id) => { $(id).addEventListener("change", pgLoadRefs); });
+$("pgRefStatut").addEventListener("change", pgLoadRefs);
 
 // ── Proposer une référence
 $("pgRefNew").onclick = () => {
   const open = $("pgRefForm").classList.toggle("show");
-  if (open && pgKind) $("pgRfKind").value = pgKind; // classe d'emblée dans la bibliothèque ouverte
+  if (open) { // pré-classe la référence dans la facette ouverte
+    if (pgFacet.kind) $("pgRfKind").value = pgFacet.kind;
+    if (pgFacet.niveau) $("pgRfNiveau").value = pgFacet.niveau;
+    if (pgFacet.registre) $("pgRfRegistre").value = pgFacet.registre;
+  }
 };
 $("pgRfCancel").onclick = () => { $("pgRefForm").classList.remove("show"); };
 $("pgRfSave").onclick = async () => {
