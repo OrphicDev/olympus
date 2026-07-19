@@ -1,6 +1,38 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
 
+// ══════════ MOTION (doctrine skill : version calme obligatoire) ══════════
+// Les animations JS (inertie de la roue, scroll doux, compteurs) se coupent
+// si le système demande moins de mouvement. Le CSS est neutralisé à part.
+const M_REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+// Pose l'« arrivée » sur une page : les listes émergent en cascade, une fois.
+// La classe tombe après 700 ms pour que les rafraîchissements de données ne rejouent rien.
+function mArrive(pageEl) {
+  if (M_REDUCED || !pageEl) return;
+  pageEl.classList.remove("arrive");
+  void pageEl.offsetWidth; // force le redémarrage des animations
+  pageEl.classList.add("arrive");
+  clearTimeout(pageEl._arriveT);
+  pageEl._arriveT = setTimeout(() => pageEl.classList.remove("arrive"), 700);
+}
+// MATÉRIALISER — la donnée se compte sous les yeux (KPIs entiers uniquement)
+function mCountUp(root, sel) {
+  if (M_REDUCED || !root) return;
+  root.querySelectorAll(sel).forEach((el) => {
+    const raw = el.textContent.trim();
+    if (!/^\d{1,6}$/.test(raw)) return; // jamais sur les versions ("7.0.2") ni les tirets
+    const n = +raw;
+    if (n < 2) return;
+    const t0 = performance.now(), dur = 560;
+    const step = (t) => {
+      const p = Math.min(1, (t - t0) / dur);
+      el.textContent = String(Math.round(n * (1 - Math.pow(1 - p, 3))));
+      if (p < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  });
+}
+
 // ══════════ THÈME (sombre / clair) ══════════
 function applyTheme(t) { document.documentElement.setAttribute("data-theme", t); localStorage.setItem("olympusTheme", t); }
 applyTheme(localStorage.getItem("olympusTheme") || "dark");
@@ -13,7 +45,10 @@ document.querySelectorAll(".nav-item").forEach((it) => {
     document.querySelectorAll(".nav-item").forEach((x) => x.classList.remove("active"));
     it.classList.add("active");
     document.querySelectorAll(".page").forEach((p) => p.classList.remove("show"));
-    $("page-" + it.dataset.page).classList.add("show");
+    const pg = $("page-" + it.dataset.page);
+    pg.classList.add("show");
+    mArrive(pg);
+    setTimeout(() => mCountUp(pg, ".ir-kpi .n, .ag-kpi .n, .ir-stat .n"), 80); // les KPIs se comptent à l'arrivée
     $("hub").classList.toggle("with-rail", it.dataset.page === "chronos"); // roue + agenda : Chronos uniquement
   };
 });
@@ -26,6 +61,7 @@ $("profileCard").onclick = () => {
   document.querySelectorAll(".nav-item").forEach((x) => x.classList.remove("active"));
   document.querySelectorAll(".page").forEach((p) => p.classList.remove("show"));
   $("page-profile").classList.add("show");
+  mArrive($("page-profile"));
   $("hub").classList.remove("with-rail");
 };
 document.querySelectorAll("[data-ext]").forEach((b) => { b.onclick = () => window.olympus.openExternal(b.dataset.ext); });
@@ -171,7 +207,7 @@ document.querySelectorAll(".pg-regfold").forEach((el) => {
     pgSetView("reglages");
     document.querySelectorAll(".pg-regfold").forEach((x) => x.classList.toggle("active", x === el));
     const sec = $(el.dataset.sec);
-    if (sec) sec.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (sec) sec.scrollIntoView({ behavior: M_REDUCED ? "auto" : "smooth", block: "start" });
   };
 });
 
@@ -368,8 +404,12 @@ function pgRenderDetail() {
     m.textContent = (r.copied ? "Copie créée. " : "") + (r.mode === "wordpress" ? "WordPress lancé en local (wp-now) + Claude Code ouvert." : r.mode === "static" ? "Site ouvert dans le navigateur + Claude Code ouvert." : "Dossier prêt + Claude Code ouvert.");
   };
   pgRenderSecPanel(s);
+  // Le nombre de pages se compte une seule fois par site (pas à chaque rafraîchissement)
+  const insOk = pgInspect[s.key] && pgInspect[s.key].ok;
+  if (insOk && !pgCounted.has(s.key)) { pgCounted.add(s.key); mCountUp(box, ".pg-kpi .n"); }
   pgFillGhosts(box);
 }
+const pgCounted = new Set();
 
 function pgTabHTML(tab, s) {
   if (tab === "general") return pgTabGeneral(s);
@@ -665,6 +705,7 @@ async function pgLoadRefs() {
   };
 
   box.innerHTML = refs.map((x) => rowHTML(x)).join("");
+  mArrive(box); // la bibliothèque émerge en cascade au changement de facette
   box.querySelectorAll(".pg-ref .t a[data-url]").forEach((a) => { a.onclick = () => window.olympus.openExternal(a.dataset.url); });
   box.querySelectorAll(".pg-ract button").forEach((b) => {
     b.onclick = async () => {
@@ -1137,6 +1178,7 @@ function animateSpin() {
   spinRAF = requestAnimationFrame(animateSpin);
 }
 function kickSpin(dir) {
+  if (M_REDUCED) return;                        // version calme : la roue ne tourne pas
   spinTarget += dir * 10;                       // élan par cran
   const cap = 44;                               // évite l'emballement en scroll rapide
   spinTarget = Math.max(spin - cap, Math.min(spin + cap, spinTarget));
@@ -1875,6 +1917,8 @@ function renderIrHome() {
       </div>
     </div>`;
   irFillGhosts();
+  // MATÉRIALISER — les compteurs de l'Accueil se comptent à la première ouverture
+  if (!renderIrHome._counted) { renderIrHome._counted = true; mCountUp($("irHome"), ".ir-stat .n"); }
 }
 // Comble les deux colonnes jusqu'au bas de la fenêtre avec des lignes fantômes (mesuré, pas estimé).
 function irFillGhosts() {

@@ -1066,44 +1066,86 @@
   .float-btn{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;cursor:pointer;color:var(--muted);background:var(--card);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);box-shadow:var(--neu);font-size:15px;transition:color .12s;}
   .float-btn:hover{color:var(--txt);}
 
-  /* ══════════ Animations ══════════ */
+  /* ══════════ Système de motion Orphic ══════════
+     Doctrine (skill orphic-web-design) : chaque animation a une intention
+     nommable — RÉVÉLER (entrées), GUIDER (transitions, survols), MATÉRIALISER
+     (états, données). Zéro décoration gratuite. Un seul vocabulaire :
+     les choses émergent du fond par le fader, les points s'allument ensuite. */
+  :root{
+    --m-fast:.16s;            /* micro-interactions : réponse immédiate */
+    --m-base:.32s;            /* transitions de contenu */
+    --m-slow:.5s;             /* entrées de page */
+    --m-ease:cubic-bezier(.2,.8,.2,1);   /* glissé signature (décélération douce) */
+    --m-spring:cubic-bezier(.2,.7,.3,1); /* micro-rebond discret */
+  }
+  /* — Vocabulaire (keyframes) — */
   @keyframes fadeUp{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:none;}}
   @keyframes fadeIn{from{opacity:0;}to{opacity:1;}}
   @keyframes slideInLeft{from{opacity:0;transform:translateX(-12px);}to{opacity:1;transform:none;}}
   @keyframes popIn{0%{opacity:0;transform:scale(.92);}60%{transform:scale(1.015);}100%{opacity:1;transform:scale(1);}}
   @keyframes floatIn{from{opacity:0;transform:translateY(-10px);}to{opacity:1;transform:none;}}
-  /* Transition douce des couleurs au changement de thème */
+  @keyframes dotBloom{0%{opacity:0;transform:scale(.3);}60%{opacity:1;transform:scale(1.35);}100%{opacity:1;transform:scale(1);}}
+  /* GUIDER — transition douce des couleurs au changement de thème */
   body,.sidebar,#rightbar,#rbBlank{transition:background .35s ease,color .3s ease;}
-  /* Micro-interactions (survol / clic) */
-  .nav-item,.float-btn,.btn,.btn-lg,.cal-btn,.member-btn,.crm-row,.env-row,.cal-cell,#profileCard,.card-icon,.app-icon,.ev-chip,.card,.avatar-sm{transition:transform .2s cubic-bezier(.2,.7,.3,1),color .15s,background .16s,box-shadow .2s,opacity .16s,filter .16s;}
+  /* GUIDER — micro-interactions (survol / clic) : l'interface répond sous la main */
+  .nav-item,.float-btn,.btn,.btn-lg,.cal-btn,.member-btn,.crm-row,.env-row,.cal-cell,#profileCard,.card-icon,.app-icon,.ev-chip,.card,.avatar-sm{transition:transform .2s var(--m-spring),color var(--m-fast),background var(--m-fast),box-shadow .2s,opacity var(--m-fast),filter var(--m-fast);}
   .nav-item:hover:not(.locked):not(.active){transform:translateX(3px);}
   .nav-item:active:not(.locked){transform:scale(.99);}
-  .float-btn:hover{transform:rotate(180deg) scale(1.08);}
+  .float-btn:hover{transform:rotate(180deg) scale(1.08);} /* bascule jour/nuit = rotation */
   .card-icon:hover,.app-icon:hover{transform:scale(1.05) rotate(-1.5deg);}
   .card:hover{transform:translateY(-2px);}
   .crm-row:hover,.env-row:hover{transform:translateX(3px);}
   .ev-chip:hover{transform:scale(1.05);}
   .btn:active,.btn-lg:active,.cal-btn:active,.member-btn:active{transform:scale(.96);}
   #profileCard:active{transform:scale(.99);}
-  /* Entrées */
+  /* RÉVÉLER — entrées permanentes (structure de l'app) */
   .page.show{animation:fadeIn .26s ease;}
-  .page-head{animation:fadeUp .44s both;}
-  .section{animation:fadeUp .48s both;}
+  .page-head{animation:fadeUp .44s var(--m-ease) both;}
+  .section{animation:fadeUp .48s var(--m-ease) both;}
   .section:nth-of-type(2){animation-delay:.06s;}
   .section:nth-of-type(3){animation-delay:.12s;}
   .section:nth-of-type(4){animation-delay:.18s;}
   .section:nth-of-type(5){animation-delay:.24s;}
-  .bubble{animation:popIn .3s both;}
+  .bubble{animation:popIn .3s var(--m-spring) both;}
   .cal-cell{animation:fadeIn .32s both;}
-  .crm-row,.env-row{animation:fadeUp .42s both;}
+  .crm-row,.env-row{animation:fadeUp .42s var(--m-ease) both;}
   .crm-row:nth-child(2),.env-row:nth-child(2){animation-delay:.05s;}
   .crm-row:nth-child(3),.env-row:nth-child(3){animation-delay:.1s;}
   .crm-row:nth-child(4),.env-row:nth-child(4){animation-delay:.15s;}
   .crm-row:nth-child(5),.env-row:nth-child(5){animation-delay:.2s;}
   .crm-row:nth-child(n+6),.env-row:nth-child(n+6){animation-delay:.25s;}
-  #floatBar{animation:floatIn .55s both;}
-  .side-brand,#profileCard{animation:fadeUp .5s both;}
+  #floatBar{animation:floatIn .55s var(--m-ease) both;}
+  .side-brand,#profileCard{animation:fadeUp .5s var(--m-ease) both;}
+  .auth-card{animation:fadeUp .55s var(--m-ease) both;}
   .status-dot.off{transition:opacity .3s;}
+  /* RÉVÉLER — arrivée sur une app (.page.arrive, posé ~700 ms par le JS au
+     changement de vue) : les listes émergent en cascade à travers le fader,
+     puis MATÉRIALISER : les points d'état s'allument une fois la structure posée.
+     La cascade ne rejoue pas sur les rafraîchissements de données. */
+  .arrive .hm-conv,.arrive .ir-row,.arrive .ir-folder,.arrive .ag-row,.arrive .at-row,
+  .arrive .ap-card,.arrive .ap-item,.arrive .tl-ev,.arrive .pg-ref,.arrive .pg-bk,
+  .arrive .rb-ev,.arrive .member-row,.arrive .mn-card,.arrive .lib-row,.arrive .pg-site,
+  .arrive .ir-ghostrow{animation:fadeUp .38s var(--m-ease) both;}
+  .arrive .hm-conv:nth-child(2),.arrive .ir-row:nth-child(2),.arrive .ir-folder:nth-child(2),.arrive .ag-row:nth-child(2),.arrive .at-row:nth-child(2),.arrive .ap-card:nth-child(2),.arrive .ap-item:nth-child(2),.arrive .tl-ev:nth-child(2),.arrive .pg-ref:nth-child(2),.arrive .rb-ev:nth-child(2),.arrive .ir-ghostrow:nth-child(2){animation-delay:.04s;}
+  .arrive .hm-conv:nth-child(3),.arrive .ir-row:nth-child(3),.arrive .ir-folder:nth-child(3),.arrive .ag-row:nth-child(3),.arrive .at-row:nth-child(3),.arrive .ap-card:nth-child(3),.arrive .ap-item:nth-child(3),.arrive .tl-ev:nth-child(3),.arrive .pg-ref:nth-child(3),.arrive .rb-ev:nth-child(3),.arrive .ir-ghostrow:nth-child(3){animation-delay:.08s;}
+  .arrive .hm-conv:nth-child(4),.arrive .ir-row:nth-child(4),.arrive .ir-folder:nth-child(4),.arrive .ag-row:nth-child(4),.arrive .at-row:nth-child(4),.arrive .ap-card:nth-child(4),.arrive .ap-item:nth-child(4),.arrive .tl-ev:nth-child(4),.arrive .pg-ref:nth-child(4),.arrive .rb-ev:nth-child(4),.arrive .ir-ghostrow:nth-child(4){animation-delay:.12s;}
+  .arrive .hm-conv:nth-child(5),.arrive .ir-row:nth-child(5),.arrive .ir-folder:nth-child(5),.arrive .ag-row:nth-child(5),.arrive .at-row:nth-child(5),.arrive .ap-card:nth-child(5),.arrive .ap-item:nth-child(5),.arrive .tl-ev:nth-child(5),.arrive .pg-ref:nth-child(5),.arrive .rb-ev:nth-child(5),.arrive .ir-ghostrow:nth-child(5){animation-delay:.16s;}
+  .arrive .hm-conv:nth-child(6),.arrive .ir-row:nth-child(6),.arrive .ir-folder:nth-child(6),.arrive .ag-row:nth-child(6),.arrive .at-row:nth-child(6),.arrive .ap-card:nth-child(6),.arrive .ap-item:nth-child(6),.arrive .tl-ev:nth-child(6),.arrive .pg-ref:nth-child(6),.arrive .rb-ev:nth-child(6),.arrive .ir-ghostrow:nth-child(6){animation-delay:.2s;}
+  .arrive .hm-conv:nth-child(n+7),.arrive .ir-row:nth-child(n+7),.arrive .ir-folder:nth-child(n+7),.arrive .ag-row:nth-child(n+7),.arrive .at-row:nth-child(n+7),.arrive .ap-card:nth-child(n+7),.arrive .ap-item:nth-child(n+7),.arrive .tl-ev:nth-child(n+7),.arrive .pg-ref:nth-child(n+7),.arrive .rb-ev:nth-child(n+7),.arrive .ir-ghostrow:nth-child(n+7){animation-delay:.24s;}
+  .arrive .pg-kpi,.arrive .ag-kpi,.arrive .ir-kpi,.arrive .ir-stat{animation:fadeUp .5s var(--m-ease) both;}
+  .arrive .pg-kpi:nth-child(2),.arrive .ag-kpi:nth-child(2),.arrive .ir-kpi:nth-child(2),.arrive .ir-stat:nth-child(2){animation-delay:.07s;}
+  .arrive .pg-kpi:nth-child(3),.arrive .ag-kpi:nth-child(3),.arrive .ir-kpi:nth-child(3),.arrive .ir-stat:nth-child(3){animation-delay:.14s;}
+  .arrive .pg-kpi:nth-child(n+4),.arrive .ag-kpi:nth-child(n+4),.arrive .ir-kpi:nth-child(n+4),.arrive .ir-stat:nth-child(n+4){animation-delay:.21s;}
+  .arrive .pg-dot,.arrive .ldot,.arrive .status-dot,.arrive .gdot{animation:dotBloom .55s var(--m-spring) .28s both;}
+  .arrive .pg-workbtn,.arrive .pg-gbtns .pg-bigbtn,.arrive .pg-foot .pg-bigbtn{animation:fadeUp .45s var(--m-ease) both;}
+  .arrive .pg-gbtns .pg-bigbtn:nth-child(2){animation-delay:.06s;}
+  .arrive .pg-gbtns .pg-bigbtn:nth-child(3){animation-delay:.12s;}
+  /* ACCESSIBILITÉ — interdit #3 : version calme obligatoire.
+     Tout mouvement est neutralisé si le système demande moins d'animations. */
+  @media (prefers-reduced-motion: reduce){
+    *,*::before,*::after{animation-duration:.01ms!important;animation-delay:0ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;}
+    html{scroll-behavior:auto!important;}
+  }
 </style>
 </head>
 <body>
