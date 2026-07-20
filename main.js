@@ -3,6 +3,7 @@ const { app, BrowserWindow, ipcMain, shell, dialog, Menu, safeStorage } = requir
 const { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync, chmodSync, readdirSync, rmSync, statSync } = require("node:fs");
 const { join, basename } = require("node:path");
 const { homedir, tmpdir } = require("node:os");
+const { createServer } = require("node:http");
 const { execFile } = require("node:child_process");
 const { randomUUID, privateDecrypt, constants: cryptoConstants, createSign } = require("node:crypto");
 const nodemailer = require("nodemailer");
@@ -1578,7 +1579,7 @@ function argosState() {
     };
     argosSave(st);
   }
-  st.brands = st.brands || []; st.posts = st.posts || []; st.inboxReplies = st.inboxReplies || []; st.connections = st.connections || {};
+  st.brands = st.brands || []; st.posts = st.posts || []; st.inboxReplies = st.inboxReplies || []; st.connections = st.connections || {}; st.providers = st.providers || {};
   return st;
 }
 // Registre des plateformes + leurs API réelles (endpoints chargés depuis argos-apis.json,
@@ -1593,6 +1594,74 @@ const ARGOS_PLATFORMS = [
   { id: "meta_ads", label: "Meta Ads", icon: "📣", api: "Meta Marketing API" },
   { id: "google_ads", label: "Google Ads", icon: "🔎", api: "Google Ads API" },
 ];
+// Une "app développeur" (fournisseur) peut couvrir plusieurs surfaces : une seule app Meta
+// donne Instagram + Facebook + Meta Ads. Les clés sont stockées par fournisseur, pas par surface.
+const ARGOS_PROVIDERS = {
+  meta: {
+    label: "Meta",
+    surfaces: ["instagram", "facebook", "meta_ads"],
+    graph: "v25.0",
+    authUrl: "https://www.facebook.com/v25.0/dialog/oauth",
+    tokenUrl: "https://graph.facebook.com/v25.0/oauth/access_token",
+    // Lecture (insights) + publication IG/FB + lecture pubs. En mode Développement de l'app,
+    // l'admin peut accorder ces permissions sans App Review (cf. guide).
+    scopes: ["instagram_basic", "instagram_manage_insights", "instagram_manage_comments", "instagram_content_publish",
+      "pages_show_list", "pages_read_engagement", "read_insights", "pages_manage_posts", "business_management", "ads_read"],
+  },
+};
+function argosProviderOf(platform) {
+  for (const [prov, cfg] of Object.entries(ARGOS_PROVIDERS)) if (cfg.surfaces.includes(platform)) return prov;
+  return platform;
+}
+const ARGOS_OAUTH_PORT = 47823; // fixe : le redirect URI enregistré côté plateforme doit correspondre
+function argosCallbackHtml(ok) {
+  return `<!doctype html><meta charset="utf-8"><title>Olympus — Argos</title>
+<body style="margin:0;font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#0f1012;color:#eee;display:grid;place-items:center;height:100vh;text-align:center">
+<div><div style="font-size:40px">${ok ? "✓" : "✕"}</div>
+<h2 style="font-weight:600">${ok ? "Compte autorisé" : "Autorisation annulée"}</h2>
+<p style="color:#888">Tu peux fermer cet onglet et revenir dans Olympus.</p></div>`;
+}
+// Flux OAuth "native app" (RFC 8252) : navigateur système + serveur de redirection en localhost.
+function argosLoopbackAuth(authUrl, expectedState) {
+  return new Promise((resolve, reject) => {
+    let done = false;
+    const finish = (fn, arg) => { if (done) return; done = true; setTimeout(() => { try { server.close(); } catch {} }, 300); fn(arg); };
+    const server = createServer((req, res) => {
+      let u; try { u = new URL(req.url, `http://localhost:${ARGOS_OAUTH_PORT}`); } catch { res.writeHead(400); return res.end(); }
+      if (u.pathname !== "/callback") { res.writeHead(404); return res.end(); }
+      const code = u.searchParams.get("code");
+      const state = u.searchParams.get("state");
+      const err = u.searchParams.get("error_description") || u.searchParams.get("error");
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }); res.end(argosCallbackHtml(!!code && !err));
+      if (err) return finish(reject, new Error(err));
+      if (!code) return finish(reject, new Error("Aucun code d'autorisation reçu."));
+      if (state !== expectedState) return finish(reject, new Error("État OAuth invalide (protection anti-CSRF)."));
+      finish(resolve, code);
+    });
+    server.on("error", (e) => finish(reject, new Error(`Port ${ARGOS_OAUTH_PORT} indisponible : ${e.message}`)));
+    server.listen(ARGOS_OAUTH_PORT, "127.0.0.1", () => { shell.openExternal(authUrl); });
+    setTimeout(() => finish(reject, new Error("Délai dépassé — la connexion a été annulée.")), 300000);
+  });
+}
+async function argosJson(url) { const r = await fetch(url); const j = await r.json().catch(() => ({})); return { ok: r.ok, status: r.status, j }; }
+// Connexion Meta complète : code → jeton court → jeton long → Pages + comptes IG + comptes pub.
+async function argosMetaConnect(appId, appSecret) {
+  const V = ARGOS_PROVIDERS.meta.graph;
+  const redirect = `http://localhost:${ARGOS_OAUTH_PORT}/callback`;
+  const state = randomUUID();
+  const authUrl = `${ARGOS_PROVIDERS.meta.authUrl}?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(redirect)}&state=${state}&response_type=code&scope=${encodeURIComponent(ARGOS_PROVIDERS.meta.scopes.join(","))}`;
+  const code = await argosLoopbackAuth(authUrl, state);
+  const short = await argosJson(`${ARGOS_PROVIDERS.meta.tokenUrl}?client_id=${encodeURIComponent(appId)}&client_secret=${encodeURIComponent(appSecret)}&redirect_uri=${encodeURIComponent(redirect)}&code=${encodeURIComponent(code)}`);
+  if (!short.ok || !short.j.access_token) throw new Error("Échange du code refusé : " + (short.j.error?.message || short.status));
+  const ll = await argosJson(`${ARGOS_PROVIDERS.meta.tokenUrl}?grant_type=fb_exchange_token&client_id=${encodeURIComponent(appId)}&client_secret=${encodeURIComponent(appSecret)}&fb_exchange_token=${encodeURIComponent(short.j.access_token)}`);
+  const userToken = ll.j.access_token || short.j.access_token;
+  const expiresIn = ll.j.expires_in || short.j.expires_in || 0;
+  const pg = await argosJson(`https://graph.facebook.com/${V}/me/accounts?fields=name,access_token,instagram_business_account{username,id}&access_token=${encodeURIComponent(userToken)}`);
+  const pages = (pg.j.data || []).map((p) => ({ id: p.id, name: p.name, access_token: p.access_token, ig_user_id: p.instagram_business_account?.id || null, ig_username: p.instagram_business_account?.username || null }));
+  let adAccounts = [];
+  try { const ad = await argosJson(`https://graph.facebook.com/${V}/me/adaccounts?fields=name,account_id&access_token=${encodeURIComponent(userToken)}`); adAccounts = (ad.j.data || []).map((a) => ({ id: a.account_id, name: a.name })); } catch {}
+  return { userToken, expiresIn, pages, adAccounts };
+}
 let _argosApis = null;
 function argosApis() {
   if (_argosApis) return _argosApis;
@@ -1733,7 +1802,10 @@ ipcMain.handle("argos:state", () => {
   const connections = {};
   for (const p of ARGOS_PLATFORMS) {
     const c = st.connections[p.id] || {};
-    connections[p.id] = { id: p.id, label: p.label, icon: p.icon, api: p.api, status: c.status || "disconnected", account: c.account || null, hasKeys: !!(c.app_id || c.client_id), docs: !!(argosApis().apis || []).find((a) => a.platform === p.id || (a.covers || []).includes(p.id)) };
+    const prov = argosProviderOf(p.id);
+    const pk = st.providers[prov] || {};
+    // Ne renvoie JAMAIS de secret ni de jeton au renderer — uniquement des métadonnées.
+    connections[p.id] = { id: p.id, label: p.label, icon: p.icon, api: p.api, provider: prov, status: c.status || "disconnected", account: c.account || null, hasKeys: !!(pk.app_id || pk.client_id), expires_at: c.expires_at || pk.expires_at || null, docs: !!(argosApis().apis || []).find((a) => a.platform === p.id || (a.covers || []).includes(p.id)) };
   }
   return { ok: true, brands: st.brands, connections };
 });
@@ -1819,13 +1891,42 @@ const ARGOS_KEY_FIELDS = { app_id: false, client_id: false, developer_token: tru
 ipcMain.handle("argos:connSaveKeys", (_e, platform, keys) => {
   if (!ARGOS_PLATFORMS.some((p) => p.id === platform)) return { ok: false, error: "Plateforme inconnue." };
   const st = argosState();
-  const c = st.connections[platform] || {};
+  const provider = argosProviderOf(platform); // clés partagées entre surfaces d'un même fournisseur
+  const cur = st.providers[provider] || {};
   const clean = {};
   for (const [k, isSecret] of Object.entries(ARGOS_KEY_FIELDS)) {
     if (keys && typeof keys[k] === "string" && keys[k].trim()) clean[k] = isSecret ? argosEncSecret(keys[k].trim()) : keys[k].trim();
   }
-  st.connections[platform] = { ...c, ...clean, status: c.status || "disconnected" };
+  st.providers[provider] = { ...cur, ...clean };
   return { ok: argosSave(st) };
+});
+// Lance le flux OAuth d'un fournisseur et connecte ses surfaces.
+ipcMain.handle("argos:connect", async (_e, platform) => {
+  const provider = argosProviderOf(platform);
+  const st = argosState();
+  const pk = st.providers[provider] || {};
+  try {
+    if (provider === "meta") {
+      const appId = pk.app_id, appSecret = argosDecSecret(pk.app_secret);
+      if (!appId || !appSecret) return { ok: false, error: "Renseigne d'abord l'App ID et le secret Meta." };
+      const r = await argosMetaConnect(appId, appSecret);
+      if (!r.pages.length) return { ok: false, error: "Aucune Page Facebook accessible avec ce compte. Vérifie que tu es admin d'au moins une Page (et lie ton compte Instagram pro à cette Page)." };
+      const pages = r.pages.map((p) => ({ id: p.id, name: p.name, token: argosEncSecret(p.access_token), ig_user_id: p.ig_user_id, ig_username: p.ig_username }));
+      const igPages = pages.filter((p) => p.ig_user_id);
+      const expires_at = r.expiresIn ? new Date(Date.now() + r.expiresIn * 1000).toISOString() : null;
+      st.providers.meta = { ...pk, user_token: argosEncSecret(r.userToken), expires_at, connected_at: new Date().toISOString(), assets: { pages, adAccounts: r.adAccounts } };
+      // Surface Facebook : compte primaire = 1re Page (les autres restent dispo pour le mapping par marque)
+      const p0 = pages[0];
+      st.connections.facebook = { provider: "meta", status: "connected", account: p0.name + (pages.length > 1 ? ` (+${pages.length - 1})` : ""), access_token: p0.token, page_id: p0.id };
+      // Surface Instagram : 1re Page reliée à un compte IG pro
+      if (igPages.length) { const i0 = igPages[0]; st.connections.instagram = { provider: "meta", status: "connected", account: "@" + i0.ig_username + (igPages.length > 1 ? ` (+${igPages.length - 1})` : ""), access_token: i0.token, ig_user_id: i0.ig_user_id }; }
+      // Surface Meta Ads : 1er compte publicitaire (utilise le jeton utilisateur)
+      if (r.adAccounts.length) { const a0 = r.adAccounts[0]; st.connections.meta_ads = { provider: "meta", status: "connected", account: a0.name + (r.adAccounts.length > 1 ? ` (+${r.adAccounts.length - 1})` : ""), access_token: argosEncSecret(r.userToken), ad_account_id: a0.id }; }
+      argosSave(st);
+      return { ok: true, summary: { pages: pages.length, ig: igPages.length, ads: r.adAccounts.length } };
+    }
+    return { ok: false, error: "La connexion " + provider + " arrive bientôt — pour l'instant, Meta est disponible." };
+  } catch (e) { return { ok: false, error: e.message || String(e) }; }
 });
 ipcMain.handle("argos:connDisconnect", (_e, platform) => {
   const st = argosState(); delete st.connections[platform]; return { ok: argosSave(st) };

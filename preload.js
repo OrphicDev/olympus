@@ -141,6 +141,7 @@ contextBridge.exposeInMainWorld("olympus", {
   argosPostSave: (post) => ipcRenderer.invoke("argos:postSave", post),
   argosPostDelete: (id) => ipcRenderer.invoke("argos:postDelete", id),
   argosConnSaveKeys: (platform, keys) => ipcRenderer.invoke("argos:connSaveKeys", platform, keys),
+  argosConnect: (platform) => ipcRenderer.invoke("argos:connect", platform),
   argosConnDisconnect: (platform) => ipcRenderer.invoke("argos:connDisconnect", platform),
   argosApiDocs: (platform) => ipcRenderer.invoke("argos:apiDocs", platform),
   // Chronos — calendrier iCloud (CalDAV)

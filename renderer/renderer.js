@@ -5447,42 +5447,77 @@ function arReportPdfHTML(b, d, a, lines) {
   </body></html>`;
 }
 
-// ── Connexions : plateformes + clés + documentation d'API réelle ──
+// Champs de clés + libellés par fournisseur (une app peut couvrir plusieurs surfaces)
+const AR_PROVIDER_KEYS = {
+  meta: [{ k: "app_id", label: "App ID Meta", secret: false }, { k: "app_secret", label: "Clé secrète Meta", secret: true }],
+  google: [{ k: "client_id", label: "Client ID", secret: false }, { k: "client_secret", label: "Client secret", secret: true }, { k: "developer_token", label: "Developer token (Ads)", secret: true }],
+};
+const AR_PROV_LABEL = { meta: "Meta", google: "Google" };
+const AR_CONNECTABLE = new Set(["meta"]); // fournisseurs dont le flux OAuth est actif
+// ── Connexions : regroupées par fournisseur (une app développeur → plusieurs surfaces) ──
 async function arViewConnexions(box) {
   arState = null; const st = await window.olympus.argosState(); if (st.ok) arState = st;
   const conns = Object.values(arState.connections || {});
-  let html = arHead("Connexions", "les comptes qui alimentent Argos — clés d'app puis OAuth par client");
-  html += `<div class="ga-note" style="margin-bottom:16px;">Chaque plateforme demande d'abord les <b>clés d'application de l'agence</b> (une fois), puis une autorisation par compte client. Les appels d'API sont déjà écrits — Argos passera automatiquement des données de démonstration aux vraies données à la connexion.</div>`;
-  html += `<div class="ar-conns">` + conns.map((c) => `
-    <div class="ar-connc" data-conn="${c.id}">
-      <div class="ch"><span class="ic">${c.icon}</span><span class="n">${c.label}</span>${c.docs ? '<span class="tag" style="font-size:9px;color:var(--ok);border:1px solid color-mix(in srgb,var(--ok) 40%,transparent);border-radius:20px;padding:2px 8px;">API documentée</span>' : ""}</div>
-      <div class="api">${escapeHtml(c.api)}</div>
-      <div class="st ${c.status === "connected" ? "ok" : ""}"><span class="dot"></span>${c.status === "connected" ? "connecté · " + escapeHtml(c.account || "") : (c.hasKeys ? "clés enregistrées — OAuth à venir" : "non connecté")}</div>
+  // Regroupe les surfaces par fournisseur
+  const groups = {};
+  conns.forEach((c) => { (groups[c.provider] = groups[c.provider] || []).push(c); });
+  let html = arHead("Connexions", "une app développeur par fournisseur, puis autorisation OAuth");
+  html += `<div class="ga-note" style="margin-bottom:16px;">On renseigne les <b>clés de l'app développeur</b> une fois par fournisseur, puis on clique <b>Connecter un compte</b> : le navigateur s'ouvre, tu autorises, et Argos bascule de la démo aux <b>vraies données</b> (jeton chiffré localement, jamais partagé).</div>`;
+  html += `<div class="ar-conns">`;
+  for (const [prov, surfaces] of Object.entries(groups)) {
+    const keyFields = AR_PROVIDER_KEYS[prov] || [{ k: "app_id", label: "App ID", secret: false }, { k: "app_secret", label: "App Secret", secret: true }];
+    const hasKeys = surfaces[0].hasKeys;
+    const connectable = AR_CONNECTABLE.has(prov);
+    const anyConnected = surfaces.some((s) => s.status === "connected");
+    html += `<div class="ar-connc" data-prov="${prov}">
+      <div class="ch"><span class="ic">${surfaces.map((s) => s.icon).join(" ")}</span><span class="n">${escapeHtml(AR_PROV_LABEL[prov] || surfaces.map((s) => s.label).join(" · "))}</span>${connectable ? "" : '<span class="tag" style="font-size:9px;color:var(--dim);border:1px solid var(--line);border-radius:20px;padding:2px 8px;">bientôt</span>'}</div>
+      <div class="api">${surfaces.map((s) => s.icon + " " + s.label).join("  ·  ")}</div>
+      <div class="ar-surfaces">
+        ${surfaces.map((s) => `<div class="ar-surf ${s.status === "connected" ? "on" : ""}"><span class="dot"></span>${s.label}${s.status === "connected" ? " — " + escapeHtml(s.account || "connecté") : ""}</div>`).join("")}
+      </div>
       <div class="act">
-        <button class="btn sec" data-keys="${c.id}" style="padding:6px 14px;font-size:12px;">${c.hasKeys ? "Modifier les clés" : "Renseigner les clés"}</button>
-        <button class="btn sec" data-docs="${c.id}" style="padding:6px 14px;font-size:12px;">Voir l'API</button>
-        ${c.status === "connected" ? `<button class="btn sec" data-disc="${c.id}" style="padding:6px 14px;font-size:12px;">Déconnecter</button>` : ""}
+        <button class="btn sec" data-keys="${prov}" style="padding:6px 14px;font-size:12px;">${hasKeys ? "Modifier les clés" : "Renseigner les clés"}</button>
+        ${connectable && hasKeys ? `<button class="cal-btn" data-connect="${prov}" data-surface="${surfaces[0].id}" style="padding:6px 16px;font-size:12px;">${anyConnected ? "Reconnecter" : "Connecter un compte"}</button>` : ""}
+        <button class="btn sec" data-docs="${surfaces[0].id}" style="padding:6px 14px;font-size:12px;">Voir l'API</button>
+        ${anyConnected ? `<button class="btn sec" data-disc="${prov}" style="padding:6px 14px;font-size:12px;">Déconnecter</button>` : ""}
+        <span class="msg" data-connmsg="${prov}"></span>
       </div>
-      <div class="ar-keys" data-keysform="${c.id}" style="display:none;">
-        <input class="mood-in" data-k="app_id" placeholder="App ID / Client ID">
-        <input class="mood-in" data-k="app_secret" placeholder="App Secret / Client Secret" type="password">
-        <div class="pg-actrow"><button class="cal-btn" data-savekeys="${c.id}">Enregistrer</button><span class="msg" data-keymsg="${c.id}"></span></div>
+      <div class="ar-keys" data-keysform="${prov}" style="display:none;">
+        ${keyFields.map((f) => `<input class="mood-in" data-k="${f.k}" placeholder="${f.label}"${f.secret ? ' type="password"' : ""}>`).join("")}
+        <div class="pg-actrow"><button class="cal-btn" data-savekeys="${prov}" data-surface="${surfaces[0].id}">Enregistrer</button><span class="msg" data-keymsg="${prov}"></span></div>
       </div>
-      <div class="ar-doc" data-docbox="${c.id}" style="display:none;"></div>
-    </div>`).join("") + `</div>`;
+      <div class="ar-doc" data-docbox="${surfaces[0].id}" style="display:none;"></div>
+    </div>`;
+  }
+  html += `</div>`;
   box.innerHTML = html;
   box.querySelectorAll("[data-keys]").forEach((el) => el.onclick = () => { const f = box.querySelector(`[data-keysform="${el.dataset.keys}"]`); f.style.display = f.style.display === "none" ? "flex" : "none"; });
   box.querySelectorAll("[data-savekeys]").forEach((el) => el.onclick = async () => {
-    const id = el.dataset.savekeys; const f = box.querySelector(`[data-keysform="${id}"]`);
+    const prov = el.dataset.savekeys; const f = box.querySelector(`[data-keysform="${prov}"]`);
     const keys = {}; f.querySelectorAll("[data-k]").forEach((i) => { if (i.value.trim()) keys[i.dataset.k] = i.value.trim(); });
-    const r = await window.olympus.argosConnSaveKeys(id, keys);
-    const m = box.querySelector(`[data-keymsg="${id}"]`);
+    const r = await window.olympus.argosConnSaveKeys(el.dataset.surface, keys);
+    const m = box.querySelector(`[data-keymsg="${prov}"]`);
     m.className = "msg " + (r.ok ? "ok" : "err");
-    m.textContent = r.ok ? "Clés chiffrées et enregistrées — tu peux maintenant connecter un compte." : (r.error || "Échec de l'enregistrement.");
-    const s = await window.olympus.argosState(); if (s.ok) arState = s; // recharge sans casser la sidebar
-    arSideRender();
+    m.textContent = r.ok ? "Clés chiffrées et enregistrées." : (r.error || "Échec.");
+    if (r.ok) { arState = null; await arRenderView(); }
   });
-  box.querySelectorAll("[data-disc]").forEach((el) => el.onclick = async () => { await window.olympus.argosConnDisconnect(el.dataset.disc); arState = null; await renderArgos(); });
+  box.querySelectorAll("[data-connect]").forEach((el) => el.onclick = async () => {
+    const prov = el.dataset.connect; const m = box.querySelector(`[data-connmsg="${prov}"]`);
+    el.disabled = true; const label = el.textContent; el.textContent = "En attente…";
+    m.className = "msg"; m.textContent = "Le navigateur s'ouvre — autorise l'accès puis reviens ici.";
+    const r = await window.olympus.argosConnect(el.dataset.surface);
+    el.disabled = false; el.textContent = label;
+    if (r.ok) {
+      m.className = "msg ok";
+      m.textContent = `Connecté : ${r.summary.pages} page(s), ${r.summary.ig} compte(s) Instagram, ${r.summary.ads} compte(s) pub.`;
+      arState = null; arInvalidate(); setTimeout(() => arRenderView(), 1400);
+    } else { m.className = "msg err"; m.textContent = r.error || "Échec de la connexion."; }
+  });
+  box.querySelectorAll("[data-disc]").forEach((el) => el.onclick = async () => {
+    const prov = el.dataset.disc; const surfaces = (arState.connections ? Object.values(arState.connections).filter((s) => s.provider === prov) : []);
+    for (const s of surfaces) await window.olympus.argosConnDisconnect(s.id);
+    arState = null; arInvalidate(); await renderArgos();
+  });
   box.querySelectorAll("[data-docs]").forEach((el) => el.onclick = async () => {
     const id = el.dataset.docs; const db = box.querySelector(`[data-docbox="${id}"]`);
     if (db.style.display !== "none") { db.style.display = "none"; return; }
