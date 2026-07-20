@@ -669,9 +669,7 @@ async function pgArboRender(s) {
       <button class="cal-btn primary" id="abSaveVer" title="Fige l'état actuel comme une version du wireframe">✓ Enregistrer une version</button>
       <span class="ab-hint" id="abHint">${HINT}</span>
       ` : `
-      <span class="ab-lock">🔒 Version en ligne — lecture seule. Pour modifier le wireframe, crée une version de travail :</span>
-      <button class="cal-btn primary" id="abDupLive" title="Repart de la structure du site actuel">Dupliquer la version en ligne</button>
-      <button class="btn sec" id="abBlankNew" title="Nouvelle arborescence vide">Partir d'une page blanche</button>
+      <span class="ab-lock">🔒 Version actuelle du site — lecture seule. Pour la modifier, crée un nouveau wireframe dans la colonne de droite →</span>
       `}
     </div>
     <div class="ab-layout${editable ? "" : " readonly"}">
@@ -774,19 +772,6 @@ async function pgArboRender(s) {
   }
   drawWires();
   pgWireRenderCol(s);
-
-  // ── Version en ligne (lecture seule) : proposer une version de travail ──
-  if (!editable) {
-    box.querySelector("#abDupLive").onclick = () => {
-      const copy = JSON.parse(JSON.stringify(arbo));
-      copy.versionId = null;            // brouillon non enregistré = éditable
-      pgArboCache[s.key] = copy; pgArboSave(s.key); pgArboRender(s);
-    };
-    box.querySelector("#abBlankNew").onclick = () => {
-      pgArboCache[s.key] = { pages: [{ id: pgArboId(), titre: "Accueil", home: true, sections: [] }], versionId: null, zoom: arbo.zoom };
-      pgArboSave(s.key); pgArboRender(s);
-    };
-  }
 
   if (editable) {
     // Cliquer un câble = supprimer le lien (section→page ou node→node)
@@ -1009,44 +994,73 @@ async function pgWirePrep(s) {
   }
   return pgWireCache[s.key] = r.ok ? { versions: r.versions || [], deployed: r.deployed || null } : { versions: [], deployed: null };
 }
+// Crée un nouveau wireframe (version de travail) et l'ouvre dans l'éditeur.
+// from = "site" → duplique la version actuelle du site ; "blank" → part de zéro.
+async function pgWireNew(s, from) {
+  const r = await window.olympus.pegasusWireList(s.key);
+  const versions = (r.ok && r.versions) || [];
+  const deployed = r.ok ? r.deployed : null;
+  const n = versions.filter((v) => v.id !== deployed).length + 1;
+  let arbo;
+  if (from === "site" && deployed) {
+    const base = await window.olympus.pegasusWireLoad(s.key, deployed);
+    arbo = base.ok ? base.arbo : { pages: [] };
+  } else {
+    arbo = { pages: [{ id: pgArboId(), titre: "Accueil", home: true, sections: [] }] };
+  }
+  const sr = await window.olympus.pegasusWireSave(s.key, arbo, "Wireframe " + n, false);
+  if (sr.ok) { arbo.versionId = sr.id; pgArboCache[s.key] = arbo; await window.olympus.pegasusArboSave(s.key, arbo); }
+  delete pgWireCache[s.key];
+  pgArboRender(s);
+}
 async function pgWireRenderCol(s) {
   const box = $("abVersions"); if (!box) return;
   const r = await window.olympus.pegasusWireList(s.key);
   const man = pgWireCache[s.key] = r.ok ? { versions: r.versions || [], deployed: r.deployed || null } : { versions: [], deployed: null };
-  const vs = [...man.versions].sort((a, b) => (a.ts < b.ts ? 1 : -1)); // plus récent en haut
   const fmt = (ts) => { try { return new Date(ts).toLocaleString("fr-FR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }); } catch { return ts; } };
+  const cur = pgArboCache[s.key]?.versionId;
+  const enligne = man.versions.find((v) => v.id === man.deployed);
+  const drafts = man.versions.filter((v) => v.id !== man.deployed).sort((a, b) => (a.ts < b.ts ? 1 : -1));
   box.innerHTML = `
-    <div class="abv-h">Versions du wireframe</div>
-    ${vs.length ? vs.map((v, i) => `
-      <div class="abv-item${man.deployed === v.id ? " deployed" : ""}" data-id="${v.id}">
-        <div class="abv-top">
-          <span class="abv-name" data-f="vname" title="Double-clic pour renommer">${escapeHtml(v.label || "Sans nom")}</span>
-          ${i === 0 ? '<span class="abv-tag last">dernière</span>' : ""}
-        </div>
+    <div class="abv-h">Wireframes</div>
+    <button class="abv-new primary" data-new="site">＋ Nouveau wireframe<small>à partir de la version actuelle du site</small></button>
+    <button class="abv-new" data-new="blank">＋ Nouveau wireframe<small>de zéro</small></button>
+    ${enligne ? `<div class="abv-sub">Référence</div>
+      <div class="abv-item deployed${cur === enligne.id ? " current" : ""}" data-id="${enligne.id}">
+        <div class="abv-top"><span class="abv-name">Version actuelle du site</span>${cur === enligne.id ? '<span class="abv-tag last">ouverte</span>' : ""}</div>
+        <div class="abv-live">● telle qu'en ligne — lecture seule</div>
+        <div class="abv-acts"><button class="abv-open" data-act="view">Voir cette version →</button></div>
+      </div>` : ""}
+    <div class="abv-sub">Mes wireframes</div>
+    ${drafts.length ? drafts.map((v) => `
+      <div class="abv-item${cur === v.id ? " current" : ""}" data-id="${v.id}">
+        <div class="abv-top"><span class="abv-name" data-f="vname" title="Double-clic pour renommer">${escapeHtml(v.label || "Sans nom")}</span>${cur === v.id ? '<span class="abv-tag last">ouvert</span>' : ""}</div>
         <div class="abv-date">${fmt(v.ts)}</div>
-        ${man.deployed === v.id ? '<div class="abv-live">● version en ligne</div>' : ""}
         <button class="abv-work" data-act="work" title="Ouvre la version locale et travaille d'après ce wireframe">Travailler sur le site depuis ce wireframe</button>
         <div class="abv-acts">
-          <button class="abv-open" data-act="load" title="Ouvrir cette version dans l'éditeur">Ouvrir dans l'éditeur ↗</button>
-          ${man.deployed === v.id ? '<button class="abv-b" data-act="del" disabled title="La version en ligne ne peut pas être supprimée" style="opacity:.35;cursor:default;">✕</button>' : '<button class="abv-b" data-act="del" title="Supprimer">✕</button>'}
+          <button class="abv-open" data-act="load" title="Ouvrir dans l'éditeur (tes modifications s'y enregistrent)">Ouvrir dans l'éditeur ↗</button>
+          <button class="abv-b" data-act="del" title="Supprimer">✕</button>
         </div>
-      </div>`).join("") : '<div class="abv-empty">Aucune version. Clique « Enregistrer une version » pour figer l\'état actuel du wireframe.</div>'}`;
+      </div>`).join("") : '<div class="abv-empty">Aucun wireframe de travail. Crée-en un avec les boutons ci-dessus.</div>'}`;
 
+  box.querySelector('[data-new="site"]').onclick = () => pgWireNew(s, "site");
+  box.querySelector('[data-new="blank"]').onclick = () => pgWireNew(s, "blank");
   box.querySelectorAll(".abv-item").forEach((el) => {
     const id = el.dataset.id;
     const version = man.versions.find((x) => x.id === id) || { id, label: "" };
     const nameEl = el.querySelector('[data-f="vname"]');
-    pgAbEditable(nameEl, async (v) => { await window.olympus.pegasusWireRename(s.key, id, v || "Sans nom"); delete pgWireCache[s.key]; });
-    el.querySelector('[data-act="load"]').onclick = async () => {
-      if (!confirm("Ouvrir cette version dans l'éditeur ? L'état actuel sera remplacé (enregistre-le d'abord si besoin).")) return;
+    if (nameEl) pgAbEditable(nameEl, async (v) => { await window.olympus.pegasusWireRename(s.key, id, v || "Sans nom"); delete pgWireCache[s.key]; });
+    const openIn = async () => {
       const lr = await window.olympus.pegasusWireLoad(s.key, id);
-      if (lr.ok) { lr.arbo.versionId = id; pgArboCache[s.key] = lr.arbo; pgArboSave(s.key); pgArboRender(s); }
+      if (lr.ok) { lr.arbo.versionId = id; pgArboCache[s.key] = lr.arbo; await window.olympus.pegasusArboSave(s.key, lr.arbo); pgArboRender(s); }
       else alert("Échec : " + (lr.error || ""));
     };
-    el.querySelector('[data-act="work"]').onclick = () => pgWireWorkModal(s, version);
+    const view = el.querySelector('[data-act="view"]'); if (view) view.onclick = openIn;   // référence → lecture seule
+    const load = el.querySelector('[data-act="load"]'); if (load) load.onclick = openIn;   // wireframe de travail → éditable
+    const work = el.querySelector('[data-act="work"]'); if (work) work.onclick = () => pgWireWorkModal(s, version);
     const delBtn = el.querySelector('[data-act="del"]');
-    if (delBtn && !delBtn.disabled) delBtn.onclick = async () => {
-      if (!confirm("Supprimer cette version ?")) return;
+    if (delBtn) delBtn.onclick = async () => {
+      if (!confirm("Supprimer ce wireframe ?")) return;
       await window.olympus.pegasusWireDelete(s.key, id);
       delete pgWireCache[s.key]; await pgWireRenderCol(s);
     };
