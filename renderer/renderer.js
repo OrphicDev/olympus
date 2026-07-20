@@ -192,6 +192,70 @@ function pgBars(series) {
       <span class="pg-bar-track"><span class="pg-bar-fill" style="width:${((s.value || 0) / max * 100).toFixed(0)}%;background:${s.color || "var(--accent2)"}"></span></span>
       <span class="pg-bar-v">${s.value}</span></div>`).join("")}</div>`;
 }
+// ══ Kit « console analytics » (esprit Google Analytics, adapté au thème Olympus) ══
+// Puce d'évolution vs période précédente : ▲/▼ %.
+function pgDelta(cur, prev, goodDown) {
+  cur = +cur || 0;
+  if (prev == null || isNaN(prev)) return "";
+  prev = +prev || 0;
+  if (prev === 0) return cur > 0 ? `<span class="ga-delta up">● nouveau</span>` : "";
+  const pct = ((cur - prev) / prev) * 100;
+  if (Math.abs(pct) < 0.5) return `<span class="ga-delta flat">— stable</span>`;
+  const up = pct > 0, good = goodDown ? !up : up;
+  return `<span class="ga-delta ${good ? "up" : "down"}">${up ? "▲" : "▼"} ${Math.abs(pct).toFixed(0)} %</span>`;
+}
+// Carte-score : libellé, grand chiffre, évolution.
+function pgScore(label, value, delta, sub) {
+  return `<div class="ga-card">
+    <div class="ga-card-l">${escapeHtml(label)}</div>
+    <div class="ga-card-v">${value}</div>
+    <div class="ga-card-f">${delta || ""}${sub ? `<span class="ga-card-sub">${escapeHtml(sub)}</span>` : ""}</div>
+  </div>`;
+}
+// Grande courbe en aire avec grille + repères d'axes (échelle uniforme, nette).
+function pgAreaChart(points, opts = {}) {
+  const vals = (points || []).map((p) => +p.value || 0);
+  const color = opts.color || "var(--accent2)";
+  const gid = "gaGrad" + (opts.gid || Math.round((vals[0] || 0) + vals.length * 7));
+  if (vals.length < 2) return `<div class="ga-chart-empty">${vals.length ? `<b>${pgFmtN(vals[0])}</b> — une seule journée mesurée pour l'instant` : "Pas encore assez de données pour tracer une courbe : elle apparaît dès que le trafic s'étale sur plusieurs jours."}</div>`;
+  const w = 1000, h = 210, padX = 40, padT = 14, padB = 26;
+  const max = Math.max(1, ...vals);
+  const X = (i) => padX + (i / (vals.length - 1)) * (w - padX - 10);
+  const Y = (v) => padT + (1 - v / max) * (h - padT - padB);
+  const line = vals.map((v, i) => `${i ? "L" : "M"}${X(i).toFixed(1)} ${Y(v).toFixed(1)}`).join(" ");
+  const area = `${line} L${X(vals.length - 1).toFixed(1)} ${(h - padB).toFixed(1)} L${X(0).toFixed(1)} ${(h - padB).toFixed(1)} Z`;
+  const grid = [0, 0.5, 1].map((f) => { const y = padT + f * (h - padT - padB); const v = Math.round(max * (1 - f)); return `<line x1="${padX}" y1="${y.toFixed(1)}" x2="${w - 10}" y2="${y.toFixed(1)}" class="ga-grid"/><text x="${padX - 6}" y="${(y + 3).toFixed(1)}" class="ga-axis" text-anchor="end">${pgFmtN(v)}</text>`; }).join("");
+  const last = vals.length - 1;
+  const first = points[0]?.label || "", lastL = points[last]?.label || "";
+  return `<svg viewBox="0 0 ${w} ${h}" class="ga-chart" preserveAspectRatio="xMidYMid meet">
+    <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".26"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs>
+    ${grid}
+    <path d="${area}" fill="url(#${gid})"/>
+    <path d="${line}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="${X(last).toFixed(1)}" cy="${Y(vals[last]).toFixed(1)}" r="3.4" fill="${color}"/>
+    <text x="${padX}" y="${h - 6}" class="ga-axis">${escapeHtml(first)}</text>
+    <text x="${w - 10}" y="${h - 6}" class="ga-axis" text-anchor="end">${escapeHtml(lastL)}</text>
+  </svg>`;
+}
+// Tableau de répartition : libellé · barre de proportion · valeur + %.
+function pgBreak(rows, opts = {}) {
+  rows = rows || [];
+  const total = opts.total || rows.reduce((n, r) => n + (+r.value || 0), 0) || 1;
+  const max = Math.max(1, ...rows.map((r) => +r.value || 0));
+  const color = opts.color || "var(--accent2)";
+  return `<div class="ga-tbl">${rows.map((r) => {
+    const v = +r.value || 0, pct = (v / total) * 100;
+    return `<div class="ga-tr">
+      <span class="ga-tl">${r.icon ? r.icon + " " : ""}${escapeHtml(r.label || "—")}</span>
+      <span class="ga-tbar"><span class="ga-tbar-f" style="width:${(v / max * 100).toFixed(0)}%;background:${color}"></span></span>
+      <span class="ga-tv">${pgFmtN(v)}<span class="ga-tpct">${pct.toFixed(0)} %</span></span>
+    </div>`;
+  }).join("")}</div>`;
+}
+// Panneau titré (contient une courbe ou un tableau).
+const pgPanel = (title, inner, extra) => `<div class="ga-panel"><div class="ga-panel-h">${escapeHtml(title)}${extra ? `<span class="ga-panel-x">${extra}</span>` : ""}</div>${inner}</div>`;
+const pgDayLabel = (ds) => { try { return new Date(ds + "T12:00:00").toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" }); } catch { return ds; } };
+
 // Tendance entre le 1er et le dernier point d'une série (goodDown = une baisse est bonne)
 function pgTrend(vals, goodDown) {
   vals = (vals || []).filter((v) => v != null && !isNaN(v));
@@ -2804,39 +2868,49 @@ const pgFmtN = (x) => (x >= 1000 ? (x / 1000).toFixed(1).replace(".0", "") + "k"
 async function pgAudienceRender(s) {
   const box = $("pgAudience"); if (!box) return;
   const days = pgAudiencePeriod;
-  const pk = s.key + ":peg:" + days;
-  if (pgAudCache[pk] === undefined) { box.innerHTML = `<div class="rb-empty">Lecture de l'audience…</div>`; pgAudCache[pk] = await window.olympus.pegasusAudiencePegasus(s.key, days); }
-  const pr = pgAudCache[pk];
+  const pk = s.key + ":peg:" + days, pk2 = s.key + ":peg2:" + days;
+  if (pgAudCache[pk] === undefined) { box.innerHTML = `<div class="ga-note">Lecture de l'audience…</div>`; pgAudCache[pk] = await window.olympus.pegasusAudiencePegasus(s.key, days); }
+  // Fenêtre double (pour l'évolution vs période précédente)
+  if (pgAudCache[pk2] === undefined) pgAudCache[pk2] = await window.olympus.pegasusAudiencePegasus(s.key, days * 2);
+  const pr = pgAudCache[pk], prW = pgAudCache[pk2];
   const hasData = pr.ok && pr.data && pr.data.total > 0;
-  let html = `<div class="rp-head">
-      <div class="rp-periods">${[[7, "7 j"], [30, "30 j"], [90, "90 j"]].map(([d, l]) => `<button class="rp-per${days === d ? " on" : ""}" data-per="${d}">${l}</button>`).join("")}</div>
-      <button class="btn sec" id="audReload">↻ Actualiser</button>
-      ${hasData ? `<button class="btn sec" id="audReset" title="Efface tout l'historique de mesure de ce site">⟲ Réinitialiser la mesure</button>` : ""}
-    </div>
-    <div class="rp-title">Audience — ${escapeHtml(s.label)} <span>· ${days} derniers jours · mesuré par Pegasus</span></div>`;
+  let html = `<div class="ga-head">
+      <div class="ga-head-t"><h2>Audience</h2><span>${escapeHtml(s.label)} · mesuré par Pegasus</span></div>
+      <div class="ga-controls">
+        <div class="ga-period">${[[7, "7 j"], [30, "30 j"], [90, "90 j"]].map(([d, l]) => `<button class="ga-per${days === d ? " on" : ""}" data-per="${d}">${l}</button>`).join("")}</div>
+        <button class="ga-ic" id="audReload" title="Actualiser">↻</button>
+        ${hasData ? `<button class="ga-ic" id="audReset" title="Réinitialiser la mesure de ce site">⟲</button>` : ""}
+      </div>
+    </div>`;
   if (!pr.ok && /404|no_route|rest_no_route/i.test(pr.error || "")) {
-    html += `<div class="rb-empty">Le traqueur d'audience a besoin de la dernière version du plugin Pegasus sur ce site. Le plugin se met à jour tout seul — réessaie dans un moment, ou mets-le à jour depuis l'onglet Général.</div>`;
+    html += `<div class="ga-note">Le traqueur d'audience a besoin de la dernière version du plugin Pegasus sur ce site. Le plugin se met à jour tout seul — réessaie dans un moment, ou mets-le à jour depuis l'onglet Général.</div>`;
   } else if (!pr.ok) {
-    html += `<div class="rb-empty">Lecture impossible : ${escapeHtml(pr.error || "")}</div>`;
+    html += `<div class="ga-note">Lecture impossible : ${escapeHtml(pr.error || "")}</div>`;
   } else {
     const d = pr.data;
     if (!d.total) {
-      html += `<div class="rb-empty">Aucune visite enregistrée pour l'instant. La mesure vient de démarrer — les visites apparaîtront ici au fil du trafic. (Les visites de l'équipe connectée au site ne sont pas comptées.)</div>`;
+      html += `<div class="ga-note">Aucune visite enregistrée pour l'instant. La mesure vient de démarrer — les visites apparaîtront ici au fil du trafic. <span class="dim">(Les visites de l'équipe connectée au site ne sont pas comptées.)</span></div>`;
     } else {
-      html += `<div class="pg-dash">
-        ${pgKpi(pgFmtN(d.total), "Visites")}
-        ${pgKpi(pgFmtN(d.uniques), "Visiteurs uniques")}
-        <div class="pg-dcard pg-dwide"><div class="pg-dlabel">Visites par jour</div>${pgSparkline((d.byDay || []).map((x) => x.hits), "var(--accent2)")}</div>
+      const prev = prW.ok && prW.data ? { total: Math.max(0, (prW.data.total || 0) - d.total), uniques: Math.max(0, (prW.data.uniques || 0) - d.uniques) } : {};
+      const mobile = (d.devices || []).find((x) => x.label === "mobile");
+      const mobilePct = d.total ? Math.round((mobile?.value || 0) / d.total * 100) : 0;
+      html += `<div class="ga-cards">
+        ${pgScore("Visites", pgFmtN(d.total), pgDelta(d.total, prev.total))}
+        ${pgScore("Visiteurs uniques", pgFmtN(d.uniques), pgDelta(d.uniques, prev.uniques))}
+        ${pgScore("Part mobile", mobilePct + " %", "", (mobile?.value || 0) + " visite(s)")}
       </div>`;
-      if (d.sources?.length) html += `<div class="pg-sub">D'où viennent les visiteurs</div>${pgBars(d.sources.map((x) => ({ label: x.label, value: x.value, color: "var(--accent2)" })))}`;
-      if (d.countries?.length) html += `<div class="pg-sub">Pays</div>${pgBars(d.countries.map((x) => ({ label: pgFlag(x.label) + " " + x.label, value: x.value, color: "#7fb2e8" })))}`;
-      if (d.pages?.length) html += `<div class="pg-sub">Pages les plus vues</div>${pgBars(d.pages.map((x) => ({ label: x.label, value: x.value, color: "var(--ok)" })))}`;
-      if (d.devices?.length) html += `<div class="pg-sub">Appareils</div>${pgBars(d.devices.map((x) => ({ label: x.label === "mobile" ? "📱 Mobile" : "💻 Ordinateur", value: x.value })))}`;
+      html += pgPanel("Visites par jour", pgAreaChart((d.byDay || []).map((x) => ({ label: pgDayLabel(x.date), value: x.hits }))));
+      html += `<div class="ga-breaks">`;
+      if (d.sources?.length) html += pgPanel("Provenance", pgBreak(d.sources.map((x) => ({ label: x.label, value: x.value })), { total: d.total }));
+      if (d.pages?.length) html += pgPanel("Pages les plus vues", pgBreak(d.pages.map((x) => ({ label: x.label, value: x.value })), { color: "var(--ok)" }));
+      if (d.countries?.length) html += pgPanel("Pays", pgBreak(d.countries.map((x) => ({ label: x.label, value: x.value, icon: pgFlag(x.label) })), { total: d.total, color: "#7fb2e8" }));
+      if (d.devices?.length) html += pgPanel("Appareils", pgBreak(d.devices.map((x) => ({ label: x.label === "mobile" ? "Mobile" : "Ordinateur", value: x.value, icon: x.label === "mobile" ? "📱" : "💻" })), { total: d.total, color: "#c9a2e8" }));
+      html += `</div>`;
     }
   }
-  html += `<div class="pg-sub" style="margin-top:24px;">Mots-clés Google <span style="text-transform:none;letter-spacing:0;color:var(--dim);">· Search Console — optionnel</span></div><div id="audGoogle"><div class="rb-empty">…</div></div>`;
+  html += `<div class="ga-subhead">Mots-clés Google <span>· Search Console — optionnel</span></div><div id="audGoogle"><div class="ga-note">…</div></div>`;
   box.innerHTML = html;
-  box.querySelectorAll(".rp-per").forEach((b) => b.onclick = () => { pgAudiencePeriod = +b.dataset.per; pgAudienceRender(s); });
+  box.querySelectorAll(".ga-per").forEach((b) => b.onclick = () => { pgAudiencePeriod = +b.dataset.per; pgAudienceRender(s); });
   $("audReload").onclick = () => { Object.keys(pgAudCache).forEach((k) => k.startsWith(s.key + ":") && delete pgAudCache[k]); pgAudienceRender(s); };
   const rb = $("audReset");
   if (rb) rb.onclick = async () => {
@@ -2874,9 +2948,9 @@ async function pgAudienceGoogle(s, days) {
   if (!r.ok) { box.innerHTML = `<div class="rb-empty">Search Console : ${escapeHtml(r.error || "")}</div>`; return; }
   const d = r.data;
   let h = "";
-  if (d.scTotals) h += `<div class="pg-dash">${pgKpi(pgFmtN(d.scTotals.clicks), "Clics Google")}${pgKpi(pgFmtN(d.scTotals.impressions), "Impressions")}${pgKpi((d.scTotals.ctr * 100).toFixed(1) + "%", "Taux de clic")}${pgKpi(d.scTotals.position.toFixed(1), "Position moy.")}</div>`;
-  if (d.queries?.length) h += `<div class="aud-queries" style="margin-top:10px;">${d.queries.map((q) => `<div class="aud-q"><span class="aud-q-t">${escapeHtml(q.query)}</span><span class="aud-q-n">${q.clicks} clic(s) · ${q.impressions} vues · pos. ${q.position.toFixed(1)}</span></div>`).join("")}</div>`;
-  box.innerHTML = h || `<div class="rb-empty">Connecté, mais pas encore de données Search Console sur la période.</div>`;
+  if (d.scTotals) h += `<div class="ga-cards">${pgScore("Clics Google", pgFmtN(d.scTotals.clicks))}${pgScore("Impressions", pgFmtN(d.scTotals.impressions))}${pgScore("Taux de clic", (d.scTotals.ctr * 100).toFixed(1) + " %")}${pgScore("Position moy.", d.scTotals.position.toFixed(1))}</div>`;
+  if (d.queries?.length) h += pgPanel("Requêtes Google", `<div class="ga-tbl">${d.queries.map((q) => `<div class="ga-tr"><span class="ga-tl">${escapeHtml(q.query)}</span><span class="ga-tbar"><span class="ga-tbar-f" style="width:${Math.min(100, (q.clicks / Math.max(1, d.queries[0].clicks)) * 100).toFixed(0)}%"></span></span><span class="ga-tv">${q.clicks}<span class="ga-tpct">${q.impressions} vues · pos. ${q.position.toFixed(1)}</span></span></div>`).join("")}</div>`);
+  box.innerHTML = h || `<div class="ga-note">Connecté, mais pas encore de données Search Console sur la période.</div>`;
 }
 
 async function pgRunSeo(key) {
