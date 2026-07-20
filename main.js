@@ -1097,6 +1097,11 @@ ipcMain.handle("pegasus:siteInspect", async (_e, key) => {
   try { return { ok: true, inspect: await pegCall(key, "GET", "/inspect") }; }
   catch (e) { return { ok: false, error: e.message }; }
 });
+// Diagnostic complet (verrous serveur, capacités, page builder, multilingue, collisions)
+ipcMain.handle("pegasus:siteDiag", async (_e, key) => {
+  try { return { ok: true, diag: await pegCall(key, "GET", "/diagnostic", 30000) }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
 // Contenus du site (pages réelles) — sert à générer l'arborescence
 ipcMain.handle("pegasus:siteContent", async (_e, key) => {
   try { return { ok: true, content: await pegCall(key, "GET", "/content") }; }
@@ -1674,7 +1679,7 @@ ipcMain.handle("pegasus:sitePerf", async (_e, key, strategy) => {
     let data;
     try {
       const r = await fetch(api, { signal: ctl.signal });
-      if (!r.ok) throw new Error(`PageSpeed ${r.status}`);
+      if (!r.ok) throw new Error(r.status === 429 ? "Quota Google PageSpeed atteint — réessaie dans une minute." : `PageSpeed a répondu ${r.status}.`);
       data = await r.json();
     } finally { clearTimeout(t); }
     const lh = data.lighthouseResult || {};

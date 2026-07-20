@@ -154,7 +154,7 @@ const pgSaveProjects = () => localStorage.setItem("pg-projets", JSON.stringify(p
 let pgFacet = { label: "Toutes les références" };
 const pgFacetOf = (el) => ({ kind: el.dataset.kind || "", niveau: el.dataset.niveau || "", registre: el.dataset.registre || "", business: el.dataset.business || "", label: el.dataset.label || el.querySelector(".lname").textContent });
 const pgFacetEq = (el) => (el.dataset.kind || "") === (pgFacet.kind || "") && (el.dataset.niveau || "") === (pgFacet.niveau || "") && (el.dataset.registre || "") === (pgFacet.registre || "") && (el.dataset.business || "") === (pgFacet.business || "");
-const pgHealth = {}, pgInspect = {}, pgSeo = {}, pgPerf = {};
+const pgHealth = {}, pgInspect = {}, pgSeo = {}, pgPerf = {}, pgDiag = {};
 let pgSiteTab = "general"; // onglet du détail site : general | seo | perf | secu
 let pgSecAction = null; // panneau des 3 gros boutons : copy | push | rollback | null
 let pgCarousel = 0; // vue de la colonne en carrousel : 0 Parc · 1 Bibliothèque · 2 Réglages
@@ -414,6 +414,9 @@ function pgRenderDetail() {
   box.querySelectorAll(".pg-open").forEach((b) => { b.onclick = () => window.olympus.openExternal(b.dataset.url); });
   const sb = box.querySelector("#pgSeoBtn"); if (sb) sb.onclick = () => pgRunSeo(s.key);
   const pb = box.querySelector("#pgPerfBtn"); if (pb) pb.onclick = () => pgRunPerf(s.key);
+  const scb = box.querySelector("#pgSecuBtn"); if (scb) scb.onclick = () => pgLoadDiag(s.key);
+  // La Sécurité s'analyse à l'ouverture de l'onglet (diagnostic à distance)
+  if (pgSiteTab === "secu" && pgDiag[s.key] === undefined) pgLoadDiag(s.key);
   pgRenderSecPanel(s);
   if (pgSiteTab === "pipeline") pgPipelineRender(s);
   if (pgSiteTab === "arbo") pgArboRender(s);
@@ -1088,6 +1091,12 @@ async function pgWireRenderCol(s) {
     const view = el.querySelector('[data-act="view"]'); if (view) view.onclick = openIn;   // référence → lecture seule
     const load = el.querySelector('[data-act="load"]'); if (load) load.onclick = openIn;   // wireframe de travail → éditable
     const work = el.querySelector('[data-act="work"]'); if (work) work.onclick = () => pgWireWorkModal(s, version);
+    // Cliquer N'IMPORTE OÙ sur la carte ouvre la version (sauf boutons / renommage en cours)
+    el.style.cursor = "pointer";
+    el.addEventListener("click", (ev) => {
+      if (ev.target.closest("button") || ev.target.closest('[contenteditable="true"]')) return;
+      openIn();
+    });
     const delBtn = el.querySelector('[data-act="del"]');
     if (delBtn) delBtn.onclick = async () => {
       if (!confirm("Supprimer ce wireframe ?")) return;
@@ -2031,7 +2040,7 @@ async function pgSecPush(s, box) {
     b.disabled = false; box.querySelector("#pgPushCancel").disabled = false;
     if (!r.ok) { m.className = "msg err"; m.textContent = "Échec (site inchangé si la sauvegarde a bloqué) : " + (r.error || ""); return; }
     m.className = "msg ok"; m.textContent = `Thème « ${r.theme} » déployé. Sauvegardes avant/après créées.`;
-    delete pgInspect[s.key]; delete pgHealth[s.key];
+    delete pgInspect[s.key]; delete pgHealth[s.key]; delete pgDiag[s.key];
     window.olympus.pegasusSiteHealth(s.key).then((h) => { pgHealth[s.key] = h; });
     window.olympus.pegasusSiteInspect(s.key).then((i) => { pgInspect[s.key] = i; });
   };
@@ -2133,28 +2142,60 @@ function pgTabPerf(s) {
 }
 
 function pgTabSecu(s) {
-  const h = pgHealth[s.key], ins = pgInspect[s.key];
-  const hh = h && h.ok ? h.health : null;
+  const dg = pgDiag[s.key];
+  if (!dg) return `<div class="rb-empty">Analyse de sécurité en cours…</div>`;
+  if (!dg.ok) return `<div class="rb-empty">Analyse impossible : ${escapeHtml(dg.error || "")}</div><button class="cal-btn" id="pgSecuBtn" style="margin-top:8px;">Réessayer</button>`;
+  const d = dg.diag;
   const https = /^https:\/\//i.test(s.base_url);
-  const phpMajor = hh ? parseFloat(String(hh.php)) : null;
-  let html = `<p class="pg-mnote">Points de vigilance dérivés de ce que Pegasus lit à distance. Un vrai suivi CVE/uptime viendra avec l'agent de monitoring.</p>`;
-  html += `<div class="pg-sub">Vigilance</div>`;
-  html += `<div class="pg-alert"><span style="color:${https ? "var(--ok)" : "var(--err)"}">${https ? "✓" : "✕"}</span> Connexion HTTPS ${https ? "active" : "absente — requise par les mots de passe d'application"}</div>`;
-  if (hh) {
-    html += `<div class="pg-alert"><span style="color:var(--dim)">·</span> WordPress <b style="color:var(--txt)">${escapeHtml(hh.wp)}</b> — garder à jour</div>`;
-    const phpFlag = phpMajor != null && phpMajor < 8.1;
-    html += `<div class="pg-alert"><span style="color:${phpFlag ? "var(--warn)" : "var(--ok)"}">${phpFlag ? "!" : "✓"}</span> PHP <b style="color:var(--txt)">${escapeHtml(String(hh.php).split("-")[0])}</b>${phpFlag ? " — version un peu ancienne, envisager une mise à niveau" : ""}</div>`;
+  const phpV = parseFloat(String(d.site?.php || ""));
+  const locks = d.verrous_serveur || {};
+  const plugins = d.plugins || [];
+  const inactifs = plugins.filter((p) => !p.active);
+  // Chaque contrôle : état (ok|warn|err) + libellé + conseil
+  const checks = [
+    https
+      ? ["ok", "Connexion HTTPS active", ""]
+      : ["err", "Pas de HTTPS", "requis pour sécuriser les identifiants et le référencement"],
+    d.site?.debug
+      ? ["err", "Mode debug WordPress ACTIVÉ en production", "expose des chemins et erreurs — à désactiver (WP_DEBUG=false)"]
+      : ["ok", "Mode debug désactivé", ""],
+    locks.DISALLOW_FILE_EDIT
+      ? ["ok", "Éditeur de fichiers du back-office désactivé", ""]
+      : ["warn", "Éditeur de thème/plugin actif dans wp-admin", "un compte admin compromis peut injecter du PHP — verrouiller avec DISALLOW_FILE_EDIT"],
+    phpV >= 8.1
+      ? ["ok", `PHP ${escapeHtml(String(d.site?.php))}`, "version maintenue"]
+      : ["warn", `PHP ${escapeHtml(String(d.site?.php || "?"))}`, "fin de vie / bientôt — planifier une montée de version avec l'hébergeur"],
+    inactifs.length
+      ? ["warn", `${inactifs.length} extension(s) inactive(s)`, "à supprimer : même inactives, elles restent une surface d'attaque"]
+      : ["ok", "Aucune extension inactive qui traîne", ""],
+    d.multisite
+      ? ["warn", "Installation multisite", "surface et droits élargis — à surveiller"]
+      : null,
+  ].filter(Boolean);
+  const nOk = checks.filter((c) => c[0] === "ok").length;
+  const nBad = checks.length - nOk;
+  const ico = { ok: '<span style="color:var(--ok)">✓</span>', warn: '<span style="color:var(--warn,#e8c268)">!</span>', err: '<span style="color:var(--err)">✕</span>' };
+  let html = `<p class="pg-mnote">Contrôles de sécurité lus à distance par Pegasus (sans FTP). ${nBad === 0 ? "Tout est au vert." : `${nOk} au vert · <b style="color:var(--txt)">${nBad} à traiter</b>.`} Le suivi CVE/uptime continu viendra avec l'agent de monitoring.</p>`;
+  html += `<div class="pg-sub">Contrôles</div>`;
+  html += checks.map(([st, label, detail]) => `<div class="pg-alert">${ico[st]} ${label}${detail ? ` <span style="color:var(--dim)">— ${detail}</span>` : ""}</div>`).join("");
+  html += `<div class="pg-sub">Ce que Pegasus peut toucher</div>`;
+  const caps = d.capacites_pegasus || {};
+  html += `<div class="pg-line"><span class="k">Contenus</span><span class="v">${caps.ecrire_contenus ? "lecture + écriture" : "lecture seule"}</span></div>`;
+  html += `<div class="pg-line"><span class="k">Thèmes / extensions</span><span class="v">${caps.installer_themes ? "installation possible" : "verrouillé"}</span></div>`;
+  html += `<div class="pg-sub">Extensions actives · ${plugins.filter((p) => p.active).length}</div>`;
+  html += plugins.filter((p) => p.active).map((p) => `<div class="pg-line"><span class="k">${escapeHtml(p.name)}</span><span class="v">${escapeHtml(p.version || "?")}</span></div>`).join("");
+  if (inactifs.length) {
+    html += `<div class="pg-sub">Inactives · ${inactifs.length}</div>`;
+    html += inactifs.map((p) => `<div class="pg-line"><span class="k" style="color:var(--dim)">${escapeHtml(p.name)}</span><span class="v">${escapeHtml(p.version || "?")}</span></div>`).join("");
   }
-  if (ins && ins.ok) {
-    const d = ins.inspect;
-    const total = (d.plugins || []).length, actifs = (d.plugins || []).filter((p) => p.active).length;
-    html += `<div class="pg-alert"><span style="color:var(--dim)">·</span> ${total} extension(s) installée(s), ${actifs} active(s) — surface à tenir à jour</div>`;
-    html += `<div class="pg-sub">Versions des extensions actives</div>`;
-    html += (d.plugins || []).filter((p) => p.active).map((p) => `<div class="pg-line"><span class="k">${escapeHtml(p.name)}</span><span class="v">${escapeHtml(p.version || "?")}</span></div>`).join("");
-  } else if (!ins) {
-    html += `<div class="rb-empty">Inspection…</div>`;
-  }
+  html += `<button class="cal-btn" id="pgSecuBtn" style="margin-top:12px;">Relancer l'analyse</button>`;
   return html;
+}
+async function pgLoadDiag(key) {
+  pgDiag[key] = null;
+  const r = await window.olympus.pegasusSiteDiag(key);
+  pgDiag[key] = r;
+  if (pgSel === key && pgSiteTab === "secu") pgRenderDetail();
 }
 
 async function pgRunSeo(key) {
@@ -2300,6 +2341,7 @@ $("pgRevealPlugin").onclick = async () => {
 $("pgRefreshParc").onclick = async () => {
   Object.keys(pgHealth).forEach((k) => delete pgHealth[k]);
   Object.keys(pgInspect).forEach((k) => delete pgInspect[k]);
+  Object.keys(pgDiag).forEach((k) => delete pgDiag[k]);
   pgSetView("parc");
 };
 
