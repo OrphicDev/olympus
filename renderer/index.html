@@ -832,6 +832,14 @@
   .pg-flabel{display:block;font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--dim);margin-bottom:6px;}
   .pg-frow{display:flex;gap:12px;margin-bottom:12px;}
   .pg-frow>div{flex:1;min-width:0;}
+  /* ── Medusa : statut + capacités ── */
+  .md-hero{display:flex;align-items:center;gap:16px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px 20px;max-width:660px;}
+  .md-hero .pg-dot{width:11px;height:11px;}
+  .md-hero .t{font-size:16px;font-weight:650;letter-spacing:-.01em;}
+  .md-hero .s{color:var(--muted);font-size:12.5px;margin-top:3px;line-height:1.5;}
+  .md-caps{display:grid;grid-template-columns:1fr 1fr;gap:10px;max-width:760px;}
+  .md-cap{background:var(--card);border:1px solid var(--line);border-radius:13px;padding:13px 15px;font-size:12.5px;color:var(--muted);line-height:1.55;}
+  .md-cap b{display:block;color:var(--txt);font-size:12.5px;margin-bottom:4px;}
   /* Vues plein écran : nouveau site / connexion */
   .pg-flow{max-width:660px;padding:6px 0 40px;}
   .pg-flowtitle{font-size:23px;font-weight:680;letter-spacing:-.02em;margin:18px 0 10px;}
@@ -1204,6 +1212,7 @@
       <div class="nav-item" data-page="apollon"><div class="ic">🖼️</div><span class="lbl">Apollon<small>galerie</small></span></div>
       <div class="nav-item" data-page="ploutos"><div class="ic">🧾</div><span class="lbl">Ploutos<small>devis</small></span></div>
       <div class="nav-item" data-page="mnemosyne"><div class="ic">📝</div><span class="lbl">Mnémosyne<small>notes</small></span></div>
+      <div class="nav-item" data-page="medusa"><div class="ic">🐍</div><span class="lbl">Medusa<small>contrôle Claude</small></span></div>
       <div class="nav-spacer"></div>
       <div class="nav-label">Mes applications</div>
       <div class="nav-item" data-page="library"><div class="ic">📚</div><span class="lbl">Alexandrie<small>bibliothèque</small></span></div>
@@ -1710,6 +1719,33 @@
         </div>
       </section>
 
+      <!-- ═══ MEDUSA (contrôle de tout Olympus par Claude) ═══ -->
+      <section class="page" id="page-medusa">
+        <div class="page-head"><h1>Medusa</h1><p>Le pont entre Claude et l'agence — Claude pilote l'espace de travail (chat, calendrier, CRM, équipe) et Pegasus (parc, sauvegardes, déploiement, bibliothèque).</p></div>
+        <div class="md-hero" id="mdHero"><span class="pg-dot wait"></span><div><div class="t">Vérification…</div><div class="s"></div></div></div>
+        <div class="section">
+          <h3>Diagnostic</h3>
+          <div class="env" id="mdChecks"><div class="rb-empty">Analyse en cours…</div></div>
+        </div>
+        <div class="section">
+          <h3>Ce que Claude peut faire via Medusa</h3>
+          <div class="md-caps">
+            <div class="md-cap"><b>Espace de travail</b>Qui est connecté, l'équipe en ligne, lire et poster dans Hermès, consulter et remplir Chronos, lire le CRM Iris, gérer les membres (admin).</div>
+            <div class="md-cap"><b>Parc Pegasus</b>Lister les sites clients, santé, structure, audits SEO.</div>
+            <div class="md-cap"><b>Espace de travail disque</b>Copies locales (versions), nouveaux projets WordPress ou sur-mesure dans ~/Pegasus.</div>
+            <div class="md-cap"><b>Sécurité</b>Points de restauration sur Supabase, retour en arrière en local, déploiement du thème avec sauvegardes avant/après (confirmation explicite exigée).</div>
+            <div class="md-cap"><b>Bibliothèque Orphic</b>Chercher les références validées, proposer des candidates (la validation reste humaine).</div>
+          </div>
+        </div>
+        <div class="section">
+          <h3>Actions</h3>
+          <button class="btn sec" id="mdReinstall">Réinstaller Medusa</button>
+          <button class="btn sec" id="mdRecheck" style="margin-left:8px;">Vérifier à nouveau</button>
+          <div class="msg" id="mdMsg"></div>
+          <p class="desc" style="margin-top:12px;">Medusa s'installe et se met à jour <b>automatiquement à chaque lancement d'Olympus</b>. Après une première installation, redémarre Claude pour voir les outils <kbd>medusa_*</kbd>.</p>
+        </div>
+      </section>
+
       <!-- ═══ ARGOS (data clients : réseaux · ads · web · SEO) ═══ -->
       <section class="page" id="page-argos">
         <div class="page-head"><h1>Argos</h1><p>La donnée des clients — réseaux, publicité, sites, campagnes & SEO.</p></div>
@@ -1844,13 +1880,8 @@
           <div class="msg" id="claudeMsg"></div>
         </div>
         <div class="section">
-          <h3>Medusa — piloter Pegasus depuis Claude Code</h3>
-          <p class="desc" style="margin-bottom:14px;">Medusa s'installe et se met à jour <b>automatiquement avec Olympus</b> : il donne à ton Claude Code le contrôle de Pegasus — le parc de sites, les copies locales, les sauvegardes et retours en arrière, le déploiement (avec filet automatique) et la bibliothèque Orphic.</p>
-          <div class="env" style="max-width:640px;">
-            <div class="env-row"><div class="st" id="medusaSt">…</div><div><div class="nm">Medusa</div><div class="meta" id="medusaMeta">vérification…</div></div></div>
-          </div>
-          <button class="btn sec" id="medusaRetryBtn" style="margin-top:10px;">Réinstaller Medusa</button>
-          <div class="msg" id="medusaMsg"></div>
+          <h3>Medusa — piloter l'agence depuis Claude</h3>
+          <p class="desc">Medusa s'installe automatiquement avec Olympus. Son état complet (diagnostic, capacités, réinstallation) vit dans sa vue : <b>Espace de travail → Medusa</b>.</p>
         </div>
         <div class="section"><h3>Version</h3><p class="desc">Olympus 0.1.0 — connexion par compte email + mot de passe.</p></div>
       </section>

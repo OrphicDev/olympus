@@ -1,17 +1,19 @@
 #!/usr/bin/env node
 /**
- * MEDUSA — serveur MCP qui donne à Claude Code le contrôle de Pegasus.
- * Installé et mis à jour automatiquement par Olympus (~/.olympus/medusa-mcp.mjs).
- * Sans aucune dépendance.
+ * MEDUSA — serveur MCP qui donne à Claude Code le contrôle de TOUT Olympus :
+ * l'espace de travail (Hermès chat, Chronos calendrier, Iris CRM, équipe,
+ * membres) ET Pegasus (parc de sites, copies, sauvegardes, déploiement,
+ * bibliothèque Orphic). Installé et mis à jour automatiquement par Olympus
+ * (~/.olympus/medusa-mcp.mjs). Sans aucune dépendance.
  *
- * Il réutilise la clé d'équipe Pegasus (~/.pegasus/team-key) : registre des
- * sites (Supabase), mots de passe déchiffrés localement (jamais exposés dans
- * les réponses), API pegasus/v1 des sites WordPress, espace de travail
- * ~/Pegasus, sauvegardes site_backups et bibliothèque references_library.
+ * Côté Olympus : réutilise la SESSION déjà connectée (jeton local, refresh
+ * automatique) — aucun identifiant à ressaisir.
+ * Côté Pegasus : réutilise la clé d'équipe (~/.pegasus/team-key) ; les mots
+ * de passe des sites sont déchiffrés localement, jamais exposés.
  *
  * Sécurité : pas de FTP, pas d'écriture de fichiers PHP à distance —
- * uniquement les capacités officielles de Pegasus. Le déploiement exige
- * confirm=true et prend une sauvegarde AVANT (bloquante) et APRÈS.
+ * uniquement les capacités officielles. Le déploiement exige confirm=true
+ * et prend une sauvegarde AVANT (bloquante) et APRÈS.
  */
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -126,9 +128,62 @@ function findTheme(dir) {
 }
 const noPass = ({ pass, ...s }) => s;
 
+/* ── Olympus : session locale + API (clés anon publiques) ── */
+const OLY_URL = "https://ntpudyibkwluulbbokrd.supabase.co";
+const OLY_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im50cHVkeWlia3dsdXVsYmJva3JkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQzMDY4NDQsImV4cCI6MjA5OTg4Mjg0NH0.Al-COzdg5zDsPCOSAC1dZAXgm5RVToXEpSPaCJR_49M";
+const ADMIN_FN = OLY_URL + "/functions/v1/admin";
+const SESSION_FILE = join(homedir(), "Library", "Application Support", "Olympus", "olympus-session.json");
+function loadSession() { try { return JSON.parse(readFileSync(SESSION_FILE, "utf8")); } catch { return null; } }
+function saveSession(s) { try { writeFileSync(SESSION_FILE, JSON.stringify(s)); } catch {} }
+async function refreshToken() {
+  const s = loadSession();
+  if (!s?.refresh_token) return false;
+  const r = await fetch(`${OLY_URL}/auth/v1/token?grant_type=refresh_token`, {
+    method: "POST", headers: { apikey: OLY_ANON, "Content-Type": "application/json" },
+    body: JSON.stringify({ refresh_token: s.refresh_token }),
+  });
+  if (!r.ok) return false;
+  const j = await r.json();
+  if (!j.access_token) return false;
+  s.access_token = j.access_token; if (j.refresh_token) s.refresh_token = j.refresh_token; saveSession(s);
+  return true;
+}
+async function oly(path, opts = {}) {
+  const call = () => {
+    const s = loadSession();
+    return fetch(`${OLY_URL}${path}`, { ...opts, headers: { apikey: OLY_ANON, Authorization: `Bearer ${s?.access_token || OLY_ANON}`, "Content-Type": "application/json", ...(opts.headers || {}) } });
+  };
+  let r = await call();
+  if (r.status === 401 && (await refreshToken())) r = await call();
+  return r;
+}
+async function adminCall(action, params = {}) {
+  const call = () => {
+    const s = loadSession();
+    return fetch(ADMIN_FN, { method: "POST", headers: { apikey: OLY_ANON, Authorization: `Bearer ${s?.access_token || OLY_ANON}`, "Content-Type": "application/json" }, body: JSON.stringify({ action, ...params }) });
+  };
+  let r = await call();
+  if (r.status === 403 && (await refreshToken())) r = await call();
+  return r.json().catch(() => ({ error: "réponse invalide" }));
+}
+function requireSession() { const s = loadSession(); if (!s?.user) throw new Error("Olympus non connecté (ouvre Olympus et connecte-toi)."); return s; }
+const todayISO = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+
 /* ── Outils ── */
 const T = (name, description, properties = {}, required = []) => ({ name, description, inputSchema: { type: "object", properties, required } });
 const TOOLS = [
+  /* — Olympus : espace de travail — */
+  T("medusa_whoami", "Qui est connecté à Olympus (nom, email, rôle)."),
+  T("medusa_team", "L'équipe Olympus et qui est en ligne (présence)."),
+  T("medusa_chat_recent", "Derniers messages du chat d'équipe Hermès.", { limit: { type: "number" } }),
+  T("medusa_chat_send", "Poster un message dans le chat d'équipe Hermès (au nom du membre connecté à Olympus).", { message: { type: "string" } }, ["message"]),
+  T("medusa_agenda_today", "Les événements/tâches du jour (Chronos)."),
+  T("medusa_agenda_upcoming", "Les prochains événements du calendrier Chronos.", { days: { type: "number", description: "défaut 14" } }),
+  T("medusa_agenda_add", "Ajouter un événement/tâche au calendrier Chronos.", { title: { type: "string" }, date: { type: "string", description: "YYYY-MM-DD" }, time: { type: "string" }, category: { type: "string", description: "general | client | interne | deadline | perso" }, assignee: { type: "string" } }, ["title", "date"]),
+  T("medusa_crm_recent", "Derniers mails envoyés (Iris CRM) avec leur statut d'ouverture.", { limit: { type: "number" } }),
+  T("medusa_members_list", "Lister les membres Olympus (réservé super admin)."),
+  T("medusa_member_create", "Créer un membre Olympus (réservé super admin) — mot de passe temporaire à changer à la 1ʳᵉ connexion. N'appeler que sur demande explicite.", { email: { type: "string" }, password: { type: "string" }, first_name: { type: "string" }, last_name: { type: "string" }, role: { type: "string", description: "classic | super_admin" } }, ["email", "password", "first_name", "last_name"]),
+  /* — Pegasus : le parc — */
   T("medusa_sites", "Le parc Pegasus : liste les sites WordPress clients connectés (clé, label, URL). La clé sert d'identifiant pour tous les autres outils."),
   T("medusa_health", "Santé d'un site en ligne : versions WordPress/PHP/Pegasus, nom, utilisateur.", { site: { type: "string", description: "clé du site (ex 'emotions-arts')" } }, ["site"]),
   T("medusa_inspect", "Structure d'un site : thème actif, extensions (versions, actives/inactives), constructeur de page, permaliens, langue, nombre de pages/articles.", { site: { type: "string" } }, ["site"]),
@@ -146,6 +201,53 @@ const TOOLS = [
 
 async function callTool(name, a = {}) {
   switch (name) {
+    /* — Olympus — */
+    case "medusa_whoami":
+      return requireSession().user;
+    case "medusa_team": {
+      const r = await oly(`/rest/v1/presence?select=name,last_seen&order=name.asc`);
+      const users = await r.json();
+      const now = Date.now();
+      return users.map((u) => ({ name: u.name, online: now - new Date(u.last_seen).getTime() < 120000 }));
+    }
+    case "medusa_chat_recent": {
+      const r = await oly(`/rest/v1/messages?select=author_name,body,created_at&order=id.desc&limit=${a.limit || 20}`);
+      return (await r.json()).reverse();
+    }
+    case "medusa_chat_send": {
+      const s = requireSession();
+      const author = ((s.user.first_name || "") + " " + (s.user.last_name || "")).trim() || s.user.email;
+      const r = await oly(`/rest/v1/messages`, { method: "POST", headers: { Prefer: "return=representation" }, body: JSON.stringify({ user_id: s.user.id, author_name: author, body: a.message }) });
+      if (!r.ok) throw new Error("envoi impossible");
+      return { ok: true };
+    }
+    case "medusa_agenda_today": {
+      const r = await oly(`/rest/v1/events?select=*&date=eq.${todayISO()}&order=time.asc.nullsfirst`);
+      return await r.json();
+    }
+    case "medusa_agenda_upcoming": {
+      const d = new Date(); const to = new Date(d.getTime() + (a.days || 14) * 864e5);
+      const toISO = `${to.getFullYear()}-${String(to.getMonth() + 1).padStart(2, "0")}-${String(to.getDate()).padStart(2, "0")}`;
+      const r = await oly(`/rest/v1/events?select=*&date=gte.${todayISO()}&date=lte.${toISO}&order=date.asc,time.asc.nullsfirst`);
+      return await r.json();
+    }
+    case "medusa_agenda_add": {
+      const s = requireSession();
+      const r = await oly(`/rest/v1/events`, { method: "POST", headers: { Prefer: "return=representation" }, body: JSON.stringify({ title: a.title, date: a.date, time: a.time || null, category: a.category || "general", assignee: a.assignee || null, created_by: s.user.id }) });
+      if (!r.ok) throw new Error("création impossible");
+      return { ok: true };
+    }
+    case "medusa_crm_recent": {
+      const r = await oly(`/rest/v1/emails?select=to_email,to_name,subject,sent_at,open_count,first_opened_at&order=sent_at.desc&limit=${a.limit || 20}`);
+      return await r.json();
+    }
+    case "medusa_members_list": {
+      const r = await adminCall("list");
+      return r.members || r;
+    }
+    case "medusa_member_create":
+      return await adminCall("create", a);
+    /* — Pegasus — */
     case "medusa_sites":
       return Object.values(await sites()).map(noPass);
     case "medusa_health":
@@ -267,7 +369,7 @@ const PROTO = "2024-11-05";
 const send = (msg) => process.stdout.write(JSON.stringify(msg) + "\n");
 async function handle(msg) {
   const { id, method, params } = msg;
-  if (method === "initialize") return send({ jsonrpc: "2.0", id, result: { protocolVersion: (params && params.protocolVersion) || PROTO, capabilities: { tools: {} }, serverInfo: { name: "medusa", version: "0.1.0" } } });
+  if (method === "initialize") return send({ jsonrpc: "2.0", id, result: { protocolVersion: (params && params.protocolVersion) || PROTO, capabilities: { tools: {} }, serverInfo: { name: "medusa", version: "0.2.0" } } });
   if (method === "notifications/initialized" || method === "notifications/cancelled") return;
   if (method === "ping") return send({ jsonrpc: "2.0", id, result: {} });
   if (method === "tools/list") return send({ jsonrpc: "2.0", id, result: { tools: TOOLS } });

@@ -55,6 +55,7 @@ contextBridge.exposeInMainWorld("olympus", {
   // Medusa (MCP Pegasus)
   medusaStatus: () => ipcRenderer.invoke("medusa:status"),
   medusaInstall: () => ipcRenderer.invoke("medusa:install"),
+  medusaDiag: () => ipcRenderer.invoke("medusa:diag"),
   // Pegasus — clients connectés
   pegasusClients: () => ipcRenderer.invoke("pegasus:clients"),
   // Pegasus — le parc + la bibliothèque Orphic

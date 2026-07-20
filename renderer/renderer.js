@@ -2857,24 +2857,34 @@ $("claudeInstallBtn").onclick = async () => {
   refreshClaude();
 };
 
-// ══════════ MEDUSA (MCP Pegasus — installé automatiquement avec Olympus) ══════════
-async function refreshMedusa() {
-  const s = await window.olympus.medusaStatus();
-  const st = $("medusaSt"), meta = $("medusaMeta");
-  if (!st) return;
-  if (s.installed) { st.className = "st ok"; st.textContent = "✓"; meta.textContent = "installé et enregistré dans Claude Code — outils medusa_* disponibles"; }
-  else { st.className = "st miss"; st.textContent = "!"; meta.textContent = s.error || "installation en cours…"; }
+// ══════════ MEDUSA (contrôle de tout Olympus par Claude — vue + diagnostic) ══════════
+async function renderMedusa() {
+  const d = await window.olympus.medusaDiag();
+  const hero = $("mdHero");
+  if (d.functional) {
+    hero.innerHTML = `<span class="pg-dot ok"></span><div><div class="t">Medusa est fonctionnelle</div><div class="s">Claude peut piloter Olympus et Pegasus. Si les outils <kbd>medusa_*</kbd> n'apparaissent pas encore dans une conversation, redémarre Claude.</div></div>`;
+  } else {
+    const why = d.checks.find((c) => c.core && !c.ok);
+    hero.innerHTML = `<span class="pg-dot err"></span><div><div class="t">Medusa n'est pas fonctionnelle</div><div class="s">${escapeHtml(why ? why.label + " : " + why.detail + (why.fix ? " — " + why.fix : "") : "cause inconnue")}</div></div>`;
+  }
+  $("mdChecks").innerHTML = d.checks.map((c) => `
+    <div class="env-row">
+      <div class="st ${c.ok ? "ok" : "miss"}">${c.ok ? "✓" : "!"}</div>
+      <div><div class="nm">${escapeHtml(c.label)}${c.core ? "" : ' <span style="color:var(--dim);font-weight:400;font-size:11px;">(optionnel)</span>'}</div>
+      <div class="meta">${escapeHtml(c.detail)}${!c.ok && c.fix ? " — " + escapeHtml(c.fix) : ""}</div></div>
+    </div>`).join("");
 }
-$("medusaRetryBtn").onclick = async () => {
-  const btn = $("medusaRetryBtn"), msg = $("medusaMsg");
+document.querySelector('.nav-item[data-page="medusa"]').addEventListener("click", renderMedusa);
+$("mdReinstall").onclick = async () => {
+  const btn = $("mdReinstall"), msg = $("mdMsg");
   btn.disabled = true; msg.className = "msg"; msg.textContent = "Installation…";
   const r = await window.olympus.medusaInstall();
   btn.disabled = false;
-  if (r.ok) { msg.className = "msg ok"; msg.textContent = "✅ Medusa installé. Redémarre Claude Code, puis demande par ex. « liste le parc Pegasus »."; }
-  else { msg.className = "msg err"; msg.textContent = r.error || "Échec."; }
-  refreshMedusa();
+  msg.className = r.ok ? "msg ok" : "msg err";
+  msg.textContent = r.ok ? "✅ Medusa (ré)installée. Redémarre Claude pour voir les outils medusa_*." : (r.error || "Échec.");
+  renderMedusa();
 };
-setTimeout(refreshMedusa, 2500); // laisse l'installation auto du démarrage se faire
+$("mdRecheck").onclick = () => { $("mdMsg").textContent = ""; renderMedusa(); };
 
 // ══════════ AUTH ══════════
 let pendingUser = null;

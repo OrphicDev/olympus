@@ -954,6 +954,38 @@ ipcMain.handle("medusa:install", async () => {
   const st = await medusaEnsure();
   return { ok: st.file && st.registered, ...st };
 });
+// Diagnostic complet : POURQUOI Medusa fonctionne ou pas (pour la vue Medusa)
+ipcMain.handle("medusa:diag", async () => {
+  const checks = [];
+  const nodeV = await sh("node -v");
+  checks.push({ id: "node", core: true, ok: !!nodeV, label: "Node.js", detail: nodeV ? "présent (" + nodeV + ")" : "introuvable — Claude Code en a besoin pour lancer Medusa", fix: nodeV ? null : "Installe Node.js (nodejs.org), puis relance Olympus." });
+  const cli = await has("claude");
+  const appDesktop = existsSync("/Applications/Claude.app");
+  const cfgExists = existsSync(join(homedir(), ".claude.json"));
+  const claudeOk = cli || appDesktop || cfgExists;
+  checks.push({ id: "claude", core: true, ok: claudeOk, label: "Claude installé sur cet ordinateur", detail: cli ? "CLI `claude` détectée" : appDesktop ? "app desktop détectée (/Applications/Claude.app)" : cfgExists ? "configuration Claude Code détectée (~/.claude.json)" : "aucune trace de Claude sur ce Mac", fix: claudeOk ? null : "Installe Claude (claude.ai/download) ou Claude Code, puis relance Olympus." });
+  let fileOk = false, upToDate = false;
+  try {
+    const cur = readFileSync(medusaDest(), "utf8");
+    fileOk = true;
+    upToDate = cur === readFileSync(join(__dirname, "medusa-mcp", "server.mjs"), "utf8");
+  } catch {}
+  checks.push({ id: "file", core: true, ok: fileOk, label: "Serveur Medusa en place", detail: fileOk ? (upToDate ? "~/.olympus/medusa-mcp.mjs — présent et à jour" : "présent (une mise à jour sera posée au prochain lancement)") : "~/.olympus/medusa-mcp.mjs absent", fix: fileOk ? null : "Clique « Réinstaller Medusa » ci-dessous." });
+  let reg = false, regDetail = "Medusa n'est pas déclaré dans Claude Code";
+  try {
+    const cfg = JSON.parse(readFileSync(join(homedir(), ".claude.json"), "utf8"));
+    const m = cfg.mcpServers && cfg.mcpServers.medusa;
+    if (m && Array.isArray(m.args) && m.args[0] === medusaDest()) { reg = true; regDetail = "déclaré dans ~/.claude.json (portée user)"; }
+    else if (m) { reg = true; regDetail = "déclaré, mais vers un autre chemin — réinstalle pour corriger"; }
+  } catch {}
+  checks.push({ id: "registered", core: true, ok: reg, label: "MCP enregistré dans Claude Code", detail: regDetail, fix: reg ? null : "Clique « Réinstaller Medusa » (écrit l'entrée medusa dans ~/.claude.json)." });
+  const keyOk = existsSync(KEY_FILE);
+  checks.push({ id: "pegasus", core: false, ok: keyOk, label: "Clé d'équipe Pegasus", detail: keyOk ? "présente — parc, sauvegardes, déploiement et bibliothèque actifs" : "absente — les outils Pegasus renverront une erreur", fix: keyOk ? null : "Installe Pegasus depuis Alexandrie (code d'accès)." });
+  const sessOk = existsSync(join(app.getPath("userData"), "olympus-session.json"));
+  checks.push({ id: "session", core: false, ok: sessOk, label: "Session Olympus", detail: sessOk ? "connectée — chat, calendrier, CRM et équipe actifs" : "absente — les outils espace de travail renverront une erreur", fix: sessOk ? null : "Connecte-toi à Olympus." });
+  const functional = checks.filter((c) => c.core).every((c) => c.ok);
+  return { functional, checks, dest: medusaDest() };
+});
 
 function mcpDest() { return join(homedir(), ".olympus", "mcp-server.mjs"); }
 ipcMain.handle("claude:status", () => ({ installed: existsSync(mcpDest()) }));
