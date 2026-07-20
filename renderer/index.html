@@ -975,6 +975,28 @@
   .mq-animref{display:flex;flex-direction:column;gap:7px;}
   .mq-animref .mq-ari-sec{width:100%;}
   .mq-ari-scan{white-space:nowrap;flex-shrink:0;}
+  .mq-lib{flex-shrink:0;background:transparent;border:1px solid var(--line);border-radius:9px;cursor:pointer;font-size:14px;line-height:1;padding:6px 8px;transition:border-color .12s,background .12s;}
+  .mq-lib:hover{border-color:var(--accent2);background:color-mix(in srgb,var(--accent2) 10%,transparent);}
+  /* Sélecteur de bibliothèque (piocher une référence) */
+  .rlp-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px;}
+  .rlp-bar .rlp-q{flex:1;min-width:200px;}
+  .rlp-tabs{display:flex;gap:6px;}
+  .rlp-tab{background:transparent;border:1px solid var(--line);color:var(--muted);font-size:12px;cursor:pointer;padding:5px 12px;border-radius:20px;transition:color .12s,border-color .12s,background .12s;}
+  .rlp-tab:hover{color:var(--txt);border-color:var(--line2);}
+  .rlp-tab.on{color:var(--txt);border-color:var(--accent2);background:color-mix(in srgb,var(--accent2) 14%,transparent);}
+  .rlp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;}
+  .rlp-card{text-align:left;cursor:pointer;background:var(--bg2);border:1px solid var(--line);border-radius:13px;padding:13px 15px;transition:border-color .14s,transform .1s;display:flex;flex-direction:column;gap:5px;}
+  .rlp-card:hover{border-color:var(--accent2);transform:translateY(-1px);}
+  .rlp-top{display:flex;align-items:center;gap:6px;}
+  .rlp-badge{font-size:9px;letter-spacing:.05em;text-transform:uppercase;border-radius:20px;padding:2px 8px;font-weight:600;}
+  .rlp-badge.rlp-site{color:#7fb2e8;border:1px solid color-mix(in srgb,#7fb2e8 45%,transparent);}
+  .rlp-badge.rlp-page{color:var(--accent2);border:1px solid color-mix(in srgb,var(--accent2) 45%,transparent);}
+  .rlp-badge.rlp-animation{color:#c9a2e8;border:1px solid color-mix(in srgb,#c9a2e8 45%,transparent);}
+  .rlp-niv{font-size:9.5px;color:var(--dim);letter-spacing:.04em;}
+  .rlp-ok{color:var(--ok);font-size:11px;margin-left:auto;}
+  .rlp-title{font-size:13.5px;font-weight:600;color:var(--txt);line-height:1.25;}
+  .rlp-host{font-size:11px;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .rlp-tech{font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .ab-mini.has{color:var(--accent);}
   .ab-node:hover .ab-mini.has{opacity:1;}
   /* Moodboard */

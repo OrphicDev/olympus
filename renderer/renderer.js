@@ -1235,6 +1235,61 @@ function pgWireWorkModal(s, v, moodId) {
 // chaque section, son contenu, sa destination et ses animations (puces guidées
 // du vocabulaire motion Orphic). C'est la matière que le brief transmet.
 const AB_ANIMS = ["Fondu à l'arrivée", "Montée au scroll", "Parallaxe", "Texte révélé mot à mot", "Zoom lent des images", "Survol lumineux", "Épinglée au scroll", "Aucune animation"];
+// Type dérivé d'une référence de la bibliothèque : animation / page (URL profonde) / site (racine)
+function pgRefType(ref) {
+  if (ref.kind === "animation") return "animation";
+  try {
+    const u = new URL(/^https?:\/\//i.test(ref.url || "") ? ref.url : "https://" + (ref.url || ""));
+    const path = (u.pathname || "").replace(/\/+$/, "");
+    return path ? "page" : "site";
+  } catch { return "site"; }
+}
+// Sélecteur : piocher une référence (site / page / animation) dans la bibliothèque Orphic
+async function pgRefLibPicker(opts) {
+  const { title = "Piocher dans la bibliothèque", filter = "tous", onPick } = opts || {};
+  const ov = document.createElement("div"); ov.className = "modal-overlay show";
+  ov.innerHTML = `<div class="modal-panel" style="width:720px;max-width:94vw;">
+      <div class="modal-head"><h2>${escapeHtml(title)}</h2><button class="modal-x" data-x aria-label="Fermer">✕</button></div>
+      <div class="modal-body" style="max-height:74vh;overflow:auto;">
+        <div class="rlp-bar">
+          <input class="mood-in rlp-q" placeholder="Rechercher — titre, technique, secteur…">
+          <div class="rlp-tabs">${[["tous", "Tous"], ["site", "Sites"], ["page", "Pages"], ["animation", "Animations"]].map(([k, l]) => `<button class="rlp-tab${filter === k ? " on" : ""}" data-f="${k}">${l}</button>`).join("")}</div>
+        </div>
+        <div class="rlp-list"><div class="rb-empty">Lecture de la bibliothèque…</div></div>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  const close = () => ov.remove();
+  ov.querySelector("[data-x]").onclick = close;
+  ov.onclick = (e) => { if (e.target === ov) close(); };
+  const listBox = ov.querySelector(".rlp-list");
+  const r = await window.olympus.pegasusRefs({ statut: "tous", limit: 500 });
+  if (!r.ok && r.missing_table) { listBox.innerHTML = `<div class="rb-empty">La bibliothèque n'est pas encore initialisée. Ouvre l'onglet <b>Bibliothèque</b> pour la configurer, puis ajoute des références.</div>`; return; }
+  if (!r.ok) { listBox.innerHTML = `<div class="rb-empty">${escapeHtml(r.error || "Bibliothèque indisponible.")}</div>`; return; }
+  // On ne pioche que des références réellement liables (avec une URL)
+  const all = (r.refs || []).filter((x) => x.url && String(x.url).trim()).map((x) => ({ ...x, _t: pgRefType(x) }));
+  const badge = { site: "Site", page: "Page", animation: "Animation" };
+  let curF = filter, curQ = "";
+  const render = () => {
+    const q = curQ.toLowerCase();
+    const rows = all.filter((x) => (curF === "tous" || x._t === curF) && (!q || [x.titre, x.technique, x.business, x.notes, x.ingredients, x.url].some((v) => (v || "").toLowerCase().includes(q))));
+    if (!rows.length) { listBox.innerHTML = `<div class="rb-empty">Aucune référence ${curF !== "tous" ? "de ce type " : ""}dans la bibliothèque${curQ ? " pour cette recherche" : ""}. On en ajoute depuis l'onglet Bibliothèque.</div>`; return; }
+    listBox.innerHTML = `<div class="rlp-grid">${rows.map((x, i) => {
+      let host = x.url || "";
+      if (x.url) { try { const u = new URL(/^https?:\/\//i.test(x.url) ? x.url : "https://" + x.url); host = u.host.replace(/^www\./, "") + (x._t === "page" ? (u.pathname || "").replace(/\/+$/, "") : ""); } catch {} }
+      return `<button class="rlp-card" data-i="${i}">
+          <div class="rlp-top"><span class="rlp-badge rlp-${x._t}">${badge[x._t]}</span>${x.niveau ? `<span class="rlp-niv">${escapeHtml(x.niveau)}</span>` : ""}${x.statut === "valide" ? '<span class="rlp-ok" title="Validée">✓</span>' : ""}</div>
+          <div class="rlp-title">${escapeHtml(x.titre || "—")}</div>
+          <div class="rlp-host">${escapeHtml(host)}</div>
+          ${x.technique ? `<div class="rlp-tech">${escapeHtml(x.technique)}</div>` : ""}
+        </button>`;
+    }).join("")}</div>`;
+    listBox.querySelectorAll(".rlp-card").forEach((b) => b.onclick = () => { if (onPick) onPick(rows[+b.dataset.i]); close(); });
+  };
+  ov.querySelectorAll(".rlp-tab").forEach((t) => t.onclick = () => { curF = t.dataset.f; ov.querySelectorAll(".rlp-tab").forEach((x) => x.classList.toggle("on", x === t)); render(); });
+  const qEl = ov.querySelector(".rlp-q"); qEl.oninput = () => { curQ = qEl.value.trim(); render(); };
+  render();
+}
 function pgAbMaquetteModal(s, p, ro) {
   // Migration : l'ancien champ libre `animation` devient une puce personnalisée
   for (const sec of p.sections || []) {
@@ -1261,7 +1316,8 @@ function pgAbMaquetteModal(s, p, ro) {
         <div class="mq-label">Style de page — référence</div>
         <div class="mq-refline">
           <input class="mood-in" data-refstyle placeholder="Lien d'une page dont le style te plaît (https://…)" value="${escapeHtml(p.refStyle || "")}" ${ro ? "disabled" : ""}>
-          ${p.refStyle ? `<button class="mq-open" data-openref="page" title="Ouvrir">↗</button>` : ""}
+          ${ro ? "" : `<button class="mq-lib" data-libstyle title="Piocher un site ou une page dans la bibliothèque">📚</button>`}
+          <button class="mq-open" data-openref="page" title="Ouvrir" ${p.refStyle ? "" : 'style="display:none"'}>↗</button>
         </div>
         ${(p.sections || []).map((sec, i) => {
           const cible = sec.cible && (pgArboCache[s.key]?.pages || []).find((x) => x.id === sec.cible);
@@ -1280,7 +1336,7 @@ function pgAbMaquetteModal(s, p, ro) {
             <div class="mq-animref" data-ari="${i}">
               <div class="mq-refline">
                 <input class="mood-in mq-ari-url" placeholder="Lien de la page où se trouve l'animation" value="${escapeHtml(ar.url || "")}" ${ro ? "disabled" : ""}>
-                ${ro ? (ar.url ? `<button class="mq-open" data-openref="ari-${i}" title="Ouvrir">↗</button>` : "") : `<button class="mq-chip mq-ari-scan">Scanner les sections</button>`}
+                ${ro ? (ar.url ? `<button class="mq-open" data-openref="ari-${i}" title="Ouvrir">↗</button>` : "") : `<button class="mq-lib mq-ari-lib" title="Piocher une animation dans la bibliothèque">📚</button><button class="mq-chip mq-ari-scan">Scanner les sections</button>`}
               </div>
               <select class="pl-select mq-ari-sec" ${ro ? "disabled" : ""} ${!ar.section ? 'style="display:none"' : ""}>
                 ${ar.section ? `<option value="${escapeHtml(ar.section)}" selected>${escapeHtml(ar.section)}</option>` : '<option value="">— section —</option>'}
@@ -1311,9 +1367,13 @@ function pgAbMaquetteModal(s, p, ro) {
     if (url) window.olympus.openExternal(/^https?:\/\//i.test(url) ? url : "https://" + url);
   });
   if (ro) return;
-  // Style de page (référence)
+  // Style de page (référence) — saisie libre OU piochée dans la bibliothèque
   const rs = ov.querySelector("[data-refstyle]");
-  if (rs) rs.oninput = () => { p.refStyle = rs.value.trim(); pgArboSave(s.key); syncBadge(); };
+  const rsOpen = ov.querySelector('[data-openref="page"]');
+  const setRefStyle = (url) => { p.refStyle = (url || "").trim(); if (rs) rs.value = p.refStyle; if (rsOpen) rsOpen.style.display = p.refStyle ? "" : "none"; pgArboSave(s.key); syncBadge(); };
+  if (rs) rs.oninput = () => setRefStyle(rs.value);
+  const rsLib = ov.querySelector("[data-libstyle]");
+  if (rsLib) rsLib.onclick = () => pgRefLibPicker({ title: "Style de page — piocher dans la bibliothèque", filter: "tous", onPick: (ref) => setRefStyle(ref.url) });
   // Animation référence par section : lien + scan des sections + choix dans la liste
   ov.querySelectorAll(".mq-animref").forEach((box) => {
     const i = +box.dataset.ari;
@@ -1322,6 +1382,15 @@ function pgAbMaquetteModal(s, p, ro) {
     const selEl = box.querySelector(".mq-ari-sec");
     urlEl.oninput = () => { sec.animRef = { ...(sec.animRef || {}), url: urlEl.value.trim() }; pgArboSave(s.key); syncBadge(); };
     selEl.onchange = () => { sec.animRef = { ...(sec.animRef || {}), section: selEl.value || "" }; pgArboSave(s.key); syncBadge(); };
+    // Piocher une animation dans la bibliothèque : remplit l'URL + note le nom de l'animation
+    const lib = box.querySelector(".mq-ari-lib");
+    if (lib) lib.onclick = () => pgRefLibPicker({ title: "Animation — piocher dans la bibliothèque", filter: "animation", onPick: (ref) => {
+      sec.animRef = { url: ref.url || "", section: ref.titre || "" };
+      urlEl.value = sec.animRef.url;
+      selEl.innerHTML = `<option value="${escapeHtml(sec.animRef.section)}" selected>${escapeHtml(sec.animRef.section || "— animation —")}</option>`;
+      selEl.style.display = sec.animRef.section ? "" : "none";
+      pgArboSave(s.key); syncBadge();
+    } });
     const scan = box.querySelector(".mq-ari-scan");
     if (scan) scan.onclick = async () => {
       const url = urlEl.value.trim();
