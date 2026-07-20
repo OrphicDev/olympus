@@ -1138,8 +1138,10 @@ ipcMain.handle("pegasus:arboScan", async (_e, key, homeWp) => {
       const re = /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
       let m;
       while ((m = re.exec(html))) {
-        const u = abs(m[1].split("#")[0], baseUrl);
-        if (!u || u.hostname.replace(/^www\./, "") !== base.hostname.replace(/^www\./, "")) continue;
+        const raw = m[1].split("#")[0];
+        if (!raw) continue;
+        const u = abs(raw, baseUrl);
+        if (!u || u.search || u.hostname.replace(/^www\./, "") !== base.hostname.replace(/^www\./, "")) continue;
         const target = byPath.get(norm(u));
         if (!target || target.id === selfWp || seen.has(target.id)) continue;
         seen.add(target.id);
@@ -1161,11 +1163,58 @@ ipcMain.handle("pegasus:arboScan", async (_e, key, homeWp) => {
       return { header, footer, content: html };
     };
     const headerLinks = new Map(), footerLinks = new Map();
+    const subRels = new Map(); // parentWp -> Map(childWp -> label) : hiérarchie des sous-menus
+    // Le menu porte la hiérarchie : un lien dans un <ul> imbriqué (sous-menu) est un
+    // ENFANT de l'entrée parente → il deviendra une section de la page parente.
+    const parseMenu = (headerHtml, baseUrl) => {
+      const base = abs(baseUrl);
+      if (!headerHtml || !base) return;
+      // Conteneurs de sous-menu : <ul> imbriqué (WordPress) OU div/ul de classe
+      // dropdown/sub-menu (thèmes custom). Un lien dans un tel conteneur est
+      // l'ENFANT du dernier lien vu hors conteneur.
+      const tok = /<(ul|div)\b[^>]*>|<\/(ul|div)>|<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+      const stack = []; let ulOpen = 0; let lastTop = null;
+      const dropDepth = () => stack.reduce((n, f) => n + (f.drop ? 1 : 0), 0);
+      let m;
+      while ((m = tok.exec(headerHtml))) {
+        if (m[1]) { // balise ouvrante ul/div
+          // Classe EXACTE « dropdown »/« sub-menu » (pas « has-dropdown », qui est
+          // le wrapper de l'item parent, pas le conteneur des enfants)
+          const clsm = m[0].match(/class=["']([^"']*)["']/i);
+          const isDropClass = clsm ? clsm[1].toLowerCase().split(/\s+/).some((c) => c === "dropdown" || c === "sub-menu" || c === "submenu") : false;
+          const drop = m[1] === "ul" ? (isDropClass || ulOpen >= 1) : isDropClass;
+          if (m[1] === "ul") ulOpen++;
+          stack.push({ tag: m[1], drop });
+          continue;
+        }
+        if (m[2]) { // balise fermante
+          for (let i = stack.length - 1; i >= 0; i--) {
+            if (stack[i].tag === m[2]) { if (m[2] === "ul") ulOpen = Math.max(0, ulOpen - 1); stack.splice(i, 1); break; }
+          }
+          continue;
+        }
+        const raw = m[3].split("#")[0];
+        if (!raw) continue; // ancre pure (#section)
+        const u = abs(raw, baseUrl);
+        if (!u || u.search || u.hostname.replace(/^www\./, "") !== base.hostname.replace(/^www\./, "")) continue;
+        const target = byPath.get(norm(u));
+        if (!target) continue;
+        let label = m[4].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+        if (!label || label.length > 42) label = String(target.title || "Lien");
+        if (dropDepth() >= 1 && lastTop && lastTop !== target.id) {
+          if (!subRels.has(lastTop)) subRels.set(lastTop, new Map());
+          if (!subRels.get(lastTop).has(target.id)) subRels.get(lastTop).set(target.id, label);
+        } else if (dropDepth() === 0) {
+          if (!headerLinks.has(target.id)) headerLinks.set(target.id, label);
+          lastTop = target.id;
+        }
+      }
+    };
     const scanPage = async (url, pageNode, selfWp) => {
       const html = await fetchHtml(url);
       if (!html) return;
       const { header, footer, content } = splitRegions(html);
-      for (const l of linksIn(header, url, selfWp)) if (!headerLinks.has(l.wp)) headerLinks.set(l.wp, l.label);
+      parseMenu(header, url);
       for (const l of linksIn(footer, url, selfWp)) if (!footerLinks.has(l.wp)) footerLinks.set(l.wp, l.label);
       if (pageNode) pageNode._links = linksIn(content, url, selfWp);
     };
@@ -1198,6 +1247,17 @@ ipcMain.handle("pegasus:arboScan", async (_e, key, homeWp) => {
     for (const p of pages) {
       for (const l of p._links || []) p.sections.push({ id: mkId(), titre: l.label, cible: idByWp.get(l.wp), color: nextColor() });
       delete p._links;
+    }
+    // Hiérarchie des sous-menus : enfants attachés à leur page parente (→ niveau 3)
+    for (const [parentWp, children] of subRels) {
+      const parentNode = pages.find((p) => p.wp_id === parentWp);
+      if (!parentNode) continue;
+      for (const [childWp, label] of children) {
+        const cid = idByWp.get(childWp);
+        if (!cid || parentNode.sections.some((sc) => sc.cible === cid)) continue;
+        parentNode.sections.push({ id: mkId(), titre: label, cible: cid, color: nextColor() });
+      }
+      headerLinks.delete && children.forEach((_, cw) => headerLinks.delete(cw));
     }
     const nodes = [...pages];
     if (headerLinks.size) nodes.push({ id: mkId(), artefact: "header", titre: "Header", sections: [...headerLinks].map(([wp, label]) => ({ id: mkId(), titre: label, cible: idByWp.get(wp), color: nextColor() })) });

@@ -440,6 +440,7 @@ function pgArboSave(key) {
 const pgArboId = () => "n" + Math.random().toString(36).slice(2, 8);
 const AB_COLORS = ["#e8c268", "#8fd6a6", "#7fb2e8", "#e0868f", "#c9a2e8", "#8fd6cf"];
 let pgAbLink = null;                          // {p, s} : section en cours de câblage
+const pgAbSel = new Set();                    // maj+clic : sélection multiple de nodes
 
 // Rangement par NIVEAUX en colonnes : home = niveau 1 (à gauche), les pages
 // qu'elle atteint = niveau 2 (colonne suivante), etc. Header/Footer = artefacts
@@ -577,6 +578,7 @@ async function pgArboRender(s) {
   }
   if (dirty) pgArboSave(s.key);
   pgAbLink = null;
+  pgAbSel.clear();
   const HINT = `Glisse une carte pour la déplacer · double-clique un nom pour le renommer · clique un <b>port</b> puis une page pour tracer une connexion · clic droit sur un port pour détacher`;
 
   box.innerHTML = `
@@ -676,9 +678,11 @@ async function pgArboRender(s) {
   };
 
   // Pan du canvas (fond) — et clic dans le vide = annule le câblage en cours
+  const abSyncSel = () => stage.querySelectorAll(".ab-node").forEach((x) => x.classList.toggle("selected", pgAbSel.has(x.dataset.p)));
   stage.addEventListener("pointerdown", (e) => {
     if (e.target !== stage) return;
     if (pgAbLink) { pgAbLink = null; pgArboRender(s); return; }
+    if (pgAbSel.size) { pgAbSel.clear(); abSyncSel(); }
     canvas.classList.add("panning");
     const sx = e.clientX, sy = e.clientY, sl = canvas.scrollLeft, st = canvas.scrollTop;
     const move = (ev) => { canvas.scrollLeft = sl - (ev.clientX - sx); canvas.scrollTop = st - (ev.clientY - sy); };
@@ -694,25 +698,40 @@ async function pgArboRender(s) {
     ne.addEventListener("mouseleave", () => { abHot = null; drawWires(); });
     ne.addEventListener("pointerdown", (e) => {
       if (e.target.closest('button,.ab-port,[contenteditable="true"]')) return;
+      if (e.shiftKey) return; // maj+clic = sélection (gérée au clic)
       e.preventDefault();
-      const sx = e.clientX, sy = e.clientY, ox = p.x, oy = p.y;
+      // Déplacement groupé si ce node fait partie de la sélection multiple
+      const group = pgAbSel.has(p.id) && pgAbSel.size > 1
+        ? [...pgAbSel].map((pid) => ({ n: find(pid), el: stage.querySelector(`.ab-node[data-p="${pid}"]`) })).filter((g) => g.n && g.el)
+        : [{ n: p, el: ne }];
+      if (!pgAbSel.has(p.id) && pgAbSel.size) { pgAbSel.clear(); abSyncSel(); }
+      const sx = e.clientX, sy = e.clientY;
+      const origins = group.map((g) => ({ x: g.n.x, y: g.n.y }));
       let moved = false;
       const move = (ev) => {
         moved = true;
-        p.x = Math.max(0, ox + (ev.clientX - sx) / abZoom);
-        p.y = Math.max(0, oy + (ev.clientY - sy) / abZoom);
-        ne.style.left = p.x + "px"; ne.style.top = p.y + "px";
+        const dx = (ev.clientX - sx) / abZoom, dy = (ev.clientY - sy) / abZoom;
+        group.forEach((g, i) => {
+          g.n.x = Math.max(0, origins[i].x + dx);
+          g.n.y = Math.max(0, origins[i].y + dy);
+          g.el.style.left = g.n.x + "px"; g.el.style.top = g.n.y + "px";
+        });
         requestAnimationFrame(drawWires);
       };
       const up = () => {
         window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up);
-        if (moved) { p.x = Math.round(p.x); p.y = Math.round(p.y); pgArboSave(s.key); }
+        if (moved) { group.forEach((g) => { g.n.x = Math.round(g.n.x); g.n.y = Math.round(g.n.y); }); pgArboSave(s.key); }
       };
       window.addEventListener("pointermove", move);
       window.addEventListener("pointerup", up);
     });
     // En mode câblage, cliquer une page = destination de la section
-    ne.addEventListener("click", () => {
+    ne.addEventListener("click", (e) => {
+      if (e.shiftKey) {
+        if (pgAbSel.has(p.id)) pgAbSel.delete(p.id); else pgAbSel.add(p.id);
+        abSyncSel();
+        return;
+      }
       if (!pgAbLink || ne.dataset.p === pgAbLink.p || p.artefact) return;
       const src = find(pgAbLink.p);
       const sec = src && src.sections.find((x) => x.id === pgAbLink.s);
