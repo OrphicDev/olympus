@@ -1233,6 +1233,33 @@ const PL_STATUTS = { afaire: "À faire", fait: "✓ Fait", passee: "Passée", ia
 function pgPlNew(mode) {
   return { mode, etapes: Object.fromEntries(PL_ETAPES.map((e) => [e.id, { statut: "afaire" }])) };
 }
+// Prompt de la conversation « Avancer avec Claude » : tout le contexte du site +
+// l'état des étapes + la consigne de guider le dev question par question, avec la
+// possibilité de passer une étape ou de la confier à l'IA.
+function pgPipelineAdvancePrompt(s, pl, niveau) {
+  const et = pl.etapes || {};
+  const modeTxt = pl.mode === "nouveau" ? "nouveau site (part de zéro)" : pl.mode === "refonte" ? "refonte complète (le site existe, tout est prérempli à retravailler)" : pl.mode;
+  const lignes = PL_ETAPES.map((e, i) => {
+    const na = e.n34 && niveau && niveau <= 2;
+    const st = na ? "non applicable (site N1-N2)" : (PL_STATUTS[et[e.id]?.statut] || "À faire");
+    return `${i + 1}. ${e.titre} — [${st}]\n   Objectif : ${e.desc}\n   Ce qu'on écrit : ${e.prompt}`;
+  }).join("\n");
+  return [
+    `Tu accompagnes le développeur sur le site « ${s.label} » via le pipeline de travail Pegasus. Mode : ${modeTxt}. Niveau visé : ${niveau ? "N" + niveau : "pas encore choisi"}.`,
+    ``,
+    `TOUT LE CONTEXTE est dans ce dossier : arborescence.json (wireframe : pages, sections, connexions, maquette = contexte de page + textes + animations par section), moodboard.json (charte : couleurs, typos, logo, niveau, références), pipeline.json (l'état des étapes ci-dessous), et si présents wireframes/ (versions figées), site.json/content.json/home.html (snapshot du site réel), wordpress/. Lis-les avant de commencer. Si les outils Medusa (medusa_*) ou Pegasus (pegasus_*) sont disponibles, sers-t'en pour lire le parc et écrire proprement.`,
+    ``,
+    `LES ÉTAPES (statut actuel entre crochets) :`,
+    lignes,
+    ``,
+    `TA MISSION — fais avancer le pipeline en CONVERSATION :`,
+    `1. Commence par la première étape encore « À faire » (ignore celles déjà faites, passées, confiées à l'IA ou non applicables).`,
+    `2. Pour chaque étape : explique en une phrase où on en est, puis pose TES questions UNE À LA FOIS (pas de mur de questions). Attends la réponse, reformule, et écris le résultat dans le bon fichier (arborescence.json / moodboard.json / pipeline.json selon l'étape).`,
+    `3. À chaque étape, propose toujours explicitement trois sorties au dev : la remplir avec toi, la PASSER (« on passe cette étape »), ou te LAISSER DÉCIDER (tu choisis en suivant la doctrine orphic-web-design). Quand une étape est traitée, mets à jour son statut dans pipeline.json → etapes.<id>.statut (fait | passee | ia).`,
+    `4. Enchaîne étape par étape jusqu'au bout, ou arrête-toi quand le dev le demande. À la fin, récapitule ce qui est rempli, passé, ou laissé à l'IA, et rappelle qu'il peut lancer « ⚡ Générer le site » quand il veut.`,
+    `Respecte la doctrine du skill orphic-web-design (règle-mère, pas de registre par défaut, offre N1-N4, zones protégées). Ne construis pas le site ici : cette conversation SERT À REMPLIR le pipeline, la génération est une étape à part.`,
+  ].join("\n");
+}
 async function pgPipelineRender(s) {
   const box = $("pgPipeline"); if (!box) return;
   if (!pgPlCache[s.key]) {
@@ -1304,6 +1331,11 @@ async function pgPipelineRender(s) {
       <button class="cal-btn primary" id="plGen">⚡ Générer le site</button>
       <button class="btn sec" id="plReset" title="Revenir au choix du mode">Mode…</button>
     </div>
+    <button class="pl-advance" id="plAdvance">
+      <span class="pl-adv-ic">✨</span>
+      <span class="pl-adv-txt"><b>Avancer avec Claude</b><span>J'ouvre une conversation avec tout le contexte du site et je te guide, question par question — tu peux passer une étape à tout moment.</span></span>
+      <span class="pl-adv-go">Démarrer →</span>
+    </button>
     ${passees.length ? `<div class="pg-alert warn">⚠ Étapes passées sans être remplies : ${passees.map((e) => e.titre).join(", ")}. Le résultat pourra s'éloigner de tes attentes sur ces points.</div>` : ""}
     <div class="pl-steps">
     ${PL_ETAPES.map((e, i) => {
@@ -1345,6 +1377,14 @@ async function pgPipelineRender(s) {
   };
   $("plGen").onclick = gen;
   $("plReset").onclick = () => { pl.mode = null; pgPlSave(s.key); pgPipelineRender(s); };
+  $("plAdvance").onclick = async (ev) => {
+    const btn = ev.currentTarget; btn.disabled = true;
+    const r = await window.olympus.pegasusPipelineDiscuss(s.key, pgPipelineAdvancePrompt(s, pl, niveau));
+    btn.disabled = false;
+    const msg = $("pgWorkMsg");
+    if (r.ok && msg) { msg.className = "msg ok"; msg.textContent = "Conversation Claude ouverte — je te guide étape par étape dans le terminal."; }
+    if (!r.ok) alert("Échec : " + (r.error || ""));
+  };
 
   box.querySelectorAll(".pl-step").forEach((el) => {
     const e = PL_ETAPES.find((x) => x.id === el.dataset.e);
