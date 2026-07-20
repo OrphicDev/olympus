@@ -884,6 +884,9 @@ async function pgArboRender(s) {
     const p = find(ne.dataset.p);
     ne.addEventListener("mouseenter", () => { abHot = p.id; drawWires(); });
     ne.addEventListener("mouseleave", () => { abHot = null; drawWires(); });
+    // La maquette se CONSULTE même en lecture seule (édition sur version de travail)
+    const mqBtn = ne.querySelector('[data-act="maquette"]');
+    if (mqBtn) mqBtn.onclick = (e) => { e.stopPropagation(); pgAbMaquetteModal(s, p, !editable); };
     if (!editable) return;
     ne.addEventListener("pointerdown", (e) => {
       if (e.target.closest('button,.ab-port,.ab-outport,[contenteditable="true"]')) return;
@@ -1092,23 +1095,24 @@ function pgWireWorkModal(s, v) {
 
 // Modale « Maquette » d'une page du wireframe : le contexte de la page + le texte
 // de chaque section. C'est la matière que le brief transmet à la construction.
-function pgAbMaquetteModal(s, p) {
+function pgAbMaquetteModal(s, p, ro) {
   const ov = document.createElement("div");
   ov.className = "modal-overlay show";
   ov.innerHTML = `
     <div class="modal-panel" style="width:640px;">
       <div class="modal-head"><h2>Maquette — ${escapeHtml(p.titre)}</h2><button class="modal-x" data-x aria-label="Fermer">✕</button></div>
       <div class="modal-body">
+        ${ro ? `<div class="pg-alert" style="border:0;color:var(--dim);margin-bottom:10px;">🔒 Version en ligne — lecture seule. Duplique la version en ligne (barre du haut) pour modifier la maquette.</div>` : ""}
         <div class="mood-h" style="margin-bottom:8px;">Contexte de la page</div>
-        <textarea class="mood-in mood-ta" data-mq="ctx" placeholder="À quoi sert cette page, à qui elle parle, ce qu'elle doit provoquer…">${escapeHtml(p.contexte || "")}</textarea>
+        <textarea class="mood-in mood-ta" data-mq="ctx" placeholder="À quoi sert cette page, à qui elle parle, ce qu'elle doit provoquer…" ${ro ? "disabled" : ""}>${escapeHtml(p.contexte || "")}</textarea>
         ${(p.sections || []).length ? `<div class="mood-h" style="margin:16px 0 8px;">Textes des sections</div>` : ""}
         ${(p.sections || []).map((sec, i) => `
           <div class="mq-sec">
             <div class="mq-t"><span class="ab-secdot" style="background:${sec.color || "var(--line2)"};"></span>${escapeHtml(sec.titre)}</div>
-            <textarea class="mood-in mood-ta mini" data-mq="${i}" placeholder="Le texte / contenu voulu pour cette section…">${escapeHtml(sec.texte || "")}</textarea>
+            <textarea class="mood-in mood-ta mini" data-mq="${i}" placeholder="Le texte / contenu voulu pour cette section…" ${ro ? "disabled" : ""}>${escapeHtml(sec.texte || "")}</textarea>
           </div>`).join("")}
       </div>
-      <div class="modal-foot"><span class="ab-hint" style="flex:1;">Enregistré automatiquement — repris dans le brief de construction.</span><button class="btn" data-x>Fermer</button></div>
+      <div class="modal-foot"><span class="ab-hint" style="flex:1;">${ro ? "Consultation seule." : "Enregistré automatiquement — repris dans le brief de construction."}</span><button class="btn" data-x>Fermer</button></div>
     </div>`;
   document.body.appendChild(ov);
   const close = () => ov.remove();

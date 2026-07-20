@@ -995,6 +995,10 @@
   .ab-lock{color:var(--muted);font-size:12px;}
   .ab-node.linkhover{border-color:var(--accent2);box-shadow:0 0 0 2px var(--accent2),0 0 22px -4px var(--accent2);z-index:6;}
   .ab-layout.readonly .ab-node{cursor:default;}
+  /* Lecture seule : seuls la consultation de maquette (📝) et le survol restent */
+  .ab-layout.readonly .ab-mini{display:none;}
+  .ab-layout.readonly .ab-mini[data-act="maquette"]{display:inline-block;}
+  .ab-layout.readonly .ab-outport,.ab-layout.readonly .ab-lvlb{display:none;}
   /* ── Medusa : statut + capacités ── */
   .md-hero{display:flex;align-items:center;gap:16px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px 20px;max-width:660px;}
   .md-hero .pg-dot{width:11px;height:11px;}
