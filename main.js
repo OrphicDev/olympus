@@ -1,5 +1,5 @@
 "use strict";
-const { app, BrowserWindow, ipcMain, shell, dialog } = require("electron");
+const { app, BrowserWindow, ipcMain, shell, dialog, Menu } = require("electron");
 const { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync, readdirSync, rmSync, statSync } = require("node:fs");
 const { join, basename } = require("node:path");
 const { homedir, tmpdir } = require("node:os");
@@ -34,6 +34,46 @@ function createWindow() {
     shell.openExternal(url);
     return { action: "deny" };
   });
+  setAppMenu();
+}
+
+// Menu applicatif standard — indispensable pour que Cmd+C/V/X (copier-coller)
+// fonctionnent dans les champs de saisie sous macOS.
+function setAppMenu() {
+  const isMac = process.platform === "darwin";
+  const template = [
+    ...(isMac ? [{ role: "appMenu" }] : []),
+    { role: "fileMenu" },
+    {
+      label: "Édition",
+      submenu: [
+        { role: "undo", label: "Annuler" },
+        { role: "redo", label: "Rétablir" },
+        { type: "separator" },
+        { role: "cut", label: "Couper" },
+        { role: "copy", label: "Copier" },
+        { role: "paste", label: "Coller" },
+        { role: "pasteAndMatchStyle", label: "Coller sans mise en forme" },
+        { role: "delete", label: "Supprimer" },
+        { role: "selectAll", label: "Tout sélectionner" },
+      ],
+    },
+    {
+      label: "Affichage",
+      submenu: [
+        { role: "reload", label: "Recharger" },
+        { role: "toggleDevTools", label: "Outils de développement" },
+        { type: "separator" },
+        { role: "resetZoom", label: "Taille réelle" },
+        { role: "zoomIn", label: "Agrandir" },
+        { role: "zoomOut", label: "Réduire" },
+        { type: "separator" },
+        { role: "togglefullscreen", label: "Plein écran" },
+      ],
+    },
+    { role: "windowMenu" },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
 // Exécute une commande via un shell de login (pour récupérer le PATH de l'utilisateur).
