@@ -1,6 +1,6 @@
 "use strict";
-const { app, BrowserWindow, ipcMain, shell, dialog, Menu } = require("electron");
-const { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync, readdirSync, rmSync, statSync } = require("node:fs");
+const { app, BrowserWindow, ipcMain, shell, dialog, Menu, safeStorage } = require("electron");
+const { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync, chmodSync, readdirSync, rmSync, statSync } = require("node:fs");
 const { join, basename } = require("node:path");
 const { homedir, tmpdir } = require("node:os");
 const { execFile } = require("node:child_process");
@@ -1529,6 +1529,311 @@ ipcMain.handle("wa:logout", async () => { try { if (waSock) { try { await waSock
 ipcMain.handle("wa:chats", () => ({ ok: true, chats: waChatList() }));
 ipcMain.handle("wa:messages", (_e, jid) => ({ ok: true, messages: waMsgList(jid), name: waChatName(jid) }));
 ipcMain.handle("wa:send", async (_e, jid, text) => { try { if (!waSock) throw new Error("WhatsApp non connecté."); const sent = await waSock.sendMessage(jid, { text: String(text || "") }); if (sent) waStoreMsg(sent); return { ok: true }; } catch (e) { return { ok: false, error: e.message }; } });
+
+// ══════════ ARGOS — social media management (marques, publication, inbox, écoute, ads) ══════════
+// Architecture : le renderer ne parle qu'aux IPC argos:* — la même interface servira les
+// vraies API (Meta/TikTok/LinkedIn/X/YouTube/Google Ads) une fois les clés en place.
+// Tant qu'une plateforme n'est pas connectée, un générateur DÉTERMINISTE fournit des
+// données de démonstration réalistes (flag demo:true) pour travailler l'UI et les flux.
+function argosPath() { return join(app.getPath("userData"), "argos.json"); }
+function argosLoad() {
+  const p = argosPath();
+  if (!existsSync(p)) return null; // vrai premier lancement
+  try { return JSON.parse(readFileSync(p, "utf8")); }
+  catch (e) {
+    // Fichier présent mais illisible : ne JAMAIS l'écraser en silence — on le sauvegarde
+    // avant de repartir sur un état neuf, pour ne pas perdre les données réelles.
+    try { renameSync(p, p + ".corrupt-" + Date.now()); } catch {}
+    console.error("[argos] argos.json corrompu, sauvegardé en .corrupt :", e.message);
+    return null;
+  }
+}
+// Écriture atomique (tmp + rename) : un crash pendant l'écriture ne peut pas tronquer le store.
+function argosSave(st) {
+  const p = argosPath(); const tmp = p + ".tmp";
+  try { writeFileSync(tmp, JSON.stringify(st, null, 2)); renameSync(tmp, p); return true; }
+  catch (e) { console.error("[argos] échec de sauvegarde :", e.message); try { rmSync(tmp, { force: true }); } catch {} return false; }
+}
+// Chiffrement des secrets d'app (safeStorage = Keychain macOS). Préfixe "enc:" = chiffré.
+function argosEncSecret(v) {
+  if (v == null || v === "") return v;
+  try { if (safeStorage.isEncryptionAvailable()) return "enc:" + safeStorage.encryptString(String(v)).toString("base64"); } catch {}
+  return String(v); // repli : au pire en clair, mais jamais renvoyé au renderer (cf. argos:state)
+}
+function argosDecSecret(v) {
+  if (typeof v !== "string" || !v.startsWith("enc:")) return v;
+  try { return safeStorage.decryptString(Buffer.from(v.slice(4), "base64")); } catch { return null; }
+}
+function argosState() {
+  let st = argosLoad();
+  if (!st) {
+    // Premier lancement : trois marques de démonstration (retirables)
+    st = {
+      brands: [
+        { id: "solene", name: "Maison Solène", secteur: "mode", networks: { instagram: "@maisonsolene", tiktok: "@maisonsolene", facebook: "Maison Solène" }, keywords: ["maison solène", "robe lin", "mode éthique"], competitors: [{ name: "Sézane", handle: "@sezane" }, { name: "Rouje", handle: "@rouje" }] },
+        { id: "riviera", name: "Villa Riviera", secteur: "hôtellerie", networks: { instagram: "@villariviera.mc", linkedin: "Villa Riviera" }, keywords: ["villa riviera", "hôtel monaco", "spa riviera"], competitors: [{ name: "Hôtel Metropole", handle: "@metropolemc" }] },
+        { id: "solaris", name: "Solaris", secteur: "eyewear", networks: { instagram: "@solaris.eyewear", tiktok: "@solaris.eyewear" }, keywords: ["solaris eyewear", "lunettes créateur"], competitors: [{ name: "Izipizi", handle: "@izipizi" }, { name: "Jimmy Fairly", handle: "@jimmyfairly" }] },
+      ],
+      posts: [], inboxReplies: [], connections: {},
+    };
+    argosSave(st);
+  }
+  st.brands = st.brands || []; st.posts = st.posts || []; st.inboxReplies = st.inboxReplies || []; st.connections = st.connections || {};
+  return st;
+}
+// Registre des plateformes + leurs API réelles (endpoints chargés depuis argos-apis.json,
+// produit par la recherche de documentation — substitution {placeholders} à la connexion).
+const ARGOS_PLATFORMS = [
+  { id: "instagram", label: "Instagram", icon: "📷", api: "Instagram Graph API (Meta)" },
+  { id: "facebook", label: "Facebook", icon: "👥", api: "Facebook Pages API (Meta)" },
+  { id: "tiktok", label: "TikTok", icon: "🎵", api: "TikTok API v2 (Business)" },
+  { id: "linkedin", label: "LinkedIn", icon: "💼", api: "LinkedIn Marketing API" },
+  { id: "x", label: "X", icon: "𝕏", api: "X API v2" },
+  { id: "youtube", label: "YouTube", icon: "▶️", api: "YouTube Data + Analytics API" },
+  { id: "meta_ads", label: "Meta Ads", icon: "📣", api: "Meta Marketing API" },
+  { id: "google_ads", label: "Google Ads", icon: "🔎", api: "Google Ads API" },
+];
+let _argosApis = null;
+function argosApis() {
+  if (_argosApis) return _argosApis;
+  try { _argosApis = JSON.parse(readFileSync(join(__dirname, "argos-apis.json"), "utf8")); }
+  catch { _argosApis = { apis: [] }; }
+  return _argosApis;
+}
+// Appel API réel — prêt : substitue les placeholders et exécute dès qu'un token existe.
+async function argosApiCall(platform, endpointId, params = {}) {
+  const st = argosState();
+  const conn = st.connections[platform];
+  const token = conn && argosDecSecret(conn.access_token);
+  if (!conn || conn.status !== "connected" || !token) {
+    const err = new Error("non-connecté"); err.notConnected = true; throw err;
+  }
+  const spec = (argosApis().apis || []).find((a) => a.platform === platform || (a.covers || []).includes(platform));
+  const ep = spec && (spec.endpoints || []).find((e) => e.id === endpointId);
+  if (!ep) throw new Error(`Endpoint inconnu : ${platform}/${endpointId}`);
+  let url = ep.url_template.replace(/\{(\w+)\}/g, (_, k) => params[k] ?? conn[k] ?? `{${k}}`);
+  const q = new URLSearchParams();
+  for (const p of ep.params || []) if (params[p.name] != null) q.set(p.name, params[p.name]);
+  if (!/\baccess_token\b/.test(url) && ep.method === "GET") q.set("access_token", token);
+  if ([...q].length) url += (url.includes("?") ? "&" : "?") + q.toString();
+  const r = await fetch(url, { method: ep.method, headers: { Authorization: `Bearer ${token}` } });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(`${platform} ${r.status} : ${JSON.stringify(j).slice(0, 180)}`);
+  return j;
+}
+// ── Générateur démo déterministe (stable par marque : mêmes chiffres à chaque rendu) ──
+function argosRng(seedStr) {
+  let h = 1779033703 ^ seedStr.length;
+  for (let i = 0; i < seedStr.length; i++) { h = Math.imul(h ^ seedStr.charCodeAt(i), 3432918353); h = (h << 13) | (h >>> 19); }
+  let a = (h ^= h >>> 16) >>> 0;
+  return () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+const AR_FIRST = ["Camille", "Léa", "Hugo", "Emma", "Nina", "Théo", "Chloé", "Marco", "Julie", "Antoine", "Sofia", "Mathis", "Inès", "Paul", "Elena"];
+const AR_LAST = ["M.", "R.", "B.", "L.", "D.", "V.", "G.", "P."];
+function argosDemoOverview(brand, days) {
+  const rng = argosRng(brand.id + ":ov");
+  const nets = Object.keys(brand.networks || {});
+  const followers = {}; let totF = 0;
+  nets.forEach((n) => { const f = Math.round((3000 + rng() * 40000) / 100) * 100; followers[n] = f; totF += f; });
+  const base = 800 + rng() * 4000;
+  const byDay = []; const today = new Date();
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(today); d.setDate(d.getDate() - i);
+    const wd = d.getDay(); const wk = (wd === 0 || wd === 6) ? 0.72 : 1;
+    byDay.push({ date: isoLocalD(d), reach: Math.round(base * wk * (0.7 + rng() * 0.7)), eng: +(2 + rng() * 5).toFixed(1) });
+  }
+  const reach = byDay.reduce((n, x) => n + x.reach, 0);
+  const engagement = +(byDay.reduce((n, x) => n + x.eng, 0) / byDay.length).toFixed(1);
+  const perNet = nets.map((n) => ({ network: n, handle: brand.networks[n], followers: followers[n], growth: +(rng() * 9 - 1).toFixed(1), engagement: +(1.5 + rng() * 6).toFixed(1), posts: 4 + Math.round(rng() * 10) }));
+  const TOPS = ["Coulisses du shoot", "Nouveautés de la saison", "Avant / après", "3 conseils de pro", "L'équipe en action", "Détail matière", "Teaser vidéo", "Story à la une"];
+  const topPosts = Array.from({ length: 4 }, (_, i) => ({ id: "tp" + i, network: nets[Math.floor(rng() * nets.length)] || "instagram", title: TOPS[Math.floor(rng() * TOPS.length)], reach: Math.round(2000 + rng() * 30000), eng: +(3 + rng() * 8).toFixed(1), date: byDay[Math.max(0, byDay.length - 1 - Math.floor(rng() * days))].date })).sort((a, b) => b.reach - a.reach);
+  const health = Math.round(52 + rng() * 40);
+  const alerts = [];
+  if (rng() > 0.5) alerts.push({ type: "opportunity", txt: "Le format vidéo court surperforme de 2,3× ce mois-ci — un créneau à saisir cette semaine." });
+  if (rng() > 0.65) alerts.push({ type: "warn", txt: "Engagement en baisse sur " + (nets[0] || "instagram") + " depuis 6 jours — varier les hooks." });
+  return { demo: true, days, followers: totF, reach, engagement, published: perNet.reduce((n, x) => n + x.posts, 0), byDay, perNet, topPosts, health, alerts };
+}
+function argosDemoInbox(brand) {
+  const rng = argosRng(brand.id + ":inbox");
+  const nets = Object.keys(brand.networks || {});
+  const MSGS = [
+    "Bonjour, est-ce que ce modèle est encore disponible ?",
+    "Superbe collection 😍 vous livrez en Belgique ?",
+    "J'ai un souci avec ma commande #48213…",
+    "C'est possible d'avoir les tarifs pour un événement privé ?",
+    "Bravo pour la vidéo, magnifique ! 👏",
+    "Vous faites des collaborations avec des créateurs ?",
+    "Quels sont vos horaires cet été ?",
+    "Le lien du site en bio ne fonctionne pas 🙁",
+  ];
+  const n = 5 + Math.floor(rng() * 4);
+  return Array.from({ length: n }, (_, i) => {
+    const name = AR_FIRST[Math.floor(rng() * AR_FIRST.length)] + " " + AR_LAST[Math.floor(rng() * AR_LAST.length)];
+    const net = nets[Math.floor(rng() * nets.length)] || "instagram";
+    const hoursAgo = Math.round(rng() * 40);
+    return { id: brand.id + "-c" + i, network: net, from: name, kind: rng() > 0.5 ? "dm" : "commentaire", text: MSGS[Math.floor(rng() * MSGS.length)], hoursAgo, unread: hoursAgo < 12 && rng() > 0.35 };
+  }).sort((a, b) => a.hoursAgo - b.hoursAgo);
+}
+function argosDemoListening(brand) {
+  const rng = argosRng(brand.id + ":listen");
+  const SRC = ["instagram", "tiktok", "x", "facebook", "web"];
+  const TXT = [
+    ["J'ai découvert {b} ce week-end, coup de cœur absolu", "pos"],
+    ["Quelqu'un a déjà commandé chez {b} ? Des avis ?", "neu"],
+    ["Le service client de {b} a mis 5 jours à répondre…", "neg"],
+    ["La nouvelle collection {b} est incroyable 🔥", "pos"],
+    ["{b} vu dans le magazine ce mois-ci !", "pos"],
+    ["Déçu de la qualité par rapport au prix chez {b}", "neg"],
+    ["On m'a offert un produit {b}, très bonne surprise", "pos"],
+    ["{b} ouvre bientôt à Nice ? quelqu'un sait ?", "neu"],
+  ];
+  const n = 6 + Math.floor(rng() * 5);
+  const mentions = Array.from({ length: n }, (_, i) => {
+    const t = TXT[Math.floor(rng() * TXT.length)];
+    return { id: "m" + i, source: SRC[Math.floor(rng() * SRC.length)], author: "@" + AR_FIRST[Math.floor(rng() * AR_FIRST.length)].toLowerCase() + Math.floor(rng() * 90), text: t[0].replace("{b}", brand.name), sentiment: t[1], hoursAgo: Math.round(rng() * 96), reach: Math.round(rng() * 8000) };
+  }).sort((a, b) => a.hoursAgo - b.hoursAgo);
+  const pos = mentions.filter((m) => m.sentiment === "pos").length, neg = mentions.filter((m) => m.sentiment === "neg").length;
+  return { demo: true, mentions, sentiment: { pos, neu: mentions.length - pos - neg, neg }, spike: rng() > 0.8 };
+}
+function argosDemoAds(brand) {
+  const rng = argosRng(brand.id + ":ads");
+  const NAMES = ["Conversions — collection", "Notoriété — vidéo", "Retargeting — paniers", "Search — marque", "Trafic — nouveautés", "Leads — événement"];
+  const n = 2 + Math.floor(rng() * 3);
+  const campaigns = Array.from({ length: n }, (_, i) => {
+    const budget = Math.round((300 + rng() * 1200) / 50) * 50;
+    const spend = Math.round(budget * (0.3 + rng() * 0.65));
+    const roas = +(1.8 + rng() * 5.5).toFixed(1);
+    return { id: "cp" + i, name: NAMES[(i + Math.floor(rng() * 3)) % NAMES.length], platform: rng() > 0.35 ? "meta_ads" : "google_ads", status: rng() > 0.25 ? "active" : "ended", budget, spend, roas, cpc: +(0.2 + rng() * 0.9).toFixed(2), impressions: Math.round(30000 + rng() * 400000), clicks: Math.round(500 + rng() * 9000), conversions: Math.round(10 + rng() * 320) };
+  });
+  const totSpend = campaigns.reduce((n2, c) => n2 + c.spend, 0);
+  const totConv = campaigns.reduce((n2, c) => n2 + c.conversions, 0);
+  const wRoas = +(campaigns.reduce((n2, c) => n2 + c.roas * c.spend, 0) / (totSpend || 1)).toFixed(1);
+  return { demo: true, campaigns, totals: { spend: totSpend, conversions: totConv, roas: wRoas } };
+}
+function argosDemoCompetitors(brand) {
+  const rng = argosRng(brand.id + ":comp");
+  const mine = argosDemoOverview(brand, 30);
+  const rows = (brand.competitors || []).map((c) => ({ name: c.name, handle: c.handle, followers: Math.round((5000 + rng() * 220000) / 500) * 500, growth: +(rng() * 7 - 0.5).toFixed(1), engagement: +(0.8 + rng() * 5).toFixed(1), posts30: 6 + Math.round(rng() * 22), mine: false }));
+  rows.push({ name: brand.name, handle: Object.values(brand.networks || {})[0] || "", followers: mine.followers, growth: +(1 + rng() * 4).toFixed(1), engagement: mine.engagement, posts30: mine.published, mine: true });
+  return { demo: true, rows: rows.sort((a, b) => b.followers - a.followers) };
+}
+// Meilleurs créneaux (démo) : matrice jour × heure stable par marque
+function argosDemoBestTimes(brand) {
+  const rng = argosRng(brand.id + ":times");
+  const out = [];
+  for (let wd = 0; wd < 7; wd++) for (let hr = 7; hr < 23; hr++) {
+    const lunch = (hr >= 12 && hr <= 13) ? 1.4 : 1, evening = (hr >= 18 && hr <= 21) ? 1.6 : 1, wknd = (wd >= 5) ? 0.85 : 1;
+    out.push({ wd, hr, score: +(rng() * lunch * evening * wknd).toFixed(3) });
+  }
+  return out.sort((a, b) => b.score - a.score);
+}
+// ── IPC ──
+ipcMain.handle("argos:state", () => {
+  const st = argosState();
+  const connections = {};
+  for (const p of ARGOS_PLATFORMS) {
+    const c = st.connections[p.id] || {};
+    connections[p.id] = { id: p.id, label: p.label, icon: p.icon, api: p.api, status: c.status || "disconnected", account: c.account || null, hasKeys: !!(c.app_id || c.client_id), docs: !!(argosApis().apis || []).find((a) => a.platform === p.id || (a.covers || []).includes(p.id)) };
+  }
+  return { ok: true, brands: st.brands, connections };
+});
+ipcMain.handle("argos:brandSave", (_e, brand) => {
+  const st = argosState();
+  if (brand.id) { const i = st.brands.findIndex((b) => b.id === brand.id); if (i >= 0) st.brands[i] = { ...st.brands[i], ...brand }; }
+  else { brand.id = "b" + Date.now().toString(36); st.brands.push(brand); }
+  return { ok: argosSave(st), brand };
+});
+ipcMain.handle("argos:brandDelete", (_e, id) => {
+  const st = argosState();
+  st.brands = st.brands.filter((b) => b.id !== id);
+  st.posts = st.posts.filter((p) => p.brandId !== id);
+  st.inboxReplies = st.inboxReplies.filter((r) => r.brandId !== id); // pas de fuite de données client
+  return { ok: argosSave(st) };
+});
+ipcMain.handle("argos:overview", (_e, brandId, days) => {
+  const st = argosState(); const b = st.brands.find((x) => x.id === brandId);
+  if (!b) return { ok: false, error: "Marque inconnue." };
+  // Une fois connecté : agrégera argosApiCall("instagram","account_insights",…) etc.
+  return { ok: true, data: argosDemoOverview(b, Math.max(7, Math.min(90, days || 30))) };
+});
+ipcMain.handle("argos:inbox", (_e, brandId) => {
+  const st = argosState(); const b = st.brands.find((x) => x.id === brandId);
+  if (!b) return { ok: false, error: "Marque inconnue." };
+  const convs = argosDemoInbox(b).map((c) => ({ ...c, replies: st.inboxReplies.filter((r) => r.convId === c.id) }));
+  return { ok: true, demo: true, conversations: convs };
+});
+ipcMain.handle("argos:inboxReply", (_e, brandId, convId, text) => {
+  const st = argosState();
+  st.inboxReplies.push({ id: "r" + Date.now().toString(36), brandId, convId, text: String(text || "").slice(0, 2000), at: new Date().toISOString(), pending: true });
+  return { ok: argosSave(st), pending: true };
+});
+ipcMain.handle("argos:listening", (_e, brandId) => {
+  const st = argosState(); const b = st.brands.find((x) => x.id === brandId);
+  if (!b) return { ok: false, error: "Marque inconnue." };
+  return { ok: true, data: argosDemoListening(b), keywords: b.keywords || [] };
+});
+ipcMain.handle("argos:keywords", (_e, brandId, keywords) => {
+  const st = argosState(); const b = st.brands.find((x) => x.id === brandId);
+  if (!b) return { ok: false, error: "Marque inconnue." };
+  b.keywords = (keywords || []).map((k) => String(k).trim()).filter(Boolean).slice(0, 20);
+  return { ok: argosSave(st), keywords: b.keywords };
+});
+ipcMain.handle("argos:ads", (_e, brandId) => {
+  const st = argosState(); const b = st.brands.find((x) => x.id === brandId);
+  if (!b) return { ok: false, error: "Marque inconnue." };
+  return { ok: true, data: argosDemoAds(b) };
+});
+ipcMain.handle("argos:competitors", (_e, brandId) => {
+  const st = argosState(); const b = st.brands.find((x) => x.id === brandId);
+  if (!b) return { ok: false, error: "Marque inconnue." };
+  return { ok: true, data: argosDemoCompetitors(b) };
+});
+ipcMain.handle("argos:competitorSave", (_e, brandId, competitors) => {
+  const st = argosState(); const b = st.brands.find((x) => x.id === brandId);
+  if (!b) return { ok: false, error: "Marque inconnue." };
+  b.competitors = (competitors || []).slice(0, 12);
+  return { ok: argosSave(st) };
+});
+ipcMain.handle("argos:bestTimes", (_e, brandId) => {
+  const st = argosState(); const b = st.brands.find((x) => x.id === brandId);
+  if (!b) return { ok: false, error: "Marque inconnue." };
+  return { ok: true, demo: true, slots: argosDemoBestTimes(b) };
+});
+ipcMain.handle("argos:posts", (_e, brandId) => {
+  const st = argosState();
+  return { ok: true, posts: st.posts.filter((p) => p.brandId === brandId).sort((a, b2) => (a.date + (a.time || "")).localeCompare(b2.date + (b2.time || ""))) };
+});
+ipcMain.handle("argos:postSave", (_e, post) => {
+  const st = argosState();
+  if (post.id) { const i = st.posts.findIndex((p) => p.id === post.id); if (i >= 0) st.posts[i] = { ...st.posts[i], ...post }; }
+  else { post.id = "p" + Date.now().toString(36); post.createdAt = new Date().toISOString(); st.posts.push(post); }
+  // À la connexion : la publication réelle passera par argosApiCall (content_publish / posts / etc.)
+  return { ok: argosSave(st), post };
+});
+ipcMain.handle("argos:postDelete", (_e, id) => {
+  const st = argosState(); st.posts = st.posts.filter((p) => p.id !== id); return { ok: argosSave(st) };
+});
+// Seuls ces champs sont acceptés du renderer — jamais status/access_token (sinon on pourrait
+// forcer le chemin API réel sans OAuth). Les secrets sont chiffrés avant stockage.
+const ARGOS_KEY_FIELDS = { app_id: false, client_id: false, developer_token: true, app_secret: true, client_secret: true, login_customer_id: false };
+ipcMain.handle("argos:connSaveKeys", (_e, platform, keys) => {
+  if (!ARGOS_PLATFORMS.some((p) => p.id === platform)) return { ok: false, error: "Plateforme inconnue." };
+  const st = argosState();
+  const c = st.connections[platform] || {};
+  const clean = {};
+  for (const [k, isSecret] of Object.entries(ARGOS_KEY_FIELDS)) {
+    if (keys && typeof keys[k] === "string" && keys[k].trim()) clean[k] = isSecret ? argosEncSecret(keys[k].trim()) : keys[k].trim();
+  }
+  st.connections[platform] = { ...c, ...clean, status: c.status || "disconnected" };
+  return { ok: argosSave(st) };
+});
+ipcMain.handle("argos:connDisconnect", (_e, platform) => {
+  const st = argosState(); delete st.connections[platform]; return { ok: argosSave(st) };
+});
+ipcMain.handle("argos:apiDocs", (_e, platform) => {
+  const spec = (argosApis().apis || []).find((a) => a.platform === platform || (a.covers || []).includes(platform));
+  return { ok: true, spec: spec || null };
+});
 ipcMain.handle("pegasus:analyticsStatus", () => {
   const s = loadSettings();
   return { ok: true, creds: existsSync(PEG_GOOGLE_OAUTH), connected: !!s.googleOAuth?.refresh_token, email: s.googleOAuth?.email || null };

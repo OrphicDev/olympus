@@ -1,0 +1,2528 @@
+{
+  "generated": "2026-07-20",
+  "note": "Documentation des API officielles pour les connecteurs Argos — produite par recherche doc, à valider à la connexion réelle.",
+  "apis": [
+    {
+      "platform": "youtube",
+      "api_name": "YouTube Data API v3 + YouTube Analytics API v2",
+      "api_version": "Data API: v3 (stable, non-versionnée par date) ; Analytics API: v2",
+      "oauth": {
+        "flow": "OAuth 2.0 Authorization Code (avec PKCE recommandé). Access token ~1h, refresh token longue durée (révoqué après 6 mois d'inactivité, ou 7 jours si app en statut 'Testing'). Offline access: access_type=offline&prompt=consent pour obtenir le refresh_token.",
+        "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_url": "https://oauth2.googleapis.com/token",
+        "scopes": [
+          {
+            "scope": "https://www.googleapis.com/auth/youtube.readonly",
+            "purpose": "Lecture seule du compte YouTube (chaîne, vidéos, playlists)"
+          },
+          {
+            "scope": "https://www.googleapis.com/auth/youtube",
+            "purpose": "Lecture/écriture complète du compte (métadonnées vidéos, playlists, commentaires)"
+          },
+          {
+            "scope": "https://www.googleapis.com/auth/youtube.upload",
+            "purpose": "Upload de vidéos uniquement (recommandé pour la publication : moindre privilège)"
+          },
+          {
+            "scope": "https://www.googleapis.com/auth/youtube.force-ssl",
+            "purpose": "Requis pour la gestion des commentaires (insert/reply/moderation) et certaines écritures"
+          },
+          {
+            "scope": "https://www.googleapis.com/auth/yt-analytics.readonly",
+            "purpose": "Rapports YouTube Analytics (vues, watch time, abonnés)"
+          },
+          {
+            "scope": "https://www.googleapis.com/auth/yt-analytics-monetary.readonly",
+            "purpose": "Rapports Analytics incluant les métriques de revenus (estimatedRevenue, cpm...)"
+          }
+        ]
+      },
+      "endpoints": [
+        {
+          "id": "channel_stats",
+          "purpose": "Infos chaîne : abonnés, vues totales, nombre de vidéos, playlist des uploads",
+          "method": "GET",
+          "url_template": "https://www.googleapis.com/youtube/v3/channels?part=snippet,statistics,contentDetails&mine=true",
+          "params": [
+            {
+              "name": "part",
+              "required": true,
+              "example": "snippet,statistics,contentDetails,brandingSettings"
+            },
+            {
+              "name": "mine",
+              "required": false,
+              "example": "true (chaîne du token OAuth) — sinon id={channel_id} ou forHandle=@handle"
+            },
+            {
+              "name": "id",
+              "required": false,
+              "example": "UC_x5XG1OV2P6uZZ5FSM9Ttw"
+            }
+          ],
+          "response_fields": [
+            "items[].id",
+            "items[].snippet.title",
+            "items[].snippet.thumbnails",
+            "items[].statistics.subscriberCount",
+            "items[].statistics.viewCount",
+            "items[].statistics.videoCount",
+            "items[].contentDetails.relatedPlaylists.uploads"
+          ],
+          "notes": "Coût quota: 1 unité. subscriberCount est arrondi à 3 chiffres significatifs et peut être masqué (hiddenSubscriberCount). contentDetails.relatedPlaylists.uploads donne l'ID de playlist pour lister toutes les vidéos."
+        },
+        {
+          "id": "list_uploads",
+          "purpose": "Lister les vidéos de la chaîne (via la playlist 'uploads')",
+          "method": "GET",
+          "url_template": "https://www.googleapis.com/youtube/v3/playlistItems?part=snippet,contentDetails&playlistId={uploads_playlist_id}&maxResults=50",
+          "params": [
+            {
+              "name": "playlistId",
+              "required": true,
+              "example": "UU_x5XG1OV2P6uZZ5FSM9Ttw (= channel ID avec UC→UU)"
+            },
+            {
+              "name": "maxResults",
+              "required": false,
+              "example": "50 (max)"
+            },
+            {
+              "name": "pageToken",
+              "required": false,
+              "example": "CAUQAA (pagination via nextPageToken)"
+            }
+          ],
+          "response_fields": [
+            "items[].contentDetails.videoId",
+            "items[].snippet.title",
+            "items[].snippet.publishedAt",
+            "nextPageToken"
+          ],
+          "notes": "Coût: 1 unité — bien moins cher que search.list (100 unités). Préférer cette méthode à search.list pour lister les vidéos d'une chaîne."
+        },
+        {
+          "id": "video_stats",
+          "purpose": "Statistiques et métadonnées de vidéos (batch jusqu'à 50 IDs)",
+          "method": "GET",
+          "url_template": "https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics,contentDetails,status&id={video_id_csv}",
+          "params": [
+            {
+              "name": "id",
+              "required": true,
+              "example": "dQw4w9WgXcQ,abc123 (jusqu'à 50, séparés par virgules)"
+            },
+            {
+              "name": "part",
+              "required": true,
+              "example": "snippet,statistics,contentDetails,status"
+            }
+          ],
+          "response_fields": [
+            "items[].statistics.viewCount",
+            "items[].statistics.likeCount",
+            "items[].statistics.commentCount",
+            "items[].snippet.title",
+            "items[].snippet.publishedAt",
+            "items[].contentDetails.duration (ISO 8601, ex PT4M13S)",
+            "items[].status.privacyStatus",
+            "items[].status.uploadStatus"
+          ],
+          "notes": "Coût: 1 unité quel que soit le nombre d'IDs. dislikeCount n'est plus public depuis 2021 (visible seulement pour le propriétaire via Analytics)."
+        },
+        {
+          "id": "analytics_reports_query",
+          "purpose": "YouTube Analytics : vues, watch time, abonnés gagnés/perdus par jour (ou par vidéo, pays...)",
+          "method": "GET",
+          "url_template": "https://youtubeanalytics.googleapis.com/v2/reports?ids=channel%3D%3DMINE&startDate={start}&endDate={end}&metrics={metrics}&dimensions=day&sort=day",
+          "params": [
+            {
+              "name": "ids",
+              "required": true,
+              "example": "channel==MINE (ou channel=={channel_id}, contentOwner=={owner_id})"
+            },
+            {
+              "name": "startDate",
+              "required": true,
+              "example": "2026-06-01"
+            },
+            {
+              "name": "endDate",
+              "required": true,
+              "example": "2026-06-30"
+            },
+            {
+              "name": "metrics",
+              "required": true,
+              "example": "views,estimatedMinutesWatched,averageViewDuration,subscribersGained,subscribersLost,likes,comments,shares"
+            },
+            {
+              "name": "dimensions",
+              "required": false,
+              "example": "day (aussi: video, country, trafficSourceType, insightTrafficSourceType...)"
+            },
+            {
+              "name": "filters",
+              "required": false,
+              "example": "video=={video_id};country==FR"
+            },
+            {
+              "name": "sort",
+              "required": false,
+              "example": "day ou -views (décroissant)"
+            },
+            {
+              "name": "maxResults",
+              "required": false,
+              "example": "200"
+            }
+          ],
+          "response_fields": [
+            "columnHeaders[].name",
+            "columnHeaders[].dataType",
+            "columnHeaders[].columnType (DIMENSION|METRIC)",
+            "rows[][] (tableau de tableaux, ordre = columnHeaders)"
+          ],
+          "notes": "Scope yt-analytics.readonly (ou yt-analytics-monetary.readonly pour estimatedRevenue/cpm/playbackBasedCpm). Les données ont ~48-72h de latence. Quota séparé de la Data API. Pour un rapport par vidéo, dimensions=video + filters ou sort=-views."
+        },
+        {
+          "id": "video_upload_resumable_init",
+          "purpose": "Upload/publication de vidéo — étape 1 : initier la session resumable (métadonnées)",
+          "method": "POST",
+          "url_template": "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",
+          "params": [
+            {
+              "name": "uploadType",
+              "required": true,
+              "example": "resumable"
+            },
+            {
+              "name": "part",
+              "required": true,
+              "example": "snippet,status"
+            },
+            {
+              "name": "body (JSON)",
+              "required": true,
+              "example": "{\"snippet\":{\"title\":\"Ma vidéo\",\"description\":\"...\",\"tags\":[\"a\"],\"categoryId\":\"22\"},\"status\":{\"privacyStatus\":\"private\",\"publishAt\":\"2026-08-01T09:00:00Z\",\"selfDeclaredMadeForKids\":false}}"
+            },
+            {
+              "name": "headers",
+              "required": true,
+              "example": "X-Upload-Content-Length: {bytes}, X-Upload-Content-Type: video/*"
+            }
+          ],
+          "response_fields": [
+            "header Location (URL de session d'upload, valide ~24h et unique)"
+          ],
+          "notes": "Coût: 1600 unités de quota. publishAt (scheduling) exige privacyStatus=private. Max 256 Go / 12h de vidéo. Scope youtube.upload suffit."
+        },
+        {
+          "id": "video_upload_resumable_put",
+          "purpose": "Upload de vidéo — étape 2 : envoyer les octets (avec reprise sur échec)",
+          "method": "PUT",
+          "url_template": "{session_uri_from_Location_header}",
+          "params": [
+            {
+              "name": "headers",
+              "required": true,
+              "example": "Content-Length: {bytes}, Content-Type: video/* — reprise: Content-Range: bytes {start}-{end}/{total}"
+            },
+            {
+              "name": "status_check",
+              "required": false,
+              "example": "PUT vide avec Content-Range: bytes */{total} → 308 Resume Incomplete + header Range: bytes=0-{last_byte}"
+            }
+          ],
+          "response_fields": [
+            "id (videoId)",
+            "status.uploadStatus (uploaded → processed)",
+            "snippet",
+            "status.privacyStatus"
+          ],
+          "notes": "Retenter avec backoff exponentiel sur 500/502/503/504. La réponse finale 200/201 contient la ressource video complète. Vérifier ensuite processingDetails via videos.list part=processingDetails,status."
+        },
+        {
+          "id": "video_update",
+          "purpose": "Modifier métadonnées d'une vidéo publiée (titre, description, privacy, publishAt)",
+          "method": "PUT",
+          "url_template": "https://www.googleapis.com/youtube/v3/videos?part=snippet,status",
+          "params": [
+            {
+              "name": "body (JSON)",
+              "required": true,
+              "example": "{\"id\":\"{video_id}\",\"snippet\":{\"title\":\"Nouveau titre\",\"categoryId\":\"22\"},\"status\":{\"privacyStatus\":\"public\"}}"
+            }
+          ],
+          "response_fields": [
+            "id",
+            "snippet",
+            "status"
+          ],
+          "notes": "Coût: 50 unités. Piège: le PUT remplace toutes les propriétés du part fourni — inclure snippet.title ET snippet.categoryId (obligatoires) sinon erreur, et renvoyer description/tags existants sous peine de les effacer."
+        },
+        {
+          "id": "thumbnail_set",
+          "purpose": "Définir la miniature personnalisée d'une vidéo",
+          "method": "POST",
+          "url_template": "https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId={video_id}&uploadType=media",
+          "params": [
+            {
+              "name": "videoId",
+              "required": true,
+              "example": "dQw4w9WgXcQ"
+            },
+            {
+              "name": "body",
+              "required": true,
+              "example": "binaire image JPEG/PNG, max 2 Mo, Content-Type: image/jpeg"
+            }
+          ],
+          "response_fields": [
+            "items[].default.url",
+            "items[].high.url",
+            "items[].maxres.url"
+          ],
+          "notes": "Coût: 50 unités. La chaîne doit être vérifiée par téléphone pour avoir droit aux miniatures personnalisées, sinon erreur 403 forbidden."
+        },
+        {
+          "id": "comment_threads_list",
+          "purpose": "Inbox : lister les commentaires (threads) d'une vidéo ou de toute la chaîne",
+          "method": "GET",
+          "url_template": "https://www.googleapis.com/youtube/v3/commentThreads?part=snippet,replies&videoId={video_id}&maxResults=100&order=time",
+          "params": [
+            {
+              "name": "videoId",
+              "required": false,
+              "example": "dQw4w9WgXcQ"
+            },
+            {
+              "name": "allThreadsRelatedToChannelId",
+              "required": false,
+              "example": "{channel_id} (tous les commentaires de la chaîne — alternative à videoId)"
+            },
+            {
+              "name": "order",
+              "required": false,
+              "example": "time | relevance"
+            },
+            {
+              "name": "searchTerms",
+              "required": false,
+              "example": "merci"
+            },
+            {
+              "name": "moderationStatus",
+              "required": false,
+              "example": "heldForReview | likelySpam (nécessite d'être le propriétaire)"
+            },
+            {
+              "name": "pageToken",
+              "required": false,
+              "example": "nextPageToken de la page précédente"
+            }
+          ],
+          "response_fields": [
+            "items[].id (thread id)",
+            "items[].snippet.topLevelComment.id",
+            "items[].snippet.topLevelComment.snippet.textDisplay",
+            "items[].snippet.topLevelComment.snippet.authorDisplayName",
+            "items[].snippet.topLevelComment.snippet.publishedAt",
+            "items[].snippet.topLevelComment.snippet.likeCount",
+            "items[].snippet.totalReplyCount",
+            "items[].replies.comments[]"
+          ],
+          "notes": "Coût: 1 unité. replies dans commentThreads est tronqué — pour toutes les réponses, utiliser comments.list?parentId={comment_id}."
+        },
+        {
+          "id": "comment_reply",
+          "purpose": "Répondre à un commentaire (inbox write)",
+          "method": "POST",
+          "url_template": "https://www.googleapis.com/youtube/v3/comments?part=snippet",
+          "params": [
+            {
+              "name": "body (JSON)",
+              "required": true,
+              "example": "{\"snippet\":{\"parentId\":\"{top_level_comment_id}\",\"textOriginal\":\"Merci !\"}}"
+            }
+          ],
+          "response_fields": [
+            "id",
+            "snippet.textDisplay",
+            "snippet.publishedAt"
+          ],
+          "notes": "Coût: 50 unités. Scope youtube.force-ssl OBLIGATOIRE. Pour un nouveau commentaire top-level: POST /commentThreads avec snippet.videoId + snippet.topLevelComment.snippet.textOriginal. Modération: POST /comments/setModerationStatus?id={id}&moderationStatus=published|heldForReview|rejected."
+        }
+      ],
+      "rate_limits": "Data API v3 : quota par PROJET de 10 000 unités/jour par défaut (reset à minuit heure Pacifique). Coûts : lectures list = 1 unité ; écritures (update, comments.insert, thumbnails.set) = 50 ; search.list = 100 ; videos.insert (upload) = 1600 → seulement ~6 uploads/jour avec le quota par défaut. Extension de quota via le formulaire 'YouTube API Services - Audit and Quota Extension Form' (délai de plusieurs semaines, justification requise). Analytics API v2 : quota séparé (par défaut ~ dizaines de milliers de requêtes/jour), rarement limitant. Pas de rate limit per-user strict documenté, mais des erreurs 403 quotaExceeded / 429 possibles ; implémenter backoff exponentiel.",
+      "publishing": {
+        "supported": true,
+        "notes": "Upload complet supporté via resumable upload (init POST → PUT bytes), y compris planification (status.publishAt en RFC3339, avec privacyStatus=private), Shorts (même endpoint, vidéo verticale <3 min), miniatures (thumbnails.set) et légendes (captions.insert). PIÈGE MAJEUR : tant que le projet API n'a pas passé l'audit YouTube ('API Services Audit'), toute vidéo uploadée par un projet non audité créé après juillet 2020 est forcée en PRIVÉ et verrouillée (uploadStatus 'uploaded', privacy lock). Il faut demander l'audit + extension de quota pour publier en public. Pas de désactivation : c'est bloquant pour un outil de planification d'agence."
+      },
+      "gotchas": [
+        "Audit obligatoire pour la publication publique : les projets non audités voient leurs uploads via API forcés en 'private' (verrouillés). Prévoir le formulaire d'audit/quota extension YouTube très tôt (semaines de délai).",
+        "Verification Google OAuth : les scopes YouTube sont 'sensitive' — l'app doit passer la vérification OAuth de Google (page consentement, vidéo démo) sinon écran 'unverified app' et cap de 100 utilisateurs en mode Testing (refresh tokens expirés au bout de 7 jours en Testing).",
+        "videos.insert coûte 1600 unités sur 10 000/jour : un connecteur multi-clients doit demander une extension de quota, ou faire 1 projet Google Cloud par... non — le 'quota splitting' multi-projets est explicitement interdit par les ToS YouTube.",
+        "statistics.subscriberCount est arrondi (3 chiffres significatifs) — pour la valeur exacte du client, ne pas l'utiliser pour des deltas quotidiens ; utiliser Analytics subscribersGained/subscribersLost.",
+        "Analytics : latence de données de ~48-72h ; les 2-3 derniers jours sont incomplets. Les métriques monétaires exigent le scope yt-analytics-monetary.readonly ET que l'utilisateur soit propriétaire/monétisé.",
+        "reports.query renvoie un resultTable (rows = tableaux positionnels alignés sur columnHeaders), pas des objets nommés — mapper côté connecteur.",
+        "videos.update est un remplacement complet du 'part' : toujours relire la vidéo et renvoyer title + categoryId (requis) + description/tags existants sous peine de les effacer.",
+        "dislikeCount retiré de l'API publique (déc. 2021) ; visible uniquement pour le propriétaire via Analytics (metric 'dislikes').",
+        "Comptes de marque (Brand Accounts) : l'OAuth affiche un sélecteur de chaîne ; channels.list?mine=true renvoie la chaîne sélectionnée au moment du consentement — stocker le channelId au moment de la connexion.",
+        "commentThreads avec allThreadsRelatedToChannelId ne couvre pas les commentaires des vidéos où les commentaires sont désactivés (403 commentsDisabled par vidéo) ; gérer l'erreur par vidéo.",
+        "Conformité ToS YouTube API : obligation d'actualiser/supprimer les données stockées (max 30 jours pour la plupart des données non autorisées à être stockées plus longtemps), lien vers ToS YouTube et politique de confidentialité Google requis dans l'app.",
+        "YouTube Ads ne passe PAS par la YouTube Data API : les campagnes vidéo se gèrent via la Google Ads API (google.ads.googleads) — connecteur séparé."
+      ],
+      "covers": [
+        "youtube"
+      ]
+    },
+    {
+      "platform": "google_ads",
+      "api_name": "Google Ads API",
+      "api_version": "v24 (latest, juillet 2026 — releases mensuelles depuis janvier 2026, chaque version supportée ~12 mois ; v20 sunset mi-2026, v21 août 2026, v22 octobre 2026)",
+      "oauth": {
+        "flow": "OAuth 2.0 Authorization Code (web flow) avec refresh_token (access_type=offline, prompt=consent). Alternative : Service Account avec domain-wide delegation (Workspace uniquement). Chaque appel exige EN PLUS du Bearer token : header `developer-token: DEVELOPER_TOKEN` (obtenu dans le centre API d'un compte MCC Google Ads) et, si l'accès passe par un MCC, header `login-customer-id: <id MCC sans tirets>`.",
+        "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_url": "https://www.googleapis.com/oauth2/v3/token (https://oauth2.googleapis.com/token équivalent)",
+        "scopes": [
+          {
+            "scope": "https://www.googleapis.com/auth/adwords",
+            "purpose": "Scope unique du Google Ads API — couvre lecture ET écriture (campagnes, budgets, rapports, mutations). Pas de scope read-only séparé."
+          }
+        ]
+      },
+      "endpoints": [
+        {
+          "id": "search_stream",
+          "purpose": "Rapports et lecture d'entités via GAQL en streaming (GoogleAdsService.SearchStream) — campagnes + métriques cost_micros, clicks, impressions, conversions, conversions_value",
+          "method": "POST",
+          "url_template": "https://googleads.googleapis.com/v24/customers/{customer_id}/googleAds:searchStream",
+          "params": [
+            {
+              "name": "customer_id",
+              "required": true,
+              "example": "1234567890 (ID du compte client SANS tirets, dans l'URL)"
+            },
+            {
+              "name": "query",
+              "required": true,
+              "example": "SELECT campaign.id, campaign.name, campaign.status, metrics.cost_micros, metrics.clicks, metrics.impressions, metrics.conversions, metrics.conversions_value FROM campaign WHERE segments.date DURING LAST_30_DAYS ORDER BY metrics.cost_micros DESC"
+            },
+            {
+              "name": "Authorization (header)",
+              "required": true,
+              "example": "Bearer ya29..."
+            },
+            {
+              "name": "developer-token (header)",
+              "required": true,
+              "example": "ABcdeFGH1234567890"
+            },
+            {
+              "name": "login-customer-id (header)",
+              "required": false,
+              "example": "9876543210 (ID du MCC si l'OAuth est fait au niveau manager)"
+            }
+          ],
+          "response_fields": [
+            "results[].campaign.resourceName",
+            "results[].campaign.id",
+            "results[].campaign.name",
+            "results[].campaign.status (ENABLED/PAUSED/REMOVED)",
+            "results[].campaign.advertisingChannelType",
+            "results[].metrics.costMicros (micros : diviser par 1e6 pour la devise)",
+            "results[].metrics.clicks",
+            "results[].metrics.impressions",
+            "results[].metrics.conversions (double)",
+            "results[].metrics.conversionsValue",
+            "results[].segments.date (si segmenté)",
+            "fieldMask",
+            "requestId (header de réponse : request-id)"
+          ],
+          "notes": "Réponse = tableau JSON de batchs streamés (~10k lignes/batch). Autres GAQL utiles : série journalière → ajouter `segments.date` au SELECT ; par ad group → `FROM ad_group` ; budget → `SELECT campaign.campaign_budget, campaign_budget.amount_micros FROM campaign`. Dates : `WHERE segments.date BETWEEN '2026-06-01' AND '2026-06-30'` ou DURING LAST_7_DAYS / LAST_30_DAYS / THIS_MONTH. Pas de SELECT * en GAQL — chaque champ doit être listé. Valider les requêtes avec le Query Builder officiel (developers.google.com/google-ads/api/fields/v24/campaign_query_builder)."
+        },
+        {
+          "id": "search",
+          "purpose": "Même GAQL que searchStream mais paginé (GoogleAdsService.Search) — préférable pour UI avec pagination",
+          "method": "POST",
+          "url_template": "https://googleads.googleapis.com/v24/customers/{customer_id}/googleAds:search",
+          "params": [
+            {
+              "name": "query",
+              "required": true,
+              "example": "SELECT campaign.id, campaign.name FROM campaign WHERE campaign.status = 'ENABLED'"
+            },
+            {
+              "name": "pageToken",
+              "required": false,
+              "example": "token renvoyé par nextPageToken"
+            }
+          ],
+          "response_fields": [
+            "results[]",
+            "nextPageToken",
+            "totalResultsCount (si search_settings.return_total_results_count=true)"
+          ],
+          "notes": "Depuis v17+, page_size est fixé à 10 000 (le paramètre a été supprimé). searchStream est plus efficace pour les gros exports ; search pour la pagination interactive."
+        },
+        {
+          "id": "list_accessible_customers",
+          "purpose": "Lister les comptes directement accessibles par l'utilisateur OAuth (première étape après connexion du connecteur)",
+          "method": "GET",
+          "url_template": "https://googleads.googleapis.com/v24/customers:listAccessibleCustomers",
+          "params": [
+            {
+              "name": "Authorization + developer-token (headers)",
+              "required": true,
+              "example": "—"
+            }
+          ],
+          "response_fields": [
+            "resourceNames[] (ex: customers/1234567890)"
+          ],
+          "notes": "Ne renvoie que les comptes à accès DIRECT (souvent juste le MCC). Pour l'arborescence complète des clients sous un MCC : GAQL `SELECT customer_client.id, customer_client.descriptive_name, customer_client.manager, customer_client.level FROM customer_client WHERE customer_client.level <= 1` exécuté sur le customer_id du MCC."
+        },
+        {
+          "id": "campaign_mutate",
+          "purpose": "Écriture : créer / mettre à jour (pause, renommage, budget) / supprimer des campagnes (CampaignService.MutateCampaigns)",
+          "method": "POST",
+          "url_template": "https://googleads.googleapis.com/v24/customers/{customer_id}/campaigns:mutate",
+          "params": [
+            {
+              "name": "operations",
+              "required": true,
+              "example": "{\"operations\":[{\"update\":{\"resourceName\":\"customers/1234567890/campaigns/111222333\",\"status\":\"PAUSED\"},\"updateMask\":\"status\"}]}"
+            },
+            {
+              "name": "partialFailure",
+              "required": false,
+              "example": "true (traite les opérations valides même si d'autres échouent)"
+            },
+            {
+              "name": "validateOnly",
+              "required": false,
+              "example": "true (dry-run sans écrire — indispensable pour un outil d'agence)"
+            }
+          ],
+          "response_fields": [
+            "results[].resourceName",
+            "partialFailureError"
+          ],
+          "notes": "update exige un updateMask (FieldMask, champs en snake_case ou camelCase). Création de campagne : il faut d'abord créer un budget via campaignBudgets:mutate puis référencer son resourceName dans campaign.campaignBudget — ou tout faire atomiquement via googleAds:mutate (GoogleAdsService.Mutate) avec des resource names temporaires (customers/{cid}/campaignBudgets/-1)."
+        },
+        {
+          "id": "campaign_budget_mutate",
+          "purpose": "Écriture : créer/modifier les budgets de campagne (montants en micros)",
+          "method": "POST",
+          "url_template": "https://googleads.googleapis.com/v24/customers/{customer_id}/campaignBudgets:mutate",
+          "params": [
+            {
+              "name": "operations",
+              "required": true,
+              "example": "{\"operations\":[{\"create\":{\"name\":\"Budget X\",\"amountMicros\":\"50000000\",\"deliveryMethod\":\"STANDARD\",\"explicitlyShared\":false}}]}"
+            }
+          ],
+          "response_fields": [
+            "results[].resourceName"
+          ],
+          "notes": "amountMicros = montant × 1 000 000 dans la devise du compte (50000000 = 50 €). 1 seule opération par requête pour les budgets de compte (account_budget), pas de limite similaire pour campaign_budget."
+        },
+        {
+          "id": "google_ads_mutate_atomic",
+          "purpose": "Écriture atomique multi-ressources en un seul appel (budget + campagne + ad groups + ads) via GoogleAdsService.Mutate",
+          "method": "POST",
+          "url_template": "https://googleads.googleapis.com/v24/customers/{customer_id}/googleAds:mutate",
+          "params": [
+            {
+              "name": "mutateOperations",
+              "required": true,
+              "example": "[{\"campaignBudgetOperation\":{\"create\":{\"resourceName\":\"customers/1234567890/campaignBudgets/-1\",\"amountMicros\":\"10000000\"}}},{\"campaignOperation\":{\"create\":{\"name\":\"Search FR\",\"campaignBudget\":\"customers/1234567890/campaignBudgets/-1\",\"advertisingChannelType\":\"SEARCH\",\"status\":\"PAUSED\",\"manualCpc\":{}}}}]"
+            }
+          ],
+          "response_fields": [
+            "mutateOperationResponses[]"
+          ],
+          "notes": "Les IDs temporaires négatifs (-1, -2…) permettent de référencer des ressources créées dans la même requête. Toujours créer les campagnes en PAUSED puis laisser le client activer."
+        }
+      ],
+      "rate_limits": "Par niveau d'accès du developer token : Explorer = 2 880 opérations API/jour sur comptes de prod (15 000 sur comptes test) ; Basic = 15 000 opérations/jour ; Standard = illimité en volume quotidien. Dépassement → erreur RESOURCE_EXHAUSTED (gRPC) / 429. Limites annexes : 10 000 opérations max par requête mutate ; réponse gRPC max 64 MB ; search/searchStream paginé/streamé par 10 000 lignes ; KeywordPlanIdeaService 1 QPS par customer_id ; upload de conversions 2 000/requête ; clause IN max 20 000 éléments. Pas de QPS global publié pour searchStream, mais throttling adaptatif — implémenter retry avec backoff exponentiel sur RESOURCE_EXHAUSTED et QUOTA_ERROR.",
+      "publishing": {
+        "supported": false,
+        "notes": "Google Ads n'est pas une plateforme de publication de posts organiques — le volet write concerne campagnes/annonces/budgets, pas l'inbox ni le planning de contenu social. Pour la partie ads du produit d'agence : read (reporting GAQL) + write (mutate campagnes/budgets/annonces) couverts par les endpoints ci-dessus."
+      },
+      "gotchas": [
+        "Double barrière d'accès : (1) OAuth de l'utilisateur ET (2) un developer token propre à VOTRE app, créé dans le centre API d'un compte manager (MCC). Le token naît en accès Explorer/Test (comptes test + quota réduit) ; il faut demander l'accès Basic puis Standard via formulaire (review par Google, questions sur l'usage, respect des Required Minimum Functionality si l'outil expose la création de campagnes à des tiers). Comptez plusieurs jours à semaines.",
+        "Un seul developer token suffit pour toute l'app (il n'est pas lié aux comptes clients) — mais le compte MCC qui le porte doit rester en règle.",
+        "L'app OAuth (Google Cloud Console) doit passer la vérification OAuth de Google car le scope adwords est sensible ; en mode 'Testing' les refresh tokens expirent au bout de 7 jours — piège classique en dev.",
+        "login-customer-id obligatoire quand on opère sur un compte client via les droits d'un MCC ; IDs toujours sans tirets. L'oublier donne USER_PERMISSION_DENIED.",
+        "Ne jamais cibler un customer_id de MCC pour les métriques : les rapports se font compte par compte (le MCC n'agrège pas via l'API).",
+        "cost_micros et tous les montants sont en micros (÷ 1 000 000) ; conversions est un double (conversions pondérées), conversions_value dans la devise du compte.",
+        "GAQL n'a pas de SELECT * ni de jointures libres : la ressource FROM détermine les champs sélectionnables (vérifier la compatibilité champ/ressource dans la doc fields v24).",
+        "Métriques : données 'fraîches' sous ~3h mais les conversions continuent d'être attribuées rétroactivement pendant des jours/semaines — re-synchroniser une fenêtre glissante (ex. 30 jours) plutôt que seulement la veille.",
+        "Cycle de versions accéléré : releases mensuelles depuis janvier 2026, sunsets ~12 mois (v21 août 2026, v22 octobre 2026). Paramétrer la version d'API en config, pas en dur, et suivre le blog ads-developers.googleblog.com.",
+        "REST fonctionne bien mais Google recommande les client libraries gRPC officielles (Python, Java, PHP, .NET, Ruby, Perl) ; en REST direct, gérer soi-même le retry/backoff et le header request-id pour le support.",
+        "removed ≠ deleted : les entités REMOVED restent visibles dans les rapports ; filtrer campaign.status != 'REMOVED' dans les listes UI.",
+        "Les erreurs arrivent en JSON structuré (GoogleAdsFailure) avec des codes précis (ex: AUTHENTICATION_ERROR.OAUTH_TOKEN_EXPIRED, AUTHORIZATION_ERROR.DEVELOPER_TOKEN_NOT_APPROVED) — les parser pour distinguer reconnexion utilisateur vs problème de token d'app."
+      ],
+      "covers": [
+        "google_ads"
+      ]
+    },
+    {
+      "platform": "linkedin",
+      "api_name": "LinkedIn Marketing / Community Management API (versioned REST APIs)",
+      "api_version": "Versioned via required header \"LinkedIn-Version: YYYYMM\" (e.g. 202606). Docs default moniker li-lms-2026-06; versions ≤202507 sunset. Base URL https://api.linkedin.com/rest (legacy /v2 deprecated for these endpoints). Also required header: X-Restli-Protocol-Version: 2.0.0",
+      "oauth": {
+        "flow": "OAuth 2.0 Authorization Code (3-legged). Access token ~60 days (expires_in=5184000). Refresh: re-run auth flow (screen is bypassed if member still logged in); programmatic refresh_token grant is only enabled for select partners. Requesting a different scope set invalidates previously issued tokens. Tokens can be ~500-1000 chars.",
+        "authorization_url": "https://www.linkedin.com/oauth/v2/authorization?response_type=code&client_id={client_id}&redirect_uri={redirect_uri}&state={state}&scope={space_delimited_scopes}",
+        "token_url": "https://www.linkedin.com/oauth/v2/accessToken (POST, x-www-form-urlencoded: grant_type=authorization_code, code, client_id, client_secret, redirect_uri)",
+        "scopes": [
+          {
+            "scope": "rw_organization_admin",
+            "purpose": "Manage org pages and retrieve reporting data (page/follower/share statistics, org lookup as admin). Requires member role ADMINISTRATOR on the page."
+          },
+          {
+            "scope": "r_organization_social",
+            "purpose": "Read organization posts (GET /rest/posts by author, batch get). Requires page role ADMINISTRATOR, DIRECT_SPONSORED_CONTENT_POSTER or CONTENT_ADMIN."
+          },
+          {
+            "scope": "w_organization_social",
+            "purpose": "Create/update/delete posts as the organization via /rest/posts. Same page-role restrictions."
+          },
+          {
+            "scope": "r_organization_social_feed",
+            "purpose": "Read comments/reactions on org content via /rest/socialActions."
+          },
+          {
+            "scope": "w_organization_social_feed",
+            "purpose": "Create/edit/delete comments and reactions on behalf of the organization via /rest/socialActions."
+          },
+          {
+            "scope": "r_basicprofile",
+            "purpose": "Identify the authenticated member (useful for admin lookups); granted with Community Management API product."
+          }
+        ]
+      },
+      "endpoints": [
+        {
+          "id": "list_admin_organizations",
+          "purpose": "Find organizations where the authenticated member has an admin role (entry point to enumerate manageable pages)",
+          "method": "GET",
+          "url_template": "https://api.linkedin.com/rest/organizationAcls?q=roleAssignee&role=ADMINISTRATOR&state=APPROVED",
+          "params": [
+            {
+              "name": "q",
+              "required": true,
+              "example": "roleAssignee"
+            },
+            {
+              "name": "role",
+              "required": false,
+              "example": "ADMINISTRATOR"
+            },
+            {
+              "name": "state",
+              "required": false,
+              "example": "APPROVED"
+            }
+          ],
+          "response_fields": [
+            "elements[].organization (urn:li:organization:{id})",
+            "elements[].role",
+            "elements[].state",
+            "elements[].roleAssignee"
+          ],
+          "notes": "Scope rw_organization_admin. See Organization Access Control docs; use returned organization URNs for all other calls."
+        },
+        {
+          "id": "get_organization",
+          "purpose": "Organization page lookup (profile: name, vanityName, logo, industries...)",
+          "method": "GET",
+          "url_template": "https://api.linkedin.com/rest/organizations/{organization_id}",
+          "params": [
+            {
+              "name": "organization_id",
+              "required": true,
+              "example": "2414183"
+            }
+          ],
+          "response_fields": [
+            "id",
+            "$URN",
+            "vanityName",
+            "localizedName",
+            "name",
+            "logoV2",
+            "coverPhotoV2",
+            "industries",
+            "staffCountRange",
+            "organizationType",
+            "primaryOrganizationType",
+            "locations"
+          ],
+          "notes": "Full fields require ADMINISTRATOR role (rw_organization_admin); non-admin calls only get id/name/localizedName/localizedWebsite/vanityName/logoV2/locations/primaryOrganizationType. Batch: GET /rest/organizations?ids=List(id1,id2). Vanity lookup: GET /rest/organizations?q=vanityName&vanityName=LinkedIn. Email-domain finder removed since 202408."
+        },
+        {
+          "id": "get_follower_count",
+          "purpose": "Total follower count of an organization page (networkSizes)",
+          "method": "GET",
+          "url_template": "https://api.linkedin.com/rest/networkSizes/urn:li:organization:{organization_id}?edgeType=COMPANY_FOLLOWED_BY_MEMBER",
+          "params": [
+            {
+              "name": "edgeType",
+              "required": true,
+              "example": "COMPANY_FOLLOWED_BY_MEMBER (versions >=202305; older used CompanyFollowedByMember)"
+            }
+          ],
+          "response_fields": [
+            "firstDegreeSize"
+          ],
+          "notes": "organizationalEntityFollowerStatistics no longer returns totalFollowerCounts — this is THE endpoint for total followers."
+        },
+        {
+          "id": "follower_statistics",
+          "purpose": "Follower statistics: lifetime demographic breakdown OR time-bound follower gains",
+          "method": "GET",
+          "url_template": "https://api.linkedin.com/rest/organizationalEntityFollowerStatistics?q=organizationalEntity&organizationalEntity=urn%3Ali%3Aorganization%3A{organization_id}",
+          "params": [
+            {
+              "name": "organizationalEntity",
+              "required": true,
+              "example": "urn:li:organization:2414183 (URL-encoded)"
+            },
+            {
+              "name": "timeIntervals",
+              "required": false,
+              "example": "(timeRange:(start:1536364800000,end:1536796800000),timeGranularityType:DAY)  — Restli 2.0 syntax; granularity DAY|WEEK|MONTH; epoch ms"
+            }
+          ],
+          "response_fields": [
+            "elements[].followerCountsByGeoCountry[].{geo,followerCounts.organicFollowerCount,paidFollowerCount}",
+            "followerCountsByFunction",
+            "followerCountsBySeniority",
+            "followerCountsByIndustry",
+            "followerCountsByStaffCountRange",
+            "followerCountsByAssociationType (EMPLOYEE)",
+            "time-bound: elements[].timeRange{start,end} + followerGains{organicFollowerGain,paidFollowerGain}"
+          ],
+          "notes": "Scope rw_organization_admin. Lifetime = omit timeIntervals (top 100 per facet, use organicFollowerCount only). Time-bound returns NO demographic facets; data window = 12 months back until D-2 (2-day lag)."
+        },
+        {
+          "id": "page_statistics",
+          "purpose": "Page view/click statistics (lifetime or time-bound): all/overview/careers/jobs pages, desktop vs mobile, custom-button clicks",
+          "method": "GET",
+          "url_template": "https://api.linkedin.com/rest/organizationPageStatistics?q=organization&organization=urn%3Ali%3Aorganization%3A{organization_id}",
+          "params": [
+            {
+              "name": "organization",
+              "required": true,
+              "example": "urn:li:organization:2414183"
+            },
+            {
+              "name": "timeIntervals",
+              "required": false,
+              "example": "(timeRange:(start:1551398400000,end:1552003200000),timeGranularityType:DAY) — DAY|MONTH"
+            }
+          ],
+          "response_fields": [
+            "elements[].totalPageStatistics.views.{allPageViews,overviewPageViews,careersPageViews,jobsPageViews,lifeAtPageViews,allDesktopPageViews,allMobilePageViews}.pageViews (+uniquePageViews in time-bound)",
+            "totalPageStatistics.clicks.{desktopCustomButtonClickCounts,mobileCustomButtonClickCounts}",
+            "lifetime facets: pageStatisticsByGeoCountry/ByGeo/ByFunction/BySeniority/ByIndustryV2/ByStaffCountRange",
+            "time-bound: elements[].timeRange"
+          ],
+          "notes": "Scope rw_organization_admin. careersPageViews only for pages with paid Career Pages. Sister endpoint for showcase pages: GET /rest/brandPageStatistics?q=brand&brand=urn:li:organizationBrand:{id}."
+        },
+        {
+          "id": "share_statistics",
+          "purpose": "Post/share metrics: aggregate (lifetime or time-bound) AND per-post (impressions, clicks, likes, comments, shares, engagement)",
+          "method": "GET",
+          "url_template": "https://api.linkedin.com/rest/organizationalEntityShareStatistics?q=organizationalEntity&organizationalEntity=urn%3Ali%3Aorganization%3A{organization_id}",
+          "params": [
+            {
+              "name": "organizationalEntity",
+              "required": true,
+              "example": "urn:li:organization:2414183"
+            },
+            {
+              "name": "timeIntervals",
+              "required": false,
+              "example": "(timeRange:(start:1551398400000,end:1552003200000),timeGranularityType:DAY) — DAY|MONTH; aggregate only"
+            },
+            {
+              "name": "shares",
+              "required": false,
+              "example": "List(urn%3Ali%3Ashare%3A7132564752928563200,urn%3Ali%3Ashare%3A7132402731377438720) — per-post stats, lifetime only"
+            },
+            {
+              "name": "ugcPosts",
+              "required": false,
+              "example": "List(urn%3Ali%3AugcPost%3A1000000) — per-ugcPost stats, lifetime only"
+            }
+          ],
+          "response_fields": [
+            "elements[].totalShareStatistics.{impressionCount,uniqueImpressionsCount,clickCount,likeCount,commentCount,shareCount,engagement}",
+            "elements[].share | elements[].ugcPost (per-post)",
+            "elements[].timeRange (time-bound)"
+          ],
+          "notes": "Scope rw_organization_admin. ORGANIC only (sponsored via Ad Analytics API). Rolling 12-month data window. No pagination. Posts with 0 activity are omitted from per-post results (assume 0). likeCount can go negative (unlikes of sponsored likes)."
+        },
+        {
+          "id": "create_post",
+          "purpose": "Publish a post as the organization (text, image, video, document, article, poll, multi-image; also DRAFT via lifecycleState in some flows, targeting, reshares, dark posts)",
+          "method": "POST",
+          "url_template": "https://api.linkedin.com/rest/posts",
+          "params": [
+            {
+              "name": "author (body)",
+              "required": true,
+              "example": "urn:li:organization:5515715"
+            },
+            {
+              "name": "commentary (body)",
+              "required": true,
+              "example": "Sample text Post — supports @[Name](urn:li:organization:2414183) mentions and #hashtags ('little' text format)"
+            },
+            {
+              "name": "visibility (body)",
+              "required": true,
+              "example": "PUBLIC"
+            },
+            {
+              "name": "distribution (body)",
+              "required": true,
+              "example": "{\"feedDistribution\":\"MAIN_FEED\",\"targetEntities\":[],\"thirdPartyDistributionChannels\":[]} (feedDistribution NONE + adContext = dark post; targetEntities for follower targeting, audience must exceed 300)"
+            },
+            {
+              "name": "lifecycleState (body)",
+              "required": true,
+              "example": "PUBLISHED (only accepted value at creation; DRAFT/PUBLISH_REQUESTED/PUBLISH_FAILED are read states)"
+            },
+            {
+              "name": "content (body)",
+              "required": false,
+              "example": "{\"media\":{\"id\":\"urn:li:image:C5F10AQ...\",\"title\":\"...\"}} or {\"article\":{\"source\":\"https://...\",\"title\":\"...\",\"description\":\"...\",\"thumbnail\":\"urn:li:image:...\"}}"
+            },
+            {
+              "name": "reshareContext (body)",
+              "required": false,
+              "example": "{\"parent\":\"urn:li:share:6957408550713184256\"}"
+            },
+            {
+              "name": "isReshareDisabledByAuthor (body)",
+              "required": false,
+              "example": "false"
+            }
+          ],
+          "response_fields": [
+            "201 Created; response header x-restli-id = post URN (urn:li:share:{id} or urn:li:ugcPost:{id})"
+          ],
+          "notes": "Scope w_organization_social. Replaces deprecated ugcPosts API. Media must be uploaded first via /rest/images (initializeUpload), /rest/videos, /rest/documents to get the URN. No URL scraping for articles — you must supply title/description/thumbnail. Organic carousels not supported (sponsored only). NO native scheduling — your app must hold scheduled posts and publish at time T."
+        },
+        {
+          "id": "get_posts_by_author",
+          "purpose": "List all posts of the organization page (feed retrieval for analytics/planner)",
+          "method": "GET",
+          "url_template": "https://api.linkedin.com/rest/posts?author=urn%3Ali%3Aorganization%3A{organization_id}&q=author&count=10&sortBy=LAST_MODIFIED",
+          "params": [
+            {
+              "name": "q",
+              "required": true,
+              "example": "author"
+            },
+            {
+              "name": "author",
+              "required": true,
+              "example": "urn:li:organization:2414183 (URL-encoded)"
+            },
+            {
+              "name": "viewContext",
+              "required": false,
+              "example": "READER (default) | AUTHOR (see drafts/processing)"
+            },
+            {
+              "name": "count",
+              "required": false,
+              "example": "10 (max 100)"
+            },
+            {
+              "name": "start",
+              "required": false,
+              "example": "0"
+            },
+            {
+              "name": "sortBy",
+              "required": false,
+              "example": "LAST_MODIFIED | CREATED"
+            }
+          ],
+          "response_fields": [
+            "elements[].id",
+            "author",
+            "commentary",
+            "content",
+            "lifecycleState",
+            "publishedAt",
+            "createdAt",
+            "lastModifiedAt",
+            "visibility",
+            "distribution",
+            "isReshareDisabledByAuthor",
+            "adContext (if sponsored)",
+            "paging.links (next page)"
+          ],
+          "notes": "Scope r_organization_social. Header X-RestLi-Method: FINDER. Single get: GET /rest/posts/{url-encoded urn}. Batch: GET /rest/posts?ids=List(...) with X-RestLi-Method: BATCH_GET. Update: POST /rest/posts/{urn} with X-RestLi-Method: PARTIAL_UPDATE and {\"patch\":{\"$set\":{\"commentary\":\"...\"}}} (only commentary, CTA label/landing page, lifecycleState, adContext editable) → 204. Delete: DELETE /rest/posts/{urn} → 204, idempotent."
+        },
+        {
+          "id": "get_comments",
+          "purpose": "Inbox: retrieve comments on a post (and nested comment replies)",
+          "method": "GET",
+          "url_template": "https://api.linkedin.com/rest/socialActions/{encoded shareUrn|ugcPostUrn|commentUrn}/comments",
+          "params": [
+            {
+              "name": "entity URN (path)",
+              "required": true,
+              "example": "urn%3Ali%3Ashare%3A6844785523593134080 ; for replies use composite urn:li:comment:(urn:li:activity:{activityId},{commentId})"
+            },
+            {
+              "name": "start/count",
+              "required": false,
+              "example": "start=0&count=10"
+            }
+          ],
+          "response_fields": [
+            "elements[].id",
+            "commentUrn",
+            "actor (urn:li:person vs urn:li:organization)",
+            "message.text + message.attributes (mentions)",
+            "created.time",
+            "likesSummary.totalLikes",
+            "commentsSummary",
+            "parentComment",
+            "content[] (IMAGE entity)",
+            "object"
+          ],
+          "notes": "Scope r_organization_social_feed. Single comment: GET .../comments/{commentId}. Batch: .../comments?ids=List({ids}). Also GET /rest/socialActions/{urn} for aggregate likes/comments summary; reactions via /rest/reactions."
+        },
+        {
+          "id": "create_comment",
+          "purpose": "Reply/comment as the organization (inbox response)",
+          "method": "POST",
+          "url_template": "https://api.linkedin.com/rest/socialActions/{encoded shareUrn|ugcPostUrn|commentUrn}/comments",
+          "params": [
+            {
+              "name": "actor (body)",
+              "required": true,
+              "example": "urn:li:organization:2414183"
+            },
+            {
+              "name": "object (body)",
+              "required": true,
+              "example": "urn:li:activity:6631349431612559360 (the share/ugcPost containing the thread)"
+            },
+            {
+              "name": "message (body)",
+              "required": true,
+              "example": "{\"text\":\"Merci !\",\"attributes\":[{\"start\":0,\"length\":17,\"value\":{\"organization\":{\"organization\":\"urn:li:organization:2414183\"}}}]}"
+            },
+            {
+              "name": "parentComment (body)",
+              "required": false,
+              "example": "urn:li:comment:(urn:li:activity:...,{parentCommentId}) for nested replies"
+            },
+            {
+              "name": "content (body)",
+              "required": false,
+              "example": "[{\"entity\":{\"image\":\"urn:li:image:C552CAQGu16obsGZENQ\"}}]"
+            }
+          ],
+          "response_fields": [
+            "response header x-restli-id = comment ID",
+            "body: commentUrn, id, actor, agent/impersonator (member acting for the org), created.time, message"
+          ],
+          "notes": "Scope w_organization_social_feed. Edit: POST .../comments/{commentId}?actor={orgUrn} with X-RestLi-Method: PARTIAL_UPDATE and {\"patch\":{\"message\":{\"$set\":{\"text\":\"...\"}}}}. Delete: DELETE .../comments/{commentId}?actor={orgUrn}. Per-member comment-creation throttle: 429 after burst within 1 minute."
+        }
+      ],
+      "rate_limits": "Not published as fixed global numbers: quotas are per-application AND per-member, per-endpoint, per-day (UTC), visible in the Developer Portal under your app's Analytics tab. Exceeding returns HTTP 429 TOO_MANY_REQUESTS. Typical observed defaults for Community Management: ~100k requests/day per app on read endpoints and a few hundred/day per member on write endpoints (e.g. post creation ~150/member/day), plus a short-term per-minute throttle on comment creation. Design the connector with backoff on 429 and daily-quota budgeting per client organization.",
+      "publishing": {
+        "supported": true,
+        "notes": "Full read+write publishing via POST https://api.linkedin.com/rest/posts (replaces ugcPosts). Text, image, video, document, article, poll, multi-image; reshares; audience-targeted organic posts (min 300-member audience); dark posts for ads. Media must be pre-uploaded via the Images/Videos/Documents APIs (initializeUpload → upload to signed URL → use returned urn:li:image/video/document). lifecycleState must be PUBLISHED at creation — there is no native scheduled-publish parameter, so your planner must store drafts and call the API at the scheduled time. Post edit limited to commentary/CTA fields via PARTIAL_UPDATE; delete idempotent (204)."
+      },
+      "gotchas": [
+        "Access requires applying for the 'Community Management API' product on your LinkedIn Developer app (Marketing Developer Platform review; form + company verification; approval can take days-weeks). Without approval the org scopes never appear on the Auth tab.",
+        "Community Management API has tiers: a Development tier (limited quota, limited orgs) and a Standard tier requiring a further access request/partner review — plan for the review before onboarding many client pages.",
+        "Every /rest call REQUIRES headers 'LinkedIn-Version: YYYYMM' and 'X-Restli-Protocol-Version: 2.0.0'. Versions live ~1 year then are sunset (202507 already sunset in 2026) — make the version a config value and bump it regularly.",
+        "Restli 2.0 encoding is a classic trap: URNs in query params must be URL-encoded (urn%3Ali%3A...), lists use List(...), objects use (key:value) syntax; Postman often breaks the encoding (400 'Invalid query parameters').",
+        "Scopes are role-gated server-side: the authenticated member must be ADMINISTRATOR (stats) or ADMINISTRATOR/DSC_POSTER/CONTENT_ADMIN (posts) on each client page, otherwise 403 ACCESS_DENIED even with the right scope.",
+        "Total follower count moved to /rest/networkSizes (edgeType=COMPANY_FOLLOWED_BY_MEMBER since 202305); organizationalEntityFollowerStatistics no longer returns totalFollowerCounts.",
+        "Analytics windows: share statistics = rolling 12 months only; time-bound follower stats = 12 months back with ~2-day lag and NO demographic breakdown; per-post stats can't be time-bound. Persist metrics in your own DB for long-term history.",
+        "organizationalEntityShareStatistics is ORGANIC only — sponsored/boosted performance requires the Ads Reporting (adAnalytics) API, a separate product approval.",
+        "ugcPosts and shares APIs are legacy; new integrations must use /rest/posts, but statistics endpoints still reference both urn:li:share and urn:li:ugcPost IDs — store both URN types.",
+        "Tokens last 60 days and programmatic refresh tokens are restricted to approved partners: build a re-auth UX (silent redirect works while the member is logged into LinkedIn). Changing requested scopes invalidates all existing tokens for that member.",
+        "Comment moderation: comment/reaction scopes are the *_organization_social_feed variants (separate from *_organization_social used by Posts). Creating an inline comment with content can 403 ('Unpermitted fields') in some cases — image comments require an already-uploaded urn:li:image.",
+        "No webhooks for comments/mentions in the standard product — inbox features require polling /rest/socialActions per post (watch the daily quota with many client pages)."
+      ],
+      "covers": [
+        "linkedin"
+      ]
+    },
+    {
+      "platform": "x",
+      "api_name": "X API v2",
+      "api_version": "v2 (base https://api.x.com/2 — anciennes URLs api.twitter.com toujours redirigées, utiliser api.x.com)",
+      "oauth": {
+        "flow": "OAuth 2.0 Authorization Code with PKCE (obligatoire — seuls grant types supportés : authorization_code + PKCE et refresh_token). Access token valable 2h ; ajouter le scope offline.access pour obtenir un refresh token (rotation : chaque refresh renvoie un NOUVEAU refresh token, l'ancien est invalidé — le stocker atomiquement). App-only Bearer Token possible pour la lecture publique (search, timelines) mais pas pour /users/me ni les métriques organiques/non publiques.",
+        "authorization_url": "https://x.com/i/oauth2/authorize",
+        "token_url": "https://api.x.com/2/oauth2/token",
+        "scopes": [
+          {
+            "scope": "tweet.read",
+            "purpose": "Lire les posts (timelines, recherche, lookup) — requis pour quasiment tout"
+          },
+          {
+            "scope": "tweet.write",
+            "purpose": "Publier, supprimer, retweeter (POST/DELETE /2/tweets)"
+          },
+          {
+            "scope": "users.read",
+            "purpose": "Lire les profils utilisateurs (followers_count etc.) — requis avec tweet.read"
+          },
+          {
+            "scope": "offline.access",
+            "purpose": "Obtenir un refresh token (sinon token mort en 2h) — indispensable pour un connecteur"
+          },
+          {
+            "scope": "media.write",
+            "purpose": "Upload de médias via POST /2/media/upload (images/vidéos pour les posts)"
+          },
+          {
+            "scope": "follows.read",
+            "purpose": "Listes followers/following (endpoints followers soumis à tier élevé)"
+          },
+          {
+            "scope": "dm.read",
+            "purpose": "Lire les DMs (inbox) — nécessite des permissions app élevées"
+          },
+          {
+            "scope": "dm.write",
+            "purpose": "Envoyer des DMs"
+          },
+          {
+            "scope": "like.read",
+            "purpose": "Posts likés (utile analytics)"
+          }
+        ]
+      },
+      "endpoints": [
+        {
+          "id": "get_me",
+          "purpose": "Profil du compte connecté + compteurs (followers). Point d'entrée du connecteur après OAuth.",
+          "method": "GET",
+          "url_template": "https://api.x.com/2/users/me",
+          "params": [
+            {
+              "name": "user.fields",
+              "required": false,
+              "example": "public_metrics,profile_image_url,description,verified,created_at"
+            }
+          ],
+          "response_fields": [
+            "data.id",
+            "data.username",
+            "data.name",
+            "data.public_metrics.followers_count",
+            "data.public_metrics.following_count",
+            "data.public_metrics.tweet_count",
+            "data.public_metrics.listed_count",
+            "data.profile_image_url"
+          ],
+          "notes": "User-context uniquement (pas de Bearer app-only). Limite ~75 req/15min/user. Pas d'historique de followers : pour une courbe de croissance, snapshotter followers_count quotidiennement côté app."
+        },
+        {
+          "id": "get_user_by_username",
+          "purpose": "Lookup d'un compte par handle (comptes concurrents, comptes clients non connectés).",
+          "method": "GET",
+          "url_template": "https://api.x.com/2/users/by/username/{username}",
+          "params": [
+            {
+              "name": "user.fields",
+              "required": false,
+              "example": "public_metrics,verified,created_at"
+            }
+          ],
+          "response_fields": [
+            "data.id",
+            "data.username",
+            "data.public_metrics.followers_count"
+          ],
+          "notes": "Variante batch : GET /2/users/by?usernames=a,b,c (jusqu'à 100)."
+        },
+        {
+          "id": "get_user_tweets",
+          "purpose": "Timeline des posts d'un utilisateur (analytics de contenu).",
+          "method": "GET",
+          "url_template": "https://api.x.com/2/users/{id}/tweets",
+          "params": [
+            {
+              "name": "max_results",
+              "required": false,
+              "example": "100 (5–100, défaut 10)"
+            },
+            {
+              "name": "tweet.fields",
+              "required": false,
+              "example": "created_at,public_metrics,non_public_metrics,organic_metrics,entities,attachments"
+            },
+            {
+              "name": "exclude",
+              "required": false,
+              "example": "replies,retweets"
+            },
+            {
+              "name": "start_time",
+              "required": false,
+              "example": "2026-07-01T00:00:00Z (ISO 8601)"
+            },
+            {
+              "name": "pagination_token",
+              "required": false,
+              "example": "7140dibdnow9c7btw482 (meta.next_token de la page précédente)"
+            }
+          ],
+          "response_fields": [
+            "data[].id",
+            "data[].text",
+            "data[].created_at",
+            "data[].public_metrics.impression_count",
+            "data[].public_metrics.like_count",
+            "data[].public_metrics.retweet_count",
+            "data[].public_metrics.reply_count",
+            "data[].public_metrics.quote_count",
+            "data[].public_metrics.bookmark_count",
+            "data[].non_public_metrics.url_link_clicks",
+            "data[].non_public_metrics.user_profile_clicks",
+            "data[].organic_metrics.impression_count",
+            "meta.next_token"
+          ],
+          "notes": "Remonte max ~3200 posts récents. non_public_metrics et organic_metrics : user-context OAuth2 obligatoire, uniquement les posts DU compte authentifié, et non_public_metrics seulement pour les posts < 30 jours — sinon erreur 400 : ne pas les demander sur les posts d'autrui."
+        },
+        {
+          "id": "get_tweets_lookup",
+          "purpose": "Lookup batch de posts par IDs (rafraîchir les métriques des posts publiés par l'app).",
+          "method": "GET",
+          "url_template": "https://api.x.com/2/tweets",
+          "params": [
+            {
+              "name": "ids",
+              "required": true,
+              "example": "1846987139428839802,1846987139428839803 (max 100)"
+            },
+            {
+              "name": "tweet.fields",
+              "required": true,
+              "example": "public_metrics,organic_metrics,non_public_metrics,created_at"
+            },
+            {
+              "name": "expansions",
+              "required": false,
+              "example": "attachments.media_keys,author_id"
+            },
+            {
+              "name": "media.fields",
+              "required": false,
+              "example": "public_metrics,type,url"
+            }
+          ],
+          "response_fields": [
+            "data[].public_metrics",
+            "data[].organic_metrics.retweet_count",
+            "data[].organic_metrics.like_count",
+            "data[].organic_metrics.impression_count",
+            "includes.media[].public_metrics.view_count",
+            "errors[] (posts supprimés/protégés)"
+          ],
+          "notes": "C'est l'endpoint recommandé pour la boucle de refresh analytics : 1 requête = jusqu'à 100 posts. En pay-per-use chaque post lu est facturé $0.005 (dédupliqué par fenêtre de 24h UTC)."
+        },
+        {
+          "id": "create_tweet",
+          "purpose": "Publication (manage tweets) — posts, threads (via reply), quotes, sondages.",
+          "method": "POST",
+          "url_template": "https://api.x.com/2/tweets",
+          "params": [
+            {
+              "name": "text (body JSON)",
+              "required": true,
+              "example": "\"Hello world\" (requis sauf si media présent)"
+            },
+            {
+              "name": "media.media_ids (body)",
+              "required": false,
+              "example": "[\"1455952740635586573\"] (max 4 images ou 1 vidéo, obtenus via /2/media/upload)"
+            },
+            {
+              "name": "reply.in_reply_to_tweet_id (body)",
+              "required": false,
+              "example": "1846987139428839802 (pour threads et réponses inbox)"
+            },
+            {
+              "name": "quote_tweet_id (body)",
+              "required": false,
+              "example": "1846987139428839802"
+            },
+            {
+              "name": "poll (body)",
+              "required": false,
+              "example": "{\"options\":[\"A\",\"B\"],\"duration_minutes\":1440}"
+            },
+            {
+              "name": "reply_settings (body)",
+              "required": false,
+              "example": "mentionedUsers | following"
+            }
+          ],
+          "response_fields": [
+            "data.id",
+            "data.text"
+          ],
+          "notes": "User-context + scope tweet.write. Limite user ~100 posts/15min, app 10 000/24h (et duplicate check côté X). Pas de scheduling natif dans l'API : le planificateur doit vivre côté app (cron qui poste à l'heure H). Suppression : DELETE https://api.x.com/2/tweets/{id}."
+        },
+        {
+          "id": "media_upload",
+          "purpose": "Upload de médias avant publication (images, GIF, vidéos).",
+          "method": "POST",
+          "url_template": "https://api.x.com/2/media/upload",
+          "params": [
+            {
+              "name": "media (multipart) ou chunked INIT/APPEND/FINALIZE",
+              "required": true,
+              "example": "command=INIT&total_bytes=10240&media_type=video/mp4&media_category=tweet_video"
+            },
+            {
+              "name": "media_category",
+              "required": false,
+              "example": "tweet_image | tweet_video | tweet_gif"
+            }
+          ],
+          "response_fields": [
+            "data.id (media_id à passer dans media.media_ids)",
+            "data.processing_info.state (pending/succeeded pour vidéo — poller via GET /2/media/upload?command=STATUS)"
+          ],
+          "notes": "Le vieux upload.twitter.com/1.1/media/upload.json est déprécié depuis 2025 — utiliser l'endpoint v2 avec scope media.write. Vidéo = chunked upload obligatoire + polling STATUS avant POST /2/tweets."
+        },
+        {
+          "id": "get_mentions",
+          "purpose": "Timeline des mentions du compte (inbox/engagement).",
+          "method": "GET",
+          "url_template": "https://api.x.com/2/users/{id}/mentions",
+          "params": [
+            {
+              "name": "max_results",
+              "required": false,
+              "example": "100 (5–100)"
+            },
+            {
+              "name": "since_id",
+              "required": false,
+              "example": "1846987139428839802 (polling incrémental — ne ramener que le nouveau)"
+            },
+            {
+              "name": "tweet.fields",
+              "required": false,
+              "example": "created_at,public_metrics,author_id,conversation_id,in_reply_to_user_id"
+            },
+            {
+              "name": "expansions",
+              "required": false,
+              "example": "author_id (+ user.fields=username,profile_image_url pour afficher l'inbox)"
+            }
+          ],
+          "response_fields": [
+            "data[].id",
+            "data[].text",
+            "data[].author_id",
+            "data[].conversation_id",
+            "includes.users[]",
+            "meta.newest_id",
+            "meta.next_token"
+          ],
+          "notes": "Remonte les ~800 mentions les plus récentes max. Pas de webhook temps réel hors Enterprise (Account Activity API) : faire du polling avec since_id. conversation_id permet de regrouper les threads dans l'inbox."
+        },
+        {
+          "id": "search_recent",
+          "purpose": "Recherche des 7 derniers jours (écoute de marque, veille hashtags/concurrents).",
+          "method": "GET",
+          "url_template": "https://api.x.com/2/tweets/search/recent",
+          "params": [
+            {
+              "name": "query",
+              "required": true,
+              "example": "(\"orphic agency\" OR @orphicagency) -is:retweet lang:fr — 512 chars max (Basic), opérateurs avancés Pro+"
+            },
+            {
+              "name": "max_results",
+              "required": false,
+              "example": "100 (10–100)"
+            },
+            {
+              "name": "start_time / end_time",
+              "required": false,
+              "example": "2026-07-13T00:00:00Z"
+            },
+            {
+              "name": "since_id",
+              "required": false,
+              "example": "polling incrémental"
+            },
+            {
+              "name": "next_token",
+              "required": false,
+              "example": "pagination (meta.next_token)"
+            },
+            {
+              "name": "tweet.fields",
+              "required": false,
+              "example": "created_at,public_metrics,author_id,lang"
+            }
+          ],
+          "response_fields": [
+            "data[].id",
+            "data[].text",
+            "data[].author_id",
+            "data[].public_metrics",
+            "meta.result_count",
+            "meta.next_token"
+          ],
+          "notes": "Fenêtre de 7 jours uniquement. Full-archive (GET /2/tweets/search/all) réservé Pro/Enterprise. Chaque post retourné compte dans le cap de lecture mensuel — filtrer agressivement dans la query, pas côté client."
+        }
+      ],
+      "rate_limits": "Fenêtres glissantes de 15 min, limites séparées app (Bearer) / user (OAuth2). Valeurs docs.x.com : POST /2/tweets 100/15min/user et 10 000/24h/app ; GET /2/tweets/search/recent 300/15min/user, 450/15min/app ; GET /2/users/:id/mentions 300/15min/user, 450/15min/app ; GET /2/users/:id/tweets 900/15min/user ; GET /2/users/me 75/15min/user ; GET /2/tweets (lookup) 5 000/15min/user. Headers x-rate-limit-limit / -remaining / -reset à respecter, 429 sinon. TARIFS (changement majeur) : depuis le 6 février 2026, X a basculé les NOUVEAUX développeurs sur du pay-per-use à crédits prépayés — le tier Free est supprimé et Basic/Pro ne sont plus ouverts à la souscription. Pay-per-use : $0.015 par post créé, $0.20 par post créé contenant un lien, $0.005 par post lu, plafond 2M lectures/mois (au-delà : Enterprise). Déduplication : un même post lu plusieurs fois dans la même journée UTC n'est facturé qu'une fois. Tiers legacy (comptes existants seulement) : Free (500 posts écrits/mois, lecture quasi nulle), Basic $200/mois (~3 000 posts écrits/mois user, 10 000/mois app, 15 000 lectures posts/mois), Pro $5 000/mois (~300 000 posts écrits/mois, 1M lectures/mois, accès full-archive search), Enterprise ~$42 000+/mois (streams, Account Activity webhooks).",
+      "publishing": {
+        "supported": true,
+        "notes": "POST /2/tweets couvre texte, médias (via POST /2/media/upload en amont), threads (reply.in_reply_to_tweet_id en chaîne), quotes et sondages. DELETE /2/tweets/{id} pour supprimer. Aucun scheduling natif : la planification doit être gérée côté app. Attention au coût pay-per-use : $0.20 par post contenant une URL vs $0.015 sans lien — pour une app d'agence qui publie des liens clients, c'est le principal poste de coût."
+      },
+      "gotchas": [
+        "Changement de modèle au 6 février 2026 : plus de tier Free ni de souscription Basic/Pro pour les nouveaux comptes développeur — uniquement pay-per-use à crédits prépayés (console développeur). Prévoir la gestion de solde de crédits dans le connecteur (un solde à zéro = API coupée).",
+        "Posts avec lien facturés $0.20 (vs $0.015) : ~13x plus cher. Pour une app d'agence qui publie des liens, chiffrer ce coût dans le pricing client.",
+        "Chaque post retourné par search/recent ou une timeline compte comme une lecture facturée ($0.005) — filtrer dans la query et utiliser since_id, sous peine de brûler le cap de 2M lectures/mois.",
+        "organic_metrics et non_public_metrics exigent le user-context OAuth2 du propriétaire des posts ; non_public_metrics seulement sur les posts < 30 jours. Les demander sur les posts d'autrui provoque une 400 — construire les tweet.fields dynamiquement.",
+        "Refresh tokens à rotation : chaque refresh invalide l'ancien token. Un refresh concurrent (deux workers) déconnecte le compte — verrouiller le refresh par compte.",
+        "Access token OAuth2 = 2h de validité ; oublier offline.access dans les scopes rend le connecteur inutilisable après 2h.",
+        "Pas de webhooks hors Enterprise (Account Activity API) : mentions/inbox = polling avec since_id.",
+        "L'API Ads est totalement séparée (ads-api.x.com, OAuth 1.0a, accès sur candidature via un compte Ads approuvé) — le module ads du connecteur ne peut PAS s'appuyer sur l'API v2.",
+        "Upload média v1.1 (upload.twitter.com) déprécié : utiliser POST /2/media/upload avec scope media.write ; vidéos = chunked INIT/APPEND/FINALIZE + polling STATUS.",
+        "search/recent = 7 jours d'historique max ; full-archive (/2/tweets/search/all) réservé Pro legacy/Enterprise.",
+        "Endpoints followers/following (GET /2/users/:id/followers) très restreints sur les petits tiers — pour la courbe de followers, snapshotter public_metrics.followers_count quotidiennement.",
+        "Création d'app : portail developer.x.com, app rattachée à un projet, activer OAuth 2.0 avec callback exact (pas de wildcard) et type 'Web App, Automated App or Bot' pour obtenir le client secret ; les permissions Read/Write se règlent dans 'User authentication settings'."
+      ],
+      "covers": [
+        "x"
+      ]
+    },
+    {
+      "platform": "tiktok",
+      "api_name": "TikTok API v2 (Display + Login Kit + Content Posting API) & TikTok API for Business (Business Account + Marketing/Ads API v1.3)",
+      "api_version": "v2 (open.tiktokapis.com) / v1.3 (business-api.tiktok.com/open_api)",
+      "oauth": {
+        "flow": "Deux mondes distincts. (A) Comptes créateur/perso — TikTok API v2 : Authorization Code + PKCE recommandé. L'utilisateur autorise via l'URL d'autorisation avec client_key + scopes ; le code est échangé contre un access_token (validité 24h) + refresh_token (365 jours, rotation possible) via POST form-urlencoded. Header ensuite : Authorization: Bearer {access_token}. (B) Business/Ads — TikTok API for Business : l'annonceur ou le titulaire de compte Business autorise via le portail business (https://business-api.tiktok.com/portal/auth?app_id={app_id}&state={state}&redirect_uri={redirect_uri}), auth_code échangé via POST /open_api/v1.3/oauth2/access_token/ (body JSON: app_id, secret, auth_code) → token longue durée pour les Ads. Pour l'API Business Account (organique), token via POST /open_api/v1.3/tt_user/oauth2/token/ (grant_type=authorization_code) avec refresh. Header Business API : 'Access-Token: {token}' (PAS Bearer).",
+        "authorization_url": "Creator (API v2): https://www.tiktok.com/v2/auth/authorize/?client_key={client_key}&response_type=code&scope={scopes,comma-separated}&redirect_uri={redirect_uri}&state={state}&code_challenge={challenge}&code_challenge_method=S256 — Business/Ads: https://business-api.tiktok.com/portal/auth?app_id={app_id}&state={state}&redirect_uri={redirect_uri}",
+        "token_url": "Creator (API v2): POST https://open.tiktokapis.com/v2/oauth/token/ (Content-Type: application/x-www-form-urlencoded ; body: client_key, client_secret, code, grant_type=authorization_code, redirect_uri, code_verifier ; refresh: grant_type=refresh_token&refresh_token=...) — Business/Ads: POST https://business-api.tiktok.com/open_api/v1.3/oauth2/access_token/ (JSON: app_id, secret, auth_code) — Business Account (tt_user): POST https://business-api.tiktok.com/open_api/v1.3/tt_user/oauth2/token/",
+        "scopes": [
+          {
+            "scope": "user.info.basic",
+            "purpose": "Profil de base : open_id, union_id, avatar_url, display_name"
+          },
+          {
+            "scope": "user.info.profile",
+            "purpose": "Champs profil étendus : bio_description, profile_deep_link, is_verified, profile_web_link (migration 2024 : ces champs ne sont plus servis par user.info.basic)"
+          },
+          {
+            "scope": "user.info.stats",
+            "purpose": "Statistiques du compte : follower_count, following_count, likes_count, video_count"
+          },
+          {
+            "scope": "video.list",
+            "purpose": "Lire la liste des vidéos publiques de l'utilisateur autorisé (Display API /v2/video/list/ et /v2/video/query/)"
+          },
+          {
+            "scope": "video.upload",
+            "purpose": "Uploader une vidéo en BROUILLON dans l'inbox TikTok de l'utilisateur (il finalise dans l'app) — /v2/post/publish/inbox/video/init/"
+          },
+          {
+            "scope": "video.publish",
+            "purpose": "Publication directe (Direct Post) de vidéos et photos — /v2/post/publish/video/init/, /v2/post/publish/content/init/, creator_info/query"
+          },
+          {
+            "scope": "user.insights (Business Account API)",
+            "purpose": "Insights du compte Business (followers, audience, impressions) via /business/get/"
+          },
+          {
+            "scope": "video.list + video.insights (Business Account API)",
+            "purpose": "Vidéos + métriques organiques d'un compte Business via /business/video/list/"
+          },
+          {
+            "scope": "comment.list / comment.list.manage (Business Account API)",
+            "purpose": "Lire et répondre aux commentaires (inbox d'engagement) — /business/comment/list/, /business/comment/reply/create/"
+          }
+        ]
+      },
+      "endpoints": [
+        {
+          "id": "user_info",
+          "purpose": "Profil + stats du compte créateur autorisé (followers, likes, avatar, bio)",
+          "method": "GET",
+          "url_template": "https://open.tiktokapis.com/v2/user/info/?fields={fields}",
+          "params": [
+            {
+              "name": "fields",
+              "required": true,
+              "example": "open_id,union_id,avatar_url,display_name,bio_description,profile_deep_link,is_verified,follower_count,following_count,likes_count,video_count"
+            },
+            {
+              "name": "Authorization (header)",
+              "required": true,
+              "example": "Bearer act.example12345Example12345Example"
+            }
+          ],
+          "response_fields": [
+            "data.user.open_id",
+            "data.user.union_id",
+            "data.user.avatar_url",
+            "data.user.avatar_url_100",
+            "data.user.display_name",
+            "data.user.bio_description",
+            "data.user.profile_deep_link",
+            "data.user.is_verified",
+            "data.user.follower_count",
+            "data.user.following_count",
+            "data.user.likes_count",
+            "data.user.video_count",
+            "error.code",
+            "error.message"
+          ],
+          "notes": "Chaque champ demandé exige le scope correspondant : basic → user.info.basic ; bio/deep_link/is_verified → user.info.profile ; compteurs → user.info.stats. Demander un champ sans le scope = erreur scope_not_authorized. Uniquement l'utilisateur qui a fait l'OAuth (pas de lookup arbitraire)."
+        },
+        {
+          "id": "video_list",
+          "purpose": "Liste paginée des vidéos publiques de l'utilisateur autorisé avec métriques (views, likes, comments, shares)",
+          "method": "POST",
+          "url_template": "https://open.tiktokapis.com/v2/video/list/?fields={fields}",
+          "params": [
+            {
+              "name": "fields (query)",
+              "required": true,
+              "example": "id,create_time,title,video_description,duration,cover_image_url,share_url,embed_link,view_count,like_count,comment_count,share_count"
+            },
+            {
+              "name": "cursor (body JSON)",
+              "required": false,
+              "example": "1706092800000 (timestamp ms renvoyé par la page précédente)"
+            },
+            {
+              "name": "max_count (body JSON)",
+              "required": false,
+              "example": "20 (max 20)"
+            }
+          ],
+          "response_fields": [
+            "data.videos[].id",
+            "data.videos[].create_time",
+            "data.videos[].title",
+            "data.videos[].video_description",
+            "data.videos[].duration",
+            "data.videos[].height/width",
+            "data.videos[].cover_image_url",
+            "data.videos[].share_url",
+            "data.videos[].embed_html",
+            "data.videos[].embed_link",
+            "data.videos[].view_count",
+            "data.videos[].like_count",
+            "data.videos[].comment_count",
+            "data.videos[].share_count",
+            "data.cursor",
+            "data.has_more",
+            "error"
+          ],
+          "notes": "Scope video.list. Tri par create_time desc. Seules les vidéos PUBLIQUES sont renvoyées (les vidéos privées/friends-only n'apparaissent pas). Les URLs cover_image_url expirent (~6h) — ne pas les stocker telles quelles."
+        },
+        {
+          "id": "video_query",
+          "purpose": "Détails + métriques de vidéos spécifiques par ID (vérifie qu'elles appartiennent à l'utilisateur autorisé)",
+          "method": "POST",
+          "url_template": "https://open.tiktokapis.com/v2/video/query/?fields={fields}",
+          "params": [
+            {
+              "name": "fields (query)",
+              "required": true,
+              "example": "id,title,view_count,like_count,comment_count,share_count,share_url"
+            },
+            {
+              "name": "filters.video_ids (body JSON)",
+              "required": true,
+              "example": "{\"filters\": {\"video_ids\": [\"7212345678901234567\", \"7212345678901234568\"]}} (max 20 IDs)"
+            }
+          ],
+          "response_fields": [
+            "data.videos[] (mêmes champs que video_list)",
+            "error.code",
+            "error.message"
+          ],
+          "notes": "Scope video.list. Utile pour rafraîchir les métriques de posts publiés via l'API (le publish renvoie un publish_id → l'ID vidéo se récupère ensuite via video/list)."
+        },
+        {
+          "id": "creator_info_query",
+          "purpose": "Étape 1 OBLIGATOIRE avant tout post : options de confidentialité autorisées, durée max vidéo, état des interactions du créateur",
+          "method": "POST",
+          "url_template": "https://open.tiktokapis.com/v2/post/publish/creator_info/query/",
+          "params": [
+            {
+              "name": "Authorization (header)",
+              "required": true,
+              "example": "Bearer act.example..."
+            },
+            {
+              "name": "Content-Type (header)",
+              "required": true,
+              "example": "application/json (body vide {})"
+            }
+          ],
+          "response_fields": [
+            "data.creator_username",
+            "data.creator_nickname",
+            "data.creator_avatar_url",
+            "data.privacy_level_options (ex: [\"PUBLIC_TO_EVERYONE\",\"MUTUAL_FOLLOW_FRIENDS\",\"SELF_ONLY\"])",
+            "data.comment_disabled",
+            "data.duet_disabled",
+            "data.stitch_disabled",
+            "data.max_video_post_duration_sec"
+          ],
+          "notes": "Scope video.publish. Rate limit : 20 req/min/token. L'UI de votre app DOIT afficher ces options (exigence UX de la review TikTok) et n'envoyer qu'un privacy_level présent dans privacy_level_options."
+        },
+        {
+          "id": "direct_post_video",
+          "purpose": "Publication directe d'une vidéo sur le profil TikTok (planification de posts côté serveur)",
+          "method": "POST",
+          "url_template": "https://open.tiktokapis.com/v2/post/publish/video/init/",
+          "params": [
+            {
+              "name": "post_info.title",
+              "required": false,
+              "example": "\"Notre nouveau projet #agence\" (max 2200 chars, hashtags/mentions inclus)"
+            },
+            {
+              "name": "post_info.privacy_level",
+              "required": true,
+              "example": "PUBLIC_TO_EVERYONE | MUTUAL_FOLLOW_FRIENDS | FOLLOWER_OF_CREATOR | SELF_ONLY"
+            },
+            {
+              "name": "post_info.disable_comment / disable_duet / disable_stitch",
+              "required": false,
+              "example": "false"
+            },
+            {
+              "name": "post_info.video_cover_timestamp_ms",
+              "required": false,
+              "example": "1000"
+            },
+            {
+              "name": "source_info.source",
+              "required": true,
+              "example": "FILE_UPLOAD ou PULL_FROM_URL"
+            },
+            {
+              "name": "source_info.video_size / chunk_size / total_chunk_count",
+              "required": false,
+              "example": "50000123 / 10000000 / 5 (si FILE_UPLOAD)"
+            },
+            {
+              "name": "source_info.video_url",
+              "required": false,
+              "example": "https://cdn.monagence.com/videos/clip.mp4 (si PULL_FROM_URL — domaine à vérifier au préalable)"
+            }
+          ],
+          "response_fields": [
+            "data.publish_id (ex: v_pub_file~v2.123456789)",
+            "data.upload_url (si FILE_UPLOAD — PUT des chunks avec Content-Range: bytes 0-9999999/50000123, expire ~1h)",
+            "error.code (ok, spam_risk_too_many_posts, spam_risk_user_banned_from_posting, url_ownership_unverified, privacy_level_option_mismatch...)"
+          ],
+          "notes": "Scope video.publish. Rate limit : 6 req/min par user token. Chunks 5–64 MB, vidéo max 4 GB, MP4/WebM/MOV. Ensuite poller status/fetch. Tant que l'app n'a pas passé l'audit Content Posting, les posts sont forcés en SELF_ONLY (privé)."
+        },
+        {
+          "id": "direct_post_photo",
+          "purpose": "Publication directe de posts photo/carrousel",
+          "method": "POST",
+          "url_template": "https://open.tiktokapis.com/v2/post/publish/content/init/",
+          "params": [
+            {
+              "name": "media_type",
+              "required": true,
+              "example": "PHOTO"
+            },
+            {
+              "name": "post_mode",
+              "required": true,
+              "example": "DIRECT_POST (publie) ou MEDIA_UPLOAD (envoie en brouillon dans l'app)"
+            },
+            {
+              "name": "post_info.title / description / privacy_level / disable_comment / auto_add_music",
+              "required": false,
+              "example": "privacy_level: PUBLIC_TO_EVERYONE"
+            },
+            {
+              "name": "source_info.source",
+              "required": true,
+              "example": "PULL_FROM_URL (seule source supportée pour les photos)"
+            },
+            {
+              "name": "source_info.photo_images",
+              "required": true,
+              "example": "[\"https://cdn.monagence.com/p1.webp\", \"https://cdn.monagence.com/p2.webp\"] (max 35 images)"
+            },
+            {
+              "name": "source_info.photo_cover_index",
+              "required": true,
+              "example": "0"
+            }
+          ],
+          "response_fields": [
+            "data.publish_id",
+            "error.code"
+          ],
+          "notes": "Scope video.publish (+ video.upload pour MEDIA_UPLOAD). Images WebP/JPEG, max 20 MB chacune. URLs sur domaine vérifié obligatoirement."
+        },
+        {
+          "id": "upload_draft_inbox",
+          "purpose": "Envoyer une vidéo en brouillon dans l'inbox de l'utilisateur (il édite/publie lui-même dans l'app) — alternative sans audit Direct Post",
+          "method": "POST",
+          "url_template": "https://open.tiktokapis.com/v2/post/publish/inbox/video/init/",
+          "params": [
+            {
+              "name": "source_info.source",
+              "required": true,
+              "example": "FILE_UPLOAD ou PULL_FROM_URL"
+            },
+            {
+              "name": "source_info.video_size / chunk_size / total_chunk_count",
+              "required": false,
+              "example": "30000000 / 30000000 / 1"
+            }
+          ],
+          "response_fields": [
+            "data.publish_id",
+            "data.upload_url",
+            "error.code"
+          ],
+          "notes": "Scope video.upload (pas video.publish). L'utilisateur reçoit une notification TikTok et finalise le post dans l'app. Statut final = SEND_TO_USER_INBOX."
+        },
+        {
+          "id": "post_status_fetch",
+          "purpose": "Suivre l'état d'une publication (polling après init)",
+          "method": "POST",
+          "url_template": "https://open.tiktokapis.com/v2/post/publish/status/fetch/",
+          "params": [
+            {
+              "name": "publish_id (body JSON)",
+              "required": true,
+              "example": "{\"publish_id\": \"v_pub_file~v2.123456789\"}"
+            }
+          ],
+          "response_fields": [
+            "data.status (PROCESSING_UPLOAD | PROCESSING_DOWNLOAD | SEND_TO_USER_INBOX | PUBLISH_COMPLETE | FAILED)",
+            "data.fail_reason",
+            "data.publicaly_available_post_id[] (ID de la vidéo publiée — sic, avec la faute d'orthographe dans le nom du champ)",
+            "data.uploaded_bytes"
+          ],
+          "notes": "Rate limit ~30 req/min/token. Poller avec backoff (le traitement peut prendre 1-2 min). fail_reason ex: video_pull_failed, unaudited_client_can_only_post_to_private_accounts, file_format_check_failed."
+        },
+        {
+          "id": "refresh_token",
+          "purpose": "Rafraîchir l'access_token (24h) avec le refresh_token (365j)",
+          "method": "POST",
+          "url_template": "https://open.tiktokapis.com/v2/oauth/token/",
+          "params": [
+            {
+              "name": "client_key",
+              "required": true,
+              "example": "awxyzabc123"
+            },
+            {
+              "name": "client_secret",
+              "required": true,
+              "example": "(secret)"
+            },
+            {
+              "name": "grant_type",
+              "required": true,
+              "example": "refresh_token"
+            },
+            {
+              "name": "refresh_token",
+              "required": true,
+              "example": "rft.example..."
+            }
+          ],
+          "response_fields": [
+            "access_token",
+            "expires_in (86400)",
+            "refresh_token (peut être ROTATÉ — toujours stocker le nouveau)",
+            "refresh_expires_in (31536000)",
+            "open_id",
+            "scope",
+            "token_type"
+          ],
+          "notes": "Content-Type: application/x-www-form-urlencoded obligatoire (pas JSON). Révocation : POST /v2/oauth/revoke/."
+        },
+        {
+          "id": "business_account_get",
+          "purpose": "Profil + insights d'un compte TikTok BUSINESS (followers, audience par pays/genre, impressions profil) — Business Account API",
+          "method": "GET",
+          "url_template": "https://business-api.tiktok.com/open_api/v1.3/business/get/?business_id={business_id}&fields={fields}&start_date={start_date}&end_date={end_date}",
+          "params": [
+            {
+              "name": "business_id",
+              "required": true,
+              "example": "1234567890 (open_id du compte business, renvoyé lors de l'auth tt_user)"
+            },
+            {
+              "name": "fields",
+              "required": true,
+              "example": "[\"username\",\"display_name\",\"profile_image\",\"followers_count\",\"audience_countries\",\"audience_genders\",\"likes\",\"comments\",\"shares\",\"video_views\",\"profile_views\"]"
+            },
+            {
+              "name": "Access-Token (header)",
+              "required": true,
+              "example": "act.business123 (header 'Access-Token', pas Bearer)"
+            }
+          ],
+          "response_fields": [
+            "data.username",
+            "data.display_name",
+            "data.followers_count",
+            "data.metrics[] (série journalière : date, followers_count, profile_views, video_views, likes, comments, shares)",
+            "data.audience_countries[]",
+            "data.audience_genders[]"
+          ],
+          "notes": "Nécessite un compte TikTok Business (pas créateur) + app sur le portail Business API + scopes user.insights/video.insights approuvés. Historique d'insights limité (~60 derniers jours)."
+        },
+        {
+          "id": "business_video_list",
+          "purpose": "Vidéos organiques + métriques détaillées d'un compte Business (dont durée moyenne de visionnage, reach)",
+          "method": "GET",
+          "url_template": "https://business-api.tiktok.com/open_api/v1.3/business/video/list/?business_id={business_id}&fields={fields}&cursor={cursor}&max_count={max_count}",
+          "params": [
+            {
+              "name": "business_id",
+              "required": true,
+              "example": "1234567890"
+            },
+            {
+              "name": "fields",
+              "required": true,
+              "example": "[\"item_id\",\"create_time\",\"thumbnail_url\",\"share_url\",\"caption\",\"video_views\",\"likes\",\"comments\",\"shares\",\"reach\",\"video_duration\",\"full_video_watched_rate\",\"average_time_watched\"]"
+            },
+            {
+              "name": "max_count",
+              "required": false,
+              "example": "20"
+            }
+          ],
+          "response_fields": [
+            "data.videos[].item_id",
+            "data.videos[].video_views",
+            "data.videos[].reach",
+            "data.videos[].average_time_watched",
+            "data.videos[].full_video_watched_rate",
+            "data.cursor",
+            "data.has_more"
+          ],
+          "notes": "Métriques bien plus riches que la Display API (reach, watch time) mais réservé aux comptes Business. Publication aussi possible côté Business : POST /business/video/publish/ et /business/publish/status/."
+        },
+        {
+          "id": "business_comment_list",
+          "purpose": "Inbox d'engagement : lister les commentaires des vidéos du compte Business et y répondre",
+          "method": "GET",
+          "url_template": "https://business-api.tiktok.com/open_api/v1.3/business/comment/list/?business_id={business_id}&video_id={video_id}&comment_ids={comment_ids}&max_count={max_count}&cursor={cursor}",
+          "params": [
+            {
+              "name": "business_id",
+              "required": true,
+              "example": "1234567890"
+            },
+            {
+              "name": "video_id",
+              "required": true,
+              "example": "7212345678901234567"
+            },
+            {
+              "name": "sort_field / sort_order",
+              "required": false,
+              "example": "create_time / DESC"
+            }
+          ],
+          "response_fields": [
+            "data.comments[].comment_id",
+            "data.comments[].text",
+            "data.comments[].create_time",
+            "data.comments[].likes",
+            "data.comments[].replies",
+            "data.comments[].username",
+            "data.comments[].user_id",
+            "data.cursor",
+            "data.has_more"
+          ],
+          "notes": "Répondre : POST /open_api/v1.3/business/comment/reply/create/ (body: business_id, video_id, comment_id, text). Aussi disponibles : /business/comment/like/, /business/comment/hide/. Scopes comment.list + comment.list.manage. C'est LE substitut à un 'inbox' — il n'existe AUCUNE API publique pour les DM TikTok."
+        },
+        {
+          "id": "ads_advertisers",
+          "purpose": "Lister les comptes annonceurs autorisés par l'utilisateur (après OAuth Business)",
+          "method": "GET",
+          "url_template": "https://business-api.tiktok.com/open_api/v1.3/oauth2/advertiser/get/?app_id={app_id}&secret={secret}",
+          "params": [
+            {
+              "name": "app_id / secret",
+              "required": true,
+              "example": "7001234567890123456 / (secret)"
+            },
+            {
+              "name": "Access-Token (header)",
+              "required": true,
+              "example": "act.ads123"
+            }
+          ],
+          "response_fields": [
+            "data.list[].advertiser_id",
+            "data.list[].advertiser_name"
+          ],
+          "notes": "Détails d'un annonceur : GET /open_api/v1.3/advertiser/info/?advertiser_ids=[\"{advertiser_id}\"]. Le token Ads obtenu via /oauth2/access_token/ est longue durée (pas d'expiration tant que l'accès n'est pas révoqué)."
+        },
+        {
+          "id": "ads_report",
+          "purpose": "Reporting Ads synchrone (spend, impressions, clics, conversions) par campagne/adgroup/ad/jour",
+          "method": "GET",
+          "url_template": "https://business-api.tiktok.com/open_api/v1.3/report/integrated/get/?advertiser_id={advertiser_id}&report_type=BASIC&data_level={data_level}&dimensions={dimensions}&metrics={metrics}&start_date={start_date}&end_date={end_date}&page={page}&page_size={page_size}",
+          "params": [
+            {
+              "name": "advertiser_id",
+              "required": true,
+              "example": "6912345678901234567"
+            },
+            {
+              "name": "data_level",
+              "required": true,
+              "example": "AUCTION_CAMPAIGN | AUCTION_ADGROUP | AUCTION_AD | AUCTION_ADVERTISER"
+            },
+            {
+              "name": "dimensions",
+              "required": true,
+              "example": "[\"campaign_id\",\"stat_time_day\"]"
+            },
+            {
+              "name": "metrics",
+              "required": false,
+              "example": "[\"spend\",\"impressions\",\"clicks\",\"ctr\",\"cpc\",\"cpm\",\"reach\",\"conversion\",\"cost_per_conversion\",\"video_play_actions\",\"video_watched_2s\"]"
+            },
+            {
+              "name": "start_date / end_date",
+              "required": true,
+              "example": "2026-07-01 / 2026-07-19 (YYYY-MM-DD, fenêtre max ~30j par requête au niveau jour)"
+            },
+            {
+              "name": "page_size",
+              "required": false,
+              "example": "200 (max 1000)"
+            }
+          ],
+          "response_fields": [
+            "data.list[].dimensions (campaign_id, stat_time_day)",
+            "data.list[].metrics (spend, impressions, clicks, ctr, cpc, cpm, conversion...)",
+            "data.page_info.total_number / total_page"
+          ],
+          "notes": "Gestion des campagnes : GET/POST /campaign/get|create|update/, /adgroup/..., /ad/.... Rapports asynchrones pour gros volumes : /report/task/create|check|download/. Les métriques de conversion dépendent du Pixel/Events API configuré."
+        }
+      ],
+      "rate_limits": "API v2 (open.tiktokapis.com) : quotas par endpoint et par token — /v2/post/publish/video/init/ et content/init/ : 6 req/min par user token ; creator_info/query : 20 req/min ; status/fetch : 30 req/min ; Display API (user/info, video/list, video/query) : ~600 req/min par access token, avec un quota journalier par client (app) selon le niveau d'audit. Anti-spam côté produit : un même compte ne peut pas poster en rafale (erreurs spam_risk_too_many_posts). Business/Ads API v1.3 : ~10 QPS par endpoint et par token (variable selon l'endpoint), quota journalier par app ; erreurs 40100/50002 en cas de dépassement — implémenter retry avec backoff exponentiel. Les réponses ne renvoient pas de header X-RateLimit standard : gérer les quotas côté client.",
+      "publishing": {
+        "supported": true,
+        "notes": "Oui, via la Content Posting API (API v2) : Direct Post vidéo (/v2/post/publish/video/init/) et photo/carrousel (/v2/post/publish/content/init/) avec titre, privacy_level, désactivation commentaires/duet/stitch — parfait pour la planification côté serveur (l'API ne gère PAS le scheduling elle-même : c'est votre app qui déclenche le post à l'heure voulue). Alternative sans audit complet : upload en brouillon inbox (video.upload), l'utilisateur finalise dans l'app. Flux obligatoire : 1) creator_info/query, 2) init (FILE_UPLOAD chunké 5-64 MB via upload_url en PUT avec Content-Range, ou PULL_FROM_URL depuis un domaine vérifié), 3) polling status/fetch jusqu'à PUBLISH_COMPLETE. Contraintes : vidéo max 4 GB / durée max renvoyée par creator_info (souvent 10 min), photos WebP/JPEG max 20 MB x35. CRITIQUE : tant que l'app n'a pas passé l'audit 'Content Posting API', tous les posts sont forcés en SELF_ONLY (visibles uniquement par le créateur) — l'audit est donc un prérequis de mise en production. Les comptes Business peuvent aussi publier via /v1.3/business/video/publish/."
+      },
+      "gotchas": [
+        "Review d'app obligatoire sur developers.tiktok.com : chaque scope (Login Kit, user.info.*, video.list, video.upload, video.publish) doit être demandé et approuvé, avec démo vidéo de l'UX ; comptez plusieurs jours/semaines. Un mode Sandbox existe pour développer avant approbation.",
+        "Audit séparé pour le Direct Post : app non auditée = posts forcés en privé (SELF_ONLY) + erreur unaudited_client_can_only_post_to_private_accounts si vous tentez PUBLIC. C'est le piège n°1 des connecteurs de planification.",
+        "PULL_FROM_URL exige la vérification de propriété du domaine/préfixe d'URL dans la console développeur (sinon url_ownership_unverified). FILE_UPLOAD ne l'exige pas.",
+        "Deux plateformes développeur distinctes avec OAuth incompatibles : developers.tiktok.com (API v2, comptes créateur, Bearer token, tokens 24h/refresh 365j, form-urlencoded pour le token) vs business-api.tiktok.com (v1.3, header 'Access-Token', body JSON, token Ads longue durée). Un connecteur agence complet doit implémenter les deux.",
+        "Migration scopes 2024 : bio_description, is_verified, profile_deep_link ne sont plus servis par user.info.basic — il faut user.info.profile, et les compteurs exigent user.info.stats.",
+        "Le refresh_token peut être rotaté à chaque refresh : toujours persister celui renvoyé, sous peine de perdre la connexion au bout de 24h.",
+        "Display API : uniquement les vidéos PUBLIQUES de l'utilisateur OAuth ; aucun accès aux vidéos d'autrui, pas de recherche, pas de métriques concurrents (la Research API est réservée aux chercheurs académiques).",
+        "Pas d'API DM/messages privés : l''inbox' se limite aux commentaires, et uniquement via la Business Account API (comptes Business seulement, scopes comment.*).",
+        "Les métriques riches (reach, average_time_watched, audience démographique) n'existent que sur la Business Account API ; la Display API se limite à view/like/comment/share counts. Insights Business limités à ~60 jours d'historique : stockez les séries chez vous.",
+        "Les URLs de médias renvoyées (cover_image_url, avatar_url) sont signées et expirent en quelques heures — proxifiez/cachez-les.",
+        "Le champ de réponse du status/fetch contenant l'ID du post publié s'appelle littéralement 'publicaly_available_post_id' (faute d'orthographe incluse dans l'API).",
+        "Ads API : accès en 2 temps — enregistrement développeur + approbation d'app sur le portail Business, PUIS autorisation de chaque annonceur ; certains endpoints (reservation ads, certaines métriques) exigent un whitelisting supplémentaire.",
+        "Erreurs à gérer explicitement au publish : spam_risk_too_many_posts (anti-spam par compte), spam_risk_user_banned_from_posting, privacy_level_option_mismatch (privacy non listé dans creator_info) — d'où l'obligation d'appeler creator_info/query avant chaque post.",
+        "L'API ne fournit pas de planification native (pas de champ scheduled_publish_time) : le scheduling doit être implémenté côté app (déclencher l'init à l'heure H)."
+      ],
+      "covers": [
+        "tiktok"
+      ]
+    },
+    {
+      "platform": "meta",
+      "api_name": "Instagram Graph API (Instagram Platform) + Facebook Pages API + Meta Marketing API",
+      "api_version": "v25.0 (Graph API & Marketing API, released 2026-02-18; v23.0 EOL 2026-06-09 — pin v25.0, versions live ~2 ans)",
+      "oauth": {
+        "flow": "OAuth 2.0 Authorization Code (Facebook Login for Business recommandé pour un connecteur agence ; alternative : 'Instagram API with Instagram Login' sur graph.instagram.com, mais elle ne couvre pas les Pages ni les Ads). Étapes : 1) redirect vers authorization_url avec client_id, redirect_uri, scope, state ; 2) échange code → short-lived user token sur token_url ; 3) échange long-lived : GET /oauth/access_token?grant_type=fb_exchange_token&fb_exchange_token={token} (60 jours) ; 4) GET /me/accounts pour obtenir les Page Access Tokens (n'expirent pas s'ils dérivent d'un long-lived user token) ; 5) GET /{page_id}?fields=instagram_business_account pour l'IG user id.",
+        "authorization_url": "https://www.facebook.com/v25.0/dialog/oauth",
+        "token_url": "https://graph.facebook.com/v25.0/oauth/access_token",
+        "scopes": [
+          {
+            "scope": "instagram_basic",
+            "purpose": "Lire le profil IG business, media, followers_count"
+          },
+          {
+            "scope": "instagram_manage_insights",
+            "purpose": "Insights compte + media IG (reach, views, démographie)"
+          },
+          {
+            "scope": "instagram_content_publish",
+            "purpose": "Publication IG (media / media_publish)"
+          },
+          {
+            "scope": "instagram_manage_comments",
+            "purpose": "Lire/répondre/masquer les commentaires IG"
+          },
+          {
+            "scope": "instagram_manage_messages",
+            "purpose": "Inbox IG (DM) via Messenger Platform"
+          },
+          {
+            "scope": "pages_show_list",
+            "purpose": "Lister les Pages via /me/accounts"
+          },
+          {
+            "scope": "pages_read_engagement",
+            "purpose": "Lire posts/engagement de la Page (requis aussi pour la plupart des appels IG via Facebook Login)"
+          },
+          {
+            "scope": "read_insights",
+            "purpose": "Page Insights (/{page_id}/insights)"
+          },
+          {
+            "scope": "pages_manage_posts",
+            "purpose": "Publier/éditer/supprimer des posts de Page"
+          },
+          {
+            "scope": "pages_manage_engagement",
+            "purpose": "Modérer commentaires de Page"
+          },
+          {
+            "scope": "pages_messaging",
+            "purpose": "Messenger de la Page (si inbox FB aussi)"
+          },
+          {
+            "scope": "ads_read",
+            "purpose": "Lecture Marketing API + Ads Insights"
+          },
+          {
+            "scope": "ads_management",
+            "purpose": "Écriture campagnes/adsets/ads (facultatif si analytics only)"
+          },
+          {
+            "scope": "business_management",
+            "purpose": "Accès aux assets Business Manager (souvent nécessaire pour les ad accounts d'agence)"
+          }
+        ]
+      },
+      "endpoints": [
+        {
+          "id": "ig_account",
+          "purpose": "[BLOC 1 – INSTAGRAM] Profil du compte IG business : followers, nb de posts, bio",
+          "method": "GET",
+          "url_template": "https://graph.facebook.com/v25.0/{ig_user_id}",
+          "params": [
+            {
+              "name": "fields",
+              "required": true,
+              "example": "username,name,followers_count,follows_count,media_count,profile_picture_url,biography,website"
+            },
+            {
+              "name": "access_token",
+              "required": true,
+              "example": "{page_or_user_token}"
+            }
+          ],
+          "response_fields": [
+            "username",
+            "followers_count",
+            "follows_count",
+            "media_count",
+            "profile_picture_url"
+          ],
+          "notes": "ig_user_id obtenu via GET /{page_id}?fields=instagram_business_account. Avec 'Instagram Login' l'hôte est graph.instagram.com et l'id via GET /me."
+        },
+        {
+          "id": "ig_account_insights",
+          "purpose": "[BLOC 1] Insights compte IG : reach, views, interactions, follows, démographie",
+          "method": "GET",
+          "url_template": "https://graph.facebook.com/v25.0/{ig_user_id}/insights",
+          "params": [
+            {
+              "name": "metric",
+              "required": true,
+              "example": "reach,views,total_interactions,accounts_engaged,likes,comments,shares,saves,replies,profile_links_taps,follows_and_unfollows"
+            },
+            {
+              "name": "period",
+              "required": true,
+              "example": "day"
+            },
+            {
+              "name": "metric_type",
+              "required": false,
+              "example": "total_value (requis pour views, total_interactions, etc. ; time_series pour reach)"
+            },
+            {
+              "name": "timeframe",
+              "required": false,
+              "example": "last_30_days (requis pour follower_demographics / engaged_audience_demographics)"
+            },
+            {
+              "name": "breakdown",
+              "required": false,
+              "example": "media_product_type | follow_type | contact_button_type ; démographie: age,gender,city,country"
+            },
+            {
+              "name": "since / until",
+              "required": false,
+              "example": "Unix timestamps"
+            }
+          ],
+          "response_fields": [
+            "data[].name",
+            "data[].period",
+            "data[].values[].value / total_value.value",
+            "data[].total_value.breakdowns"
+          ],
+          "notes": "IMPRESSIONS EST SUPPRIMÉ (toutes versions depuis le 21/04/2025) → utiliser 'views'. follower_count indisponible sous 100 followers. Démographie limitée au top 45. Données parfois retardées jusqu'à 48h."
+        },
+        {
+          "id": "ig_media_list",
+          "purpose": "[BLOC 1] Liste des posts IG avec leurs champs de base",
+          "method": "GET",
+          "url_template": "https://graph.facebook.com/v25.0/{ig_user_id}/media",
+          "params": [
+            {
+              "name": "fields",
+              "required": true,
+              "example": "id,caption,media_type,media_product_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count,children{media_url,media_type}"
+            },
+            {
+              "name": "limit",
+              "required": false,
+              "example": "50 (pagination par cursors paging.cursors.after)"
+            },
+            {
+              "name": "since / until",
+              "required": false,
+              "example": "2026-01-01"
+            }
+          ],
+          "response_fields": [
+            "id",
+            "media_type (IMAGE|VIDEO|CAROUSEL_ALBUM)",
+            "media_product_type (FEED|REELS|STORY)",
+            "like_count",
+            "comments_count",
+            "permalink",
+            "timestamp"
+          ],
+          "notes": "Stories via GET /{ig_user_id}/stories (disparaissent après 24h). Mentions/tags via /tags."
+        },
+        {
+          "id": "ig_media_insights",
+          "purpose": "[BLOC 1] Métriques par post/reel/story IG",
+          "method": "GET",
+          "url_template": "https://graph.facebook.com/v25.0/{ig_media_id}/insights",
+          "params": [
+            {
+              "name": "metric",
+              "required": true,
+              "example": "FEED/REELS: views,reach,likes,comments,saved,shares,total_interactions ; REELS aussi: ig_reels_avg_watch_time,ig_reels_video_view_total_time ; STORY: views,reach,replies,navigation,profile_visits"
+            },
+            {
+              "name": "breakdown",
+              "required": false,
+              "example": "story_navigation_action_type (pour navigation)"
+            }
+          ],
+          "response_fields": [
+            "data[].name",
+            "data[].values[].value"
+          ],
+          "notes": "Les métriques valides dépendent de media_product_type — un mauvais metric renvoie une erreur 100. 'plays'/'impressions'/'video_views' supprimés → 'views' unifié."
+        },
+        {
+          "id": "ig_create_container",
+          "purpose": "[BLOC 1] Étape 1 publication : créer un container média (image, video, reel, story, carousel)",
+          "method": "POST",
+          "url_template": "https://graph.facebook.com/v25.0/{ig_user_id}/media",
+          "params": [
+            {
+              "name": "image_url",
+              "required": false,
+              "example": "https://cdn.monapp.com/img.jpg (image ; URL publique obligatoire)"
+            },
+            {
+              "name": "video_url",
+              "required": false,
+              "example": "https://cdn.monapp.com/reel.mp4"
+            },
+            {
+              "name": "media_type",
+              "required": false,
+              "example": "REELS | STORIES | CAROUSEL (omis = image feed)"
+            },
+            {
+              "name": "caption",
+              "required": false,
+              "example": "Mon caption #hashtag"
+            },
+            {
+              "name": "children",
+              "required": false,
+              "example": "[\"{container_id_1}\",\"{container_id_2}\"] (carousel, max 10)"
+            },
+            {
+              "name": "cover_url / thumb_offset",
+              "required": false,
+              "example": "thumb_offset=2000 (ms, cover de reel)"
+            },
+            {
+              "name": "is_carousel_item",
+              "required": false,
+              "example": "true (sur les containers enfants)"
+            },
+            {
+              "name": "alt_text",
+              "required": false,
+              "example": "Description accessible (images)"
+            },
+            {
+              "name": "upload_type",
+              "required": false,
+              "example": "resumable (upload binaire via rupload.facebook.com/ig-api-upload/{container_id})"
+            }
+          ],
+          "response_fields": [
+            "id (container id)"
+          ],
+          "notes": "Pour les vidéos, attendre status_code=FINISHED avant media_publish. Location tagging via location_id, user tags via user_tags."
+        },
+        {
+          "id": "ig_container_status",
+          "purpose": "[BLOC 1] Vérifier que le container est prêt",
+          "method": "GET",
+          "url_template": "https://graph.facebook.com/v25.0/{ig_container_id}",
+          "params": [
+            {
+              "name": "fields",
+              "required": true,
+              "example": "status_code,status"
+            }
+          ],
+          "response_fields": [
+            "status_code (EXPIRED|ERROR|FINISHED|IN_PROGRESS|PUBLISHED)"
+          ],
+          "notes": "Poller ~toutes les 5-10s. Les containers expirent après 24h non publiés."
+        },
+        {
+          "id": "ig_media_publish",
+          "purpose": "[BLOC 1] Étape 2 publication : publier le container",
+          "method": "POST",
+          "url_template": "https://graph.facebook.com/v25.0/{ig_user_id}/media_publish",
+          "params": [
+            {
+              "name": "creation_id",
+              "required": true,
+              "example": "{ig_container_id}"
+            }
+          ],
+          "response_fields": [
+            "id (ig_media_id publié)"
+          ],
+          "notes": "PAS DE SCHEDULING NATIF côté API IG : votre app doit stocker et déclencher à l'heure prévue. Limite 100 posts publiés par API / 24h glissantes (carousel = 1)."
+        },
+        {
+          "id": "ig_publishing_limit",
+          "purpose": "[BLOC 1] Quota de publication restant",
+          "method": "GET",
+          "url_template": "https://graph.facebook.com/v25.0/{ig_user_id}/content_publishing_limit",
+          "params": [
+            {
+              "name": "fields",
+              "required": false,
+              "example": "quota_usage,config"
+            }
+          ],
+          "response_fields": [
+            "quota_usage",
+            "config.quota_total (100)",
+            "config.quota_duration (86400)"
+          ]
+        },
+        {
+          "id": "ig_comments",
+          "purpose": "[BLOC 1] Lire les commentaires d'un post",
+          "method": "GET",
+          "url_template": "https://graph.facebook.com/v25.0/{ig_media_id}/comments",
+          "params": [
+            {
+              "name": "fields",
+              "required": false,
+              "example": "id,text,username,from,timestamp,like_count,replies{text,username,timestamp}"
+            }
+          ],
+          "response_fields": [
+            "id",
+            "text",
+            "username",
+            "timestamp",
+            "like_count"
+          ],
+          "notes": "Répondre : POST /{ig_comment_id}/replies avec message=... ; masquer : POST /{ig_comment_id}?hide=true ; supprimer : DELETE /{ig_comment_id}. Scope instagram_manage_comments."
+        },
+        {
+          "id": "ig_conversations",
+          "purpose": "[BLOC 1] Inbox : lister les conversations DM Instagram",
+          "method": "GET",
+          "url_template": "https://graph.facebook.com/v25.0/{page_id}/conversations",
+          "params": [
+            {
+              "name": "platform",
+              "required": true,
+              "example": "instagram"
+            },
+            {
+              "name": "fields",
+              "required": false,
+              "example": "participants,updated_time,messages{message,from,created_time}"
+            }
+          ],
+          "response_fields": [
+            "data[].id (conversation id)",
+            "participants",
+            "messages"
+          ],
+          "notes": "Se fait via la PAGE Facebook liée (Page token). Temps réel : webhooks object=instagram, field=messages (obligatoire pour un vrai inbox)."
+        },
+        {
+          "id": "ig_send_message",
+          "purpose": "[BLOC 1] Inbox : envoyer un DM Instagram (Messenger Platform)",
+          "method": "POST",
+          "url_template": "https://graph.facebook.com/v25.0/{page_id}/messages",
+          "params": [
+            {
+              "name": "recipient",
+              "required": true,
+              "example": "{\"id\":\"{igsid}\"} (Instagram-scoped user ID reçu par webhook)"
+            },
+            {
+              "name": "message",
+              "required": true,
+              "example": "{\"text\":\"Bonjour !\"} ou attachment image/audio/video/like_heart"
+            },
+            {
+              "name": "messaging_type / tag",
+              "required": false,
+              "example": "tag=HUMAN_AGENT (répond jusqu'à 7 jours après le dernier message client)"
+            }
+          ],
+          "response_fields": [
+            "recipient_id",
+            "message_id"
+          ],
+          "notes": "Fenêtre standard de 24h après le dernier message de l'utilisateur ; hors fenêtre, seul le tag HUMAN_AGENT (permission avancée + review dédiée) est possible. L'utilisateur doit avoir écrit en premier — pas de cold DM."
+        },
+        {
+          "id": "fb_pages_list",
+          "purpose": "[BLOC 2 – FACEBOOK PAGES] Lister les Pages gérées + récupérer les Page Access Tokens",
+          "method": "GET",
+          "url_template": "https://graph.facebook.com/v25.0/me/accounts",
+          "params": [
+            {
+              "name": "fields",
+              "required": false,
+              "example": "id,name,access_token,category,instagram_business_account,fan_count,tasks"
+            }
+          ],
+          "response_fields": [
+            "data[].id",
+            "data[].access_token (Page token — à utiliser pour tous les appels Page/IG)",
+            "data[].instagram_business_account.id",
+            "data[].fan_count"
+          ],
+          "notes": "Le Page token issu d'un long-lived user token n'expire pas (sauf changement de mot de passe / révocation)."
+        },
+        {
+          "id": "fb_page_insights",
+          "purpose": "[BLOC 2] Insights de la Page (portée, engagement, fans, vues)",
+          "method": "GET",
+          "url_template": "https://graph.facebook.com/v25.0/{page_id}/insights",
+          "params": [
+            {
+              "name": "metric",
+              "required": true,
+              "example": "page_impressions_unique,page_post_engagements,page_fans,page_fan_adds_unique,page_views_total,page_video_views,page_follows"
+            },
+            {
+              "name": "period",
+              "required": true,
+              "example": "day | week | days_28"
+            },
+            {
+              "name": "since / until",
+              "required": false,
+              "example": "Unix timestamps ou date_preset=last_30d"
+            }
+          ],
+          "response_fields": [
+            "data[].name",
+            "data[].period",
+            "data[].values[].value",
+            "data[].values[].end_time"
+          ],
+          "notes": "Requiert read_insights + Page token. GROS MÉNAGE en cours : beaucoup de métriques Page héritées ont été dépréciées en 2024-2025, et la métrique legacy 'reach' est remplacée par un 'viewer metric' unifié FB+IG d'ici juin 2026 — vérifier la liste des métriques valides sur /docs/graph-api/reference/page/insights avant de coder en dur. Historique max ~2 ans, 93 jours max par requête."
+        },
+        {
+          "id": "fb_page_posts",
+          "purpose": "[BLOC 2] Lister les posts de la Page",
+          "method": "GET",
+          "url_template": "https://graph.facebook.com/v25.0/{page_id}/published_posts",
+          "params": [
+            {
+              "name": "fields",
+              "required": true,
+              "example": "id,message,created_time,permalink_url,attachments{media_type,url},shares,likes.summary(true),comments.summary(true)"
+            },
+            {
+              "name": "limit",
+              "required": false,
+              "example": "25"
+            }
+          ],
+          "response_fields": [
+            "id",
+            "message",
+            "created_time",
+            "shares.count",
+            "likes.summary.total_count",
+            "comments.summary.total_count"
+          ],
+          "notes": "/published_posts (tous les posts publiés) vs /feed (inclut posts de visiteurs) vs /scheduled_posts. Requiert pages_read_engagement (+ pages_read_user_content pour le contenu visiteurs)."
+        },
+        {
+          "id": "fb_post_insights",
+          "purpose": "[BLOC 2] Métriques par post de Page",
+          "method": "GET",
+          "url_template": "https://graph.facebook.com/v25.0/{page_post_id}/insights",
+          "params": [
+            {
+              "name": "metric",
+              "required": true,
+              "example": "post_impressions_unique,post_clicks,post_reactions_by_type_total,post_video_views"
+            }
+          ],
+          "response_fields": [
+            "data[].name",
+            "data[].values[].value"
+          ],
+          "notes": "Même vague de dépréciation que page_insights — plusieurs métriques post_* legacy retirées ; tester chaque métrique contre v25."
+        },
+        {
+          "id": "fb_publish_post",
+          "purpose": "[BLOC 2] Publier ou programmer un post texte/lien sur la Page",
+          "method": "POST",
+          "url_template": "https://graph.facebook.com/v25.0/{page_id}/feed",
+          "params": [
+            {
+              "name": "message",
+              "required": true,
+              "example": "Nouveau projet en ligne !"
+            },
+            {
+              "name": "link",
+              "required": false,
+              "example": "https://orphic-agency.com"
+            },
+            {
+              "name": "published",
+              "required": false,
+              "example": "false (avec scheduled_publish_time pour programmer)"
+            },
+            {
+              "name": "scheduled_publish_time",
+              "required": false,
+              "example": "1789000000 (Unix, entre 10 min et 30 jours — SCHEDULING NATIF, contrairement à IG)"
+            }
+          ],
+          "response_fields": [
+            "id (page_post_id)"
+          ],
+          "notes": "Requiert pages_manage_posts + Page token. Photos : POST /{page_id}/photos (url=... ; published=false pour multi-photo puis attached_media sur /feed). Vidéos : POST /{page_id}/videos (file_url) ; Reels FB : POST /{page_id}/video_reels (flux start/upload/finish)."
+        },
+        {
+          "id": "ads_accounts",
+          "purpose": "[BLOC 3 – META ADS] Lister les comptes publicitaires accessibles",
+          "method": "GET",
+          "url_template": "https://graph.facebook.com/v25.0/me/adaccounts",
+          "params": [
+            {
+              "name": "fields",
+              "required": false,
+              "example": "id,account_id,name,currency,account_status,timezone_name,amount_spent"
+            }
+          ],
+          "response_fields": [
+            "data[].id (format act_<ACCOUNT_ID>)",
+            "currency",
+            "account_status (1=ACTIVE)",
+            "amount_spent"
+          ],
+          "notes": "Pour une agence : GET /{business_id}/client_ad_accounts et /owned_ad_accounts (scope business_management)."
+        },
+        {
+          "id": "ads_campaigns",
+          "purpose": "[BLOC 3] Lister les campagnes (structure : campaign > adset > ad)",
+          "method": "GET",
+          "url_template": "https://graph.facebook.com/v25.0/act_{ad_account_id}/campaigns",
+          "params": [
+            {
+              "name": "fields",
+              "required": true,
+              "example": "id,name,objective,status,effective_status,daily_budget,lifetime_budget,start_time,stop_time,buying_type"
+            },
+            {
+              "name": "filtering",
+              "required": false,
+              "example": "[{\"field\":\"effective_status\",\"operator\":\"IN\",\"value\":[\"ACTIVE\",\"PAUSED\"]}]"
+            },
+            {
+              "name": "limit",
+              "required": false,
+              "example": "100"
+            }
+          ],
+          "response_fields": [
+            "id",
+            "name",
+            "objective (ex: OUTCOME_SALES, OUTCOME_LEADS)",
+            "effective_status",
+            "daily_budget (en centimes de la devise)"
+          ],
+          "notes": "Idem /adsets et /ads. Écriture (POST act_.../campaigns) requiert ads_management + Advanced Access."
+        },
+        {
+          "id": "ads_insights",
+          "purpose": "[BLOC 3] Insights ads : spend, résultats, ROAS — à tout niveau",
+          "method": "GET",
+          "url_template": "https://graph.facebook.com/v25.0/act_{ad_account_id}/insights",
+          "params": [
+            {
+              "name": "level",
+              "required": false,
+              "example": "campaign | adset | ad | account"
+            },
+            {
+              "name": "fields",
+              "required": true,
+              "example": "campaign_name,spend,impressions,reach,clicks,cpc,cpm,ctr,frequency,actions,cost_per_action_type,purchase_roas,conversions"
+            },
+            {
+              "name": "date_preset",
+              "required": false,
+              "example": "last_30d | last_7d | this_month | maximum"
+            },
+            {
+              "name": "time_range",
+              "required": false,
+              "example": "{\"since\":\"2026-06-01\",\"until\":\"2026-06-30\"}"
+            },
+            {
+              "name": "time_increment",
+              "required": false,
+              "example": "1 (séries journalières)"
+            },
+            {
+              "name": "breakdowns",
+              "required": false,
+              "example": "age,gender | publisher_platform,platform_position | country"
+            },
+            {
+              "name": "action_breakdowns",
+              "required": false,
+              "example": "action_type"
+            },
+            {
+              "name": "action_attribution_windows",
+              "required": false,
+              "example": "[\"7d_click\",\"1d_view\"]"
+            }
+          ],
+          "response_fields": [
+            "spend",
+            "impressions",
+            "reach",
+            "clicks",
+            "cpm",
+            "cpc",
+            "ctr",
+            "actions[] ({action_type:\"purchase\",value:\"12\"}) — c'est ici que sont les 'results'",
+            "cost_per_action_type[]",
+            "purchase_roas[] ({action_type:\"omni_purchase\",value:\"4.2\"})",
+            "date_start",
+            "date_stop"
+          ],
+          "notes": "Le 'results' de l'Ads Manager = l'action correspondant à l'objectif — à mapper vous-même depuis actions[]. ROAS nécessite un pixel/CAPI avec valeurs de conversion. Fenêtre d'attribution par défaut : 7d_click+1d_view. Marge de retraitement des données ~28 jours."
+        },
+        {
+          "id": "ads_insights_async",
+          "purpose": "[BLOC 3] Rapports lourds en asynchrone (gros comptes, longs historiques, breakdowns multiples)",
+          "method": "POST",
+          "url_template": "https://graph.facebook.com/v25.0/act_{ad_account_id}/insights",
+          "params": [
+            {
+              "name": "(mêmes params que ads_insights)",
+              "required": true,
+              "example": "level=ad&fields=spend,actions&time_range=..."
+            }
+          ],
+          "response_fields": [
+            "report_run_id"
+          ],
+          "notes": "Puis GET /{report_run_id} (poller async_status jusqu'à 'Job Completed' + async_percent_completion=100), enfin GET /{report_run_id}/insights pour les résultats paginés. Obligatoire en pratique dès que la requête sync time-out (erreur 'reduce the amount of data')."
+        }
+      ],
+      "rate_limits": "Trois régimes distincts. 1) Graph API Pages/IG : Business Use Case (BUC) rate limits par paire app+page/compte — quota horaire glissant calculé sur l'usage (headers X-Business-Use-Case-Usage / X-App-Usage à parser ; ~4800 × nb utilisateurs engagés pour les apps en Advanced Access, ~200 calls/h/utilisateur en Standard). Erreurs code 4 (app), 17 (user), 32 (page), 613. 2) Publication IG : 100 posts API / 24h glissantes par compte IG (content_publishing_limit pour suivre). 3) Marketing API / Ads Insights : throttling propre via header x-fb-ads-insights-throttle et niveaux d'accès Marketing API (development ≈ très limité / standard) ; erreurs 17 & 613 fréquentes sur insights → utiliser les jobs async + backoff exponentiel. IG messaging : limites Messenger séparées (très élevées, par conversation).",
+      "publishing": {
+        "supported": true,
+        "notes": "IG : oui via container 2 étapes (POST /media puis /media_publish) — images, carousels (max 10), Reels, Stories ; MAIS pas de scheduled_publish_time natif → le scheduler doit vivre dans votre app ; limite 100 posts/24h ; média hébergé sur URL publique. Facebook Page : oui via /feed, /photos, /videos, /video_reels avec scheduling natif (published=false + scheduled_publish_time, 10 min à 30 jours). Prérequis commun : Advanced Access sur les permissions de publication + App Review."
+      },
+      "gotchas": [
+        "App Review obligatoire : toutes les permissions listées (instagram_*, pages_*, ads_*, read_insights) exigent l'Advanced Access via App Review + Business Verification de votre entreprise pour servir des clients hors de votre app (en Development/Standard, seuls les comptes avec un rôle dans l'app fonctionnent — parfait pour développer, bloquant pour livrer).",
+        "instagram_manage_messages et surtout le tag HUMAN_AGENT passent par une review dédiée avec démonstration vidéo de l'usage ; sans HUMAN_AGENT vous êtes limité à la fenêtre de 24h.",
+        "Deux architectures IG incompatibles : 'Instagram API with Facebook Login' (graph.facebook.com, requiert une Page FB liée — c'est celle qu'il vous faut pour couvrir Pages+Ads) vs 'Instagram API with Instagram Login' (graph.instagram.com, scopes instagram_business_*, pas de Page requise mais pas d'Ads). Ne mélangez pas les scopes des deux dans une même doc d'app.",
+        "Métriques : 'impressions' IG est mort (avril 2025) → 'views' ; côté Page, la métrique 'reach' legacy est remplacée par un 'viewer metric' unifié d'ici juin 2026 et des dizaines de métriques page_*/post_* legacy ont été supprimées — validez chaque nom de métrique contre v25 au lieu de copier de vieux tutoriels.",
+        "Tokens : user token court (heures) → long-lived (60 j, à rafraîchir) → Page tokens quasi permanents. Stockez le Page token par client, pas le user token.",
+        "IG ne permet pas de programmer nativement ni de publier depuis un binaire sans passer par une URL publique (sauf upload resumable via rupload.facebook.com pour la vidéo).",
+        "Marketing API : compte en 'development access' limité à quelques ad accounts et à un débit réduit tant que le Standard Access n'est pas accordé ; les montants (spend, budgets) sont dans la plus petite unité de la devise pour les budgets mais en unité décimale pour spend dans insights — attention aux conversions.",
+        "'Results' et 'ROAS' ne sont pas des champs simples : ils se reconstruisent depuis actions[] / purchase_roas[] avec le bon action_type et dépendent de la fenêtre d'attribution — alignez-la sur l'Ads Manager (7d_click,1d_view) sinon vos chiffres divergeront.",
+        "Webhooks : Meta impose une mise à jour mTLS des trust stores (échéance mars 2026) — sans quoi la livraison des webhooks (DM, commentaires) casse silencieusement.",
+        "Versioning : chaque version vit ~2 ans (v23 EOL juin 2026). Mettez la version en config, pas en dur, et abonnez-vous au changelog trimestriel.",
+        "Pas de tier payant côté Meta (l'API est gratuite), contrairement à X/Twitter — le coût est en review et vérification business, pas en dollars."
+      ],
+      "covers": [
+        "instagram",
+        "facebook",
+        "meta_ads"
+      ]
+    }
+  ]
+}

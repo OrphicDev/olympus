@@ -5027,78 +5027,515 @@ const sparkSvg = (arr, w = 130, h = 34) => {
   const pts = arr.map((v, i) => `${(i / (arr.length - 1) * w).toFixed(1)},${(h - 3 - (v - mn) / (mx - mn || 1) * (h - 8)).toFixed(1)}`).join(" ");
   return `<svg class="spark" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><polyline points="${pts}"/></svg>`;
 };
-const AG_CLIENTS = [
-  { id: "solene", name: "Maison Solène",
-    kpis: [["128k", "portée 30 j", "+18%", [62, 71, 68, 80, 76, 88, 95, 91, 104, 112, 108, 128]], ["2 460 €", "dépense pubs", "+9%", [18, 20, 19, 22, 21, 24, 23, 25, 24, 26, 25, 27]], ["4,2", "ROAS moyen", "+0,4", [3.1, 3.3, 3.2, 3.6, 3.5, 3.8, 3.7, 4.0, 3.9, 4.1, 4.0, 4.2]], ["18 420", "visites site", "+12%", [9, 10, 11, 10, 12, 13, 12, 14, 15, 16, 17, 18]]],
-    social: [
-      { p: "Instagram", ic: "📷", h: "@maisonsolene", f: "24,8k", d: "+3,1%", er: "4,6% d'engagement · 12 posts" },
-      { p: "TikTok", ic: "🎵", h: "@maisonsolene", f: "11,2k", d: "+8,7%", er: "6,1% d'engagement · 8 vidéos" },
-      { p: "Facebook", ic: "👥", h: "Maison Solène", f: "9,4k", d: "+0,8%", er: "1,9% d'engagement · 6 posts" },
-    ],
-    ads: [
-      { n: "Conversions — collection été", plat: "Meta Ads", on: true, spend: "860 € / 1 200 €", roas: "ROAS 4,8 · CPC 0,38 €" },
-      { n: "Notoriété — vidéo teaser", plat: "Meta Ads", on: true, spend: "420 € / 600 €", roas: "CPM 2,10 € · 380k impr." },
-      { n: "Search — marque", plat: "Google Ads", on: false, spend: "180 € / 300 €", roas: "CTR 8,2% · terminée" },
-    ],
-    web: { s: [9, 10, 11, 10, 12, 13, 12, 14, 15, 16, 17, 18], conv: "2,4% de conversion · panier moyen 86 €", top: [["/collection-ete", "6 210"], ["/nouveautes", "3 480"], ["/lookbook-2026", "2 130"]] },
-    seo: [{ kw: "robe lin provence", pos: 3, d: "▲2" }, { kw: "maison solène avis", pos: 1, d: "＝" }, { kw: "mode éthique été", pos: 8, d: "▲5" }, { kw: "robe cérémonie lin", pos: 14, d: "▼1" }],
-    notes: [
-      { t: "Campagne été : créa vidéo > carrousels (+2,1 pts de CTR). Refaire 3 hooks vidéo pour août.", m: "Campagne · 16 juil · Astrid Berges" },
-      { t: "SEO : la page lookbook cannibalise /collection-ete sur « robe lin ». Fusionner les intentions.", m: "SEO · 12 juil · Lucas Dubois" },
-    ] },
-  { id: "riviera", name: "Villa Riviera",
-    kpis: [["86k", "portée 30 j", "+6%", [55, 58, 54, 60, 63, 61, 66, 64, 70, 74, 78, 86]], ["1 140 €", "dépense pubs", "−4%", [14, 13, 14, 12, 13, 12, 12, 11, 12, 11, 12, 11]], ["3,1", "ROAS moyen", "+0,2", [2.6, 2.7, 2.8, 2.7, 2.9, 3.0, 2.9, 3.0, 3.1, 3.0, 3.1, 3.1]], ["9 310", "visites site", "+21%", [4, 5, 5, 6, 6, 7, 7, 8, 8, 8, 9, 9.3]]],
-    social: [
-      { p: "Instagram", ic: "📷", h: "@villariviera.mc", f: "38,1k", d: "+1,9%", er: "3,2% d'engagement · 9 posts" },
-      { p: "LinkedIn", ic: "💼", h: "Villa Riviera", f: "4,6k", d: "+2,4%", er: "2,7% d'engagement · 4 posts" },
-    ],
-    ads: [
-      { n: "Réservations — saison", plat: "Meta Ads", on: true, spend: "640 € / 900 €", roas: "ROAS 3,4 · CPC 0,52 €" },
-      { n: "Display — luxe Riviera", plat: "Google Ads", on: true, spend: "500 € / 700 €", roas: "CPM 3,40 € · 210k impr." },
-    ],
-    web: { s: [4, 5, 5, 6, 6, 7, 7, 8, 8, 8, 9, 9.3], conv: "1,8% de conversion · réservation moyenne 410 €", top: [["/suites", "3 020"], ["/offres-ete", "1 890"], ["/spa", "1 260"]] },
-    seo: [{ kw: "villa luxe monaco", pos: 5, d: "▲1" }, { kw: "hôtel spa riviera", pos: 9, d: "▲3" }, { kw: "suite vue mer monaco", pos: 2, d: "＝" }],
-    notes: [
-      { t: "Les stories « coulisses » font ×2 de complétion vs posts produits. En caler 3/semaine.", m: "Campagne · 14 juil · Sacha" },
-      { t: "SEO : gagner la position 1 sur « suite vue mer monaco » = ~40 clics/j. Optimiser le title + FAQ.", m: "SEO · 9 juil · Lucas Dubois" },
-    ] },
-  { id: "solaris", name: "Solaris",
-    kpis: [["54k", "portée 30 j", "+32%", [20, 24, 22, 28, 30, 34, 33, 38, 42, 46, 50, 54]], ["780 €", "dépense pubs", "+15%", [5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11]], ["5,6", "ROAS moyen", "+1,1", [3.8, 4.0, 4.2, 4.1, 4.5, 4.7, 4.9, 5.0, 5.2, 5.4, 5.5, 5.6]], ["6 480", "visites site", "+40%", [2, 2.4, 2.8, 3, 3.4, 3.8, 4.1, 4.6, 5, 5.5, 6, 6.5]]],
-    social: [
-      { p: "Instagram", ic: "📷", h: "@solaris.eyewear", f: "8,9k", d: "+11,2%", er: "7,8% d'engagement · 14 posts" },
-      { p: "TikTok", ic: "🎵", h: "@solaris.eyewear", f: "21,4k", d: "+24,6%", er: "9,3% d'engagement · 11 vidéos" },
-    ],
-    ads: [
-      { n: "Lancement — solaires 2026", plat: "Meta Ads", on: true, spend: "540 € / 800 €", roas: "ROAS 6,1 · CPC 0,29 €" },
-      { n: "Retargeting — paniers", plat: "Meta Ads", on: true, spend: "240 € / 300 €", roas: "ROAS 8,4 · CPA 6,20 €" },
-    ],
-    web: { s: [2, 2.4, 2.8, 3, 3.4, 3.8, 4.1, 4.6, 5, 5.5, 6, 6.5], conv: "3,1% de conversion · panier moyen 129 €", top: [["/solaires-2026", "2 840"], ["/best-sellers", "1 410"], ["/e-shop", "980"]] },
-    seo: [{ kw: "lunettes soleil créateur", pos: 6, d: "▲4" }, { kw: "solaris eyewear", pos: 1, d: "＝" }, { kw: "lunettes bois france", pos: 11, d: "▲2" }],
-    notes: [
-      { t: "Le shoot d'Èze surperforme partout : 3 posts dans le top 5 all-time. Prévoir un shoot « lifestyle plage » en août.", m: "Campagne · 17 juil · Astrid Berges" },
-    ] },
+// Argos v2 — social media management : marques, publication, inbox, écoute, ads,
+// concurrence, rapport, connexions. Le renderer consomme les IPC argos:* ; tant que
+// les plateformes ne sont pas connectées, le main sert des données de démo (demo:true).
+let arState = null, arBrand = null, arView = "apercu", arPeriod = 30, arWeekOff = 0;
+const arCache = {};
+const AR_VIEWS = [
+  { id: "apercu", ic: "◎", label: "Aperçu" },
+  { id: "publication", ic: "🗓", label: "Publication" },
+  { id: "inbox", ic: "💬", label: "Inbox" },
+  { id: "ecoute", ic: "🜂", label: "Écoute" },
+  { id: "ads", ic: "▸", label: "Publicité" },
+  { id: "concurrence", ic: "⚖", label: "Concurrence" },
+  { id: "rapport", ic: "▤", label: "Rapport" },
+  { id: "connexions", ic: "⌁", label: "Connexions" },
 ];
-let agCur = "solene";
-function renderArgos() {
-  $("agClients").innerHTML = AG_CLIENTS.map((c) => `<span data-cl="${c.id}" class="${agCur === c.id ? "active" : ""}">${escapeHtml(c.name)}</span>`).join("");
-  const c = AG_CLIENTS.find((x) => x.id === agCur); if (!c) return;
-  const hero = c.kpis.map(([n, l, d, s]) => {
-    const up = !d.startsWith("−") && !d.startsWith("▼");
-    return `<div class="ag-kpi"><div class="n">${n}</div><div class="l">${l} <span class="${up ? "ag-up" : "ag-down"}">${up ? "▲" : "▼"} ${d.replace("−", "")}</span></div>${sparkSvg(s)}</div>`;
-  }).join("");
-  const social = c.social.map((s) => `<div class="ag-row"><div class="ic">${s.ic}</div><div><div class="nm">${s.p} <span style="color:var(--dim);font-weight:400;font-size:11.5px;">${escapeHtml(s.h)}</span></div><div class="sub">${s.er}</div></div><div class="val"><div class="b">${s.f}</div><div class="s ag-up">▲ ${s.d}</div></div></div>`).join("");
-  const ads = c.ads.map((a) => `<div class="ag-row"><span class="ag-state${a.on ? "" : " off"}">${a.on ? "active" : "finie"}</span><div><div class="nm">${escapeHtml(a.n)}</div><div class="sub">${a.plat} · ${a.roas}</div></div><div class="val"><div class="b">${a.spend}</div><div class="s">dépensé / budget</div></div></div>`).join("");
-  const top = c.web.top.map(([p, v]) => `<div class="ag-row" style="padding:8px 0;"><div style="font-size:12.5px;color:var(--muted);">${p}</div><div class="val"><div class="b" style="font-size:12.5px;">${v}</div></div></div>`).join("");
-  const seo = c.seo.map((s) => `<div class="ag-row"><span class="ag-pos${s.pos <= 3 ? " top" : ""}">${s.pos}</span><div><div class="nm" style="font-weight:500;">${escapeHtml(s.kw)}</div></div><div class="val"><div class="s ${s.d.startsWith("▼") ? "ag-down" : "ag-up"}">${s.d}</div></div></div>`).join("");
-  const notes = c.notes.map((n) => `<div class="ag-note"><div class="t">${escapeHtml(n.t)}</div><div class="m">${n.m}</div></div>`).join("");
-  $("agBody").innerHTML = `
-    <div class="ag-hero">${hero}</div>
-    <div class="ag-grid">
-      <div><div class="ag-sect">Réseaux sociaux</div>${social}<div class="ag-sect">Publicité</div>${ads}</div>
-      <div><div class="ag-sect">Site web</div><div style="display:flex;align-items:center;gap:18px;padding:10px 0 4px;">${sparkSvg(c.web.s, 190, 44)}<div style="font-size:11.5px;color:var(--dim);">${c.web.conv}</div></div>${top}<div class="ag-sect">Positions SEO</div>${seo}<div class="ag-sect">Notes campagnes & SEO</div>${notes}</div>
-    </div>`;
+const AR_NETS = {
+  instagram: { ic: "📷", label: "Instagram" }, facebook: { ic: "👥", label: "Facebook" },
+  tiktok: { ic: "🎵", label: "TikTok" }, linkedin: { ic: "💼", label: "LinkedIn" },
+  x: { ic: "𝕏", label: "X" }, youtube: { ic: "▶️", label: "YouTube" },
+  meta_ads: { ic: "📣", label: "Meta Ads" }, google_ads: { ic: "🔎", label: "Google Ads" }, web: { ic: "🌐", label: "Web" },
+};
+const arNet = (n) => AR_NETS[n] || { ic: "·", label: n };
+const arAgo = (h) => h < 1 ? "à l'instant" : h < 24 ? `il y a ${h} h` : `il y a ${Math.round(h / 24)} j`;
+const AR_DOW = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
+function arInvalidate(brandId) { Object.keys(arCache).forEach((k) => (!brandId || k.startsWith(brandId + ":")) && delete arCache[k]); }
+async function arGet(key, fn) { if (arCache[key] === undefined) arCache[key] = await fn(); return arCache[key]; }
+
+async function renderArgos() {
+  if (!arState) { const r = await window.olympus.argosState(); if (r.ok) arState = r; }
+  if (!arState) { $("arStage").innerHTML = '<div class="ga-note">Argos indisponible.</div>'; return; }
+  if (!arBrand && arState.brands.length) arBrand = arState.brands[0].id;
+  arSideRender();
+  arRenderView();
 }
-$("agClients").onclick = (e) => { const s = e.target.closest("[data-cl]"); if (s) { agCur = s.dataset.cl; renderArgos(); } };
+function arSideRender() {
+  const brands = (arState && arState.brands) || [];
+  $("arBrands").innerHTML = brands.map((b) => `
+    <div class="ar-brand${arBrand === b.id ? " active" : ""}" data-brand="${b.id}">
+      <div class="bv">${initialsOf(b.name)}</div>
+      <div style="flex:1;min-width:0;"><div class="bn">${escapeHtml(b.name)}</div><div class="bs">${escapeHtml(b.secteur || "")}</div></div>
+      <button class="ar-bedit" data-editbrand="${b.id}" title="Modifier la marque">✎</button>
+    </div>`).join("") || '<div class="bs" style="padding:4px 2px;color:var(--dim);">Aucune marque — crée la première.</div>';
+  $("arViews").innerHTML = AR_VIEWS.map((v) => `
+    <div class="ir-folder${arView === v.id ? " active" : ""}" data-arview="${v.id}"><span class="fic">${v.ic}</span><span class="lname">${v.label}</span></div>`).join("");
+  document.querySelectorAll("#arBrands .ar-brand").forEach((el) => el.onclick = (e) => { if (e.target.closest("[data-editbrand]")) return; arBrand = el.dataset.brand; arSideRender(); arRenderView(); });
+  document.querySelectorAll("#arBrands [data-editbrand]").forEach((el) => el.onclick = (e) => { e.stopPropagation(); const b = brands.find((x) => x.id === el.dataset.editbrand); if (b) arBrandModal(b); });
+  document.querySelectorAll("#arViews .ir-folder").forEach((el) => el.onclick = () => { arView = el.dataset.arview; arSideRender(); arRenderView(); });
+}
+function arBrandOf() { return ((arState && arState.brands) || []).find((b) => b.id === arBrand) || null; }
+function arConnected() { return Object.values((arState && arState.connections) || {}).some((c) => c.status === "connected"); }
+function arDemoBadge() {
+  if (arConnected()) return "";
+  return `<span class="ar-demo">◌ Données de démonstration — <b data-goconn>connecter les comptes</b></span>`;
+}
+function arHead(title, sub, extraHtml) {
+  return `<div class="ga-head">
+    <div class="ga-head-t"><h2>${escapeHtml(title)}</h2><span>${escapeHtml(sub || "")}</span></div>
+    <div class="ga-controls">${extraHtml || ""}${arDemoBadge()}</div>
+  </div>`;
+}
+function arWireCommon(box) {
+  const g = box.querySelector("[data-goconn]");
+  if (g) g.onclick = () => { arView = "connexions"; arSideRender(); arRenderView(); };
+}
+async function arRenderView() {
+  const box = $("arStage");
+  const b = arBrandOf();
+  if (arView !== "connexions" && !b) { box.innerHTML = `<div class="ga-note">Crée une marque pour commencer (bouton en bas de la colonne).</div>`; return; }
+  box.innerHTML = `<div class="ga-note">Chargement…</div>`;
+  try {
+    if (arView === "apercu") await arViewApercu(box, b);
+    else if (arView === "publication") await arViewPublication(box, b);
+    else if (arView === "inbox") await arViewInbox(box, b);
+    else if (arView === "ecoute") await arViewEcoute(box, b);
+    else if (arView === "ads") await arViewAds(box, b);
+    else if (arView === "concurrence") await arViewConcurrence(box, b);
+    else if (arView === "rapport") await arViewRapport(box, b);
+    else if (arView === "connexions") await arViewConnexions(box);
+    mArrive(box);
+  } catch (e) { box.innerHTML = `<div class="ga-note">Erreur : ${escapeHtml(e.message || String(e))}</div>`; }
+  arWireCommon(box);
+}
+
+// ── Aperçu : la console de la marque ──
+async function arViewApercu(box, b) {
+  const r = await arGet(b.id + ":ov:" + arPeriod, () => window.olympus.argosOverview(b.id, arPeriod));
+  if (!r.ok) { box.innerHTML = `<div class="ga-note">${escapeHtml(r.error)}</div>`; return; }
+  const d = r.data;
+  const per = `<div class="ga-period">${[[7, "7 j"], [30, "30 j"], [90, "90 j"]].map(([n, l]) => `<button class="ga-per${arPeriod === n ? " on" : ""}" data-per="${n}">${l}</button>`).join("")}</div>`;
+  let html = arHead(b.name, `${arPeriod} derniers jours · ${Object.keys(b.networks || {}).length} réseau(x)`, per);
+  if (d.alerts?.length) html += `<div class="ar-alerts">${d.alerts.map((a) => `<div class="ar-alert${a.type === "warn" ? " warn" : ""}"><span class="ai">${a.type === "warn" ? "△" : "◈"}</span><span>${escapeHtml(a.txt)}${a.type === "opportunity" ? ' <b style="cursor:pointer;" data-seize>Créer le post →</b>' : ""}</span></div>`).join("")}</div>`;
+  html += `<div class="ga-cards">
+    ${pgScore("Abonnés cumulés", pgFmtN(d.followers))}
+    ${pgScore("Portée", pgFmtN(d.reach), "", `sur ${arPeriod} jours`)}
+    ${pgScore("Engagement moyen", d.engagement + " %")}
+    ${pgScore("Santé de présence", `${d.health}<span class="ga-unit">/100</span>`)}
+  </div>`;
+  html += pgPanel("Portée par jour", pgAreaChart((d.byDay || []).map((x) => ({ label: pgDayLabel(x.date), value: x.reach }))));
+  html += `<div class="ga-breaks">`;
+  html += pgPanel("Abonnés par réseau", pgDonut(d.perNet.map((n) => ({ label: arNet(n.network).label, value: n.followers, icon: arNet(n.network).ic })), { centerLabel: "abonnés" }));
+  html += pgPanel("Engagement par réseau", pgBreak(d.perNet.map((n) => ({ label: arNet(n.network).label, value: n.engagement, icon: arNet(n.network).ic })), { color: "#8fd6a6" }));
+  html += `</div>`;
+  html += pgPanel("Posts les plus performants", d.topPosts.map((p) => `
+    <div class="ga-tr"><span class="ga-tl">${arNet(p.network).ic} ${escapeHtml(p.title)}</span>
+      <span class="ga-tbar"><span class="ga-tbar-f" style="width:${Math.round(p.reach / (d.topPosts[0].reach || 1) * 100)}%"></span></span>
+      <span class="ga-tv">${pgFmtN(p.reach)}<span class="ga-tpct">${p.eng} % eng.</span></span>
+      <button class="ga-ic" data-recycle="${escapeHtml(p.title)}" title="Recycler ce post">↻</button>
+    </div>`).join(""));
+  box.innerHTML = html;
+  box.querySelectorAll(".ga-per").forEach((bt) => bt.onclick = () => { arPeriod = +bt.dataset.per; arRenderView(); });
+  box.querySelectorAll("[data-recycle]").forEach((bt) => bt.onclick = () => arComposer(b, { text: bt.dataset.recycle + " — (recyclé, à adapter)" }));
+  const sz = box.querySelector("[data-seize]"); if (sz) sz.onclick = () => arComposer(b, { text: "Idée : capitaliser sur la tendance vidéo courte de la semaine.\n\n[brouillon proposé par Argos — à retravailler]" });
+}
+
+// ── Publication : semaine + composer ──
+async function arViewPublication(box, b) {
+  const [pr, bt] = await Promise.all([
+    window.olympus.argosPosts(b.id),
+    arGet(b.id + ":times", () => window.olympus.argosBestTimes(b.id)),
+  ]);
+  const posts = pr.ok ? pr.posts : [];
+  const monday = new Date(); monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7) + arWeekOff * 7);
+  const days = Array.from({ length: 7 }, (_, i) => { const d = new Date(monday); d.setDate(d.getDate() + i); return d; });
+  const todayIso = todayIsoNow();
+  const fmtRange = `${days[0].getDate()} ${MONTHS[days[0].getMonth()].slice(0, 4)} — ${days[6].getDate()} ${MONTHS[days[6].getMonth()].slice(0, 4)}`;
+  const best = (bt.ok && bt.slots || []).slice(0, 3).map((s) => `${AR_DOW[(s.wd + 0) % 7]} ${s.hr} h`).join(" · ");
+  let html = arHead("Publication", "calendrier éditorial multi-réseaux", `<button class="cal-btn primary" id="arNewPost">＋ Nouveau post</button>`);
+  html += `<div class="ar-weeknav">
+    <button class="ga-ic" id="arWkPrev">‹</button><span class="wl">${fmtRange}</span><button class="ga-ic" id="arWkNext">›</button>
+    <span style="font-size:11.5px;color:var(--dim);margin-left:auto;">Meilleurs créneaux : <b style="color:var(--ok);">${best || "—"}</b></span>
+  </div>`;
+  html += `<div class="ar-week">` + days.map((d) => {
+    const iso = isoD(d.getFullYear(), d.getMonth(), d.getDate());
+    const dayPosts = posts.filter((p) => p.date === iso);
+    return `<div class="ar-wday${iso === todayIso ? " today" : ""}">
+      <div class="wd">${AR_DOW[(d.getDay() + 6) % 7]} ${d.getDate()}</div>
+      ${dayPosts.map((p) => `<div class="ar-post${p.status === "draft" ? " draft" : ""}" data-post="${p.id}">${escapeHtml((p.text || "").slice(0, 44))}${(p.text || "").length > 44 ? "…" : ""}<div class="pm">${p.time || ""} ${(p.networks || []).map((n) => arNet(n).ic).join(" ")}${p.status === "draft" ? " · brouillon" : ""}</div></div>`).join("")}
+      <button class="add" data-addday="${iso}" title="Programmer ce jour">＋</button>
+    </div>`;
+  }).join("") + `</div>`;
+  const upcoming = posts.filter((p) => p.date >= todayIso);
+  html += `<div class="ga-subhead">File d'attente <span>· ${upcoming.length} programmé(s)</span></div>`;
+  html += upcoming.length
+    ? pgPanel("À publier", upcoming.slice(0, 12).map((p) => `<div class="ga-tr"><span class="ga-tl">${(p.networks || []).map((n) => arNet(n).ic).join(" ")} ${escapeHtml((p.text || "").slice(0, 60))}</span><span class="ga-tv">${p.date.slice(8, 10)}/${p.date.slice(5, 7)}${p.time ? " · " + p.time : ""}</span><button class="ga-ic" data-post="${p.id}" title="Modifier">✎</button><button class="ga-ic" data-delpost="${p.id}" title="Supprimer">✕</button></div>`).join(""))
+    : `<div class="ga-note">Rien en file d'attente. Les posts programmés partiront automatiquement une fois les comptes connectés — en attendant, ils restent planifiés ici.</div>`;
+  box.innerHTML = html;
+  $("arNewPost").onclick = () => arComposer(b);
+  $("arWkPrev").onclick = () => { arWeekOff--; arRenderView(); };
+  $("arWkNext").onclick = () => { arWeekOff++; arRenderView(); };
+  box.querySelectorAll("[data-addday]").forEach((el) => el.onclick = () => arComposer(b, { date: el.dataset.addday }));
+  box.querySelectorAll("[data-post]").forEach((el) => el.onclick = () => { const p = posts.find((x) => x.id === el.dataset.post); if (p) arComposer(b, p); });
+  box.querySelectorAll("[data-delpost]").forEach((el) => el.onclick = async (ev) => { ev.stopPropagation(); await window.olympus.argosPostDelete(el.dataset.delpost); arRenderView(); });
+}
+// Composer : réseaux, texte, date/heure, meilleur créneau, aperçu par réseau
+async function arComposer(b, post) {
+  post = post || {};
+  const bt = await arGet(b.id + ":times", () => window.olympus.argosBestTimes(b.id));
+  const top = (bt.ok && bt.slots || [])[0];
+  const nets = Object.keys(b.networks || {});
+  const sel = new Set(post.networks || nets);
+  let pvNet = nets[0] || "instagram";
+  const ov = document.createElement("div"); ov.className = "modal-overlay show";
+  const netBtns = () => nets.map((n) => `<button class="ar-netpick${sel.has(n) ? " on" : ""}" data-net="${n}">${arNet(n).ic} ${arNet(n).label}</button>`).join("");
+  const LIMITS = { x: 280, instagram: 2200, facebook: 5000, linkedin: 3000, tiktok: 2200, youtube: 5000 };
+  ov.innerHTML = `<div class="modal-panel" style="width:860px;max-width:96vw;">
+    <div class="modal-head"><h2>${post.id ? "Modifier le post" : "Nouveau post"} — ${escapeHtml(b.name)}</h2><button class="modal-x" data-x>✕</button></div>
+    <div class="modal-body">
+      <div class="ar-comp">
+        <div>
+          <div class="mq-label">Réseaux</div>
+          <div class="ar-nets" id="arCompNets">${netBtns()}</div>
+          <div class="mq-label" style="margin-top:14px;">Message</div>
+          <textarea class="mood-in mood-ta" id="arCompText" style="min-height:130px;" placeholder="Écris le post… (l'aperçu à droite suit)">${escapeHtml(post.text || "")}</textarea>
+          <div id="arCompCount" style="font-size:11px;color:var(--dim);text-align:right;margin-top:3px;"></div>
+          <div class="auth-row2" style="margin-top:8px;">
+            <div class="auth-field" style="flex:1"><label>Date</label><input class="auth-input" id="arCompDate" type="date" value="${post.date || todayIsoNow()}"></div>
+            <div class="auth-field" style="flex:1"><label>Heure</label><input class="auth-input" id="arCompTime" type="time" value="${post.time || ""}"></div>
+          </div>
+          <div class="ar-besttime">Meilleur créneau pour ${escapeHtml(b.name)} : <b id="arCompBest">${top ? `${AR_DOW[top.wd]} ${top.hr}:00` : "—"}</b> — clic pour l'appliquer</div>
+        </div>
+        <div>
+          <div class="mq-label">Aperçu <span id="arPvSwitch" style="text-transform:none;letter-spacing:0;">${nets.map((n) => `<b data-pv="${n}" style="cursor:pointer;margin-left:7px;${n === pvNet ? "" : "opacity:.4;"}">${arNet(n).ic}</b>`).join("")}</span></div>
+          <div class="ar-preview" id="arPvBox"></div>
+        </div>
+      </div>
+      <div class="pg-actrow" style="margin-top:16px;">
+        <button class="cal-btn primary" id="arCompSave">${post.id ? "Enregistrer" : "Programmer"}</button>
+        <button class="btn sec" id="arCompDraft">Garder en brouillon</button>
+        <span class="msg" id="arCompMsg"></span>
+      </div>
+    </div>
+  </div>`;
+  document.body.appendChild(ov);
+  const close = () => ov.remove();
+  ov.querySelector("[data-x]").onclick = close;
+  ov.onclick = (e) => { if (e.target === ov) close(); };
+  const paintPv = () => {
+    const t = ov.querySelector("#arCompText").value;
+    const lim = LIMITS[pvNet] || 2200;
+    const cut = pvNet === "x" ? 280 : 125;
+    const shown = t.length > cut ? escapeHtml(t.slice(0, cut)) + `<span class="more"> … ${pvNet === "x" ? "" : "Plus"}</span>` : escapeHtml(t) || '<span style="color:var(--dim);">Le texte du post s\'affichera ici…</span>';
+    ov.querySelector("#arPvBox").innerHTML = `
+      <div class="ar-pv-head"><div class="ar-pv-av">${initialsOf(b.name)}</div><div><div class="ar-pv-n">${escapeHtml(b.networks[pvNet] || b.name)}</div><div class="ar-pv-s">${arNet(pvNet).label} · aperçu</div></div></div>
+      ${pvNet !== "x" && pvNet !== "linkedin" ? '<div class="ar-pv-media">🖼</div>' : ""}
+      <div class="ar-pv-txt">${shown}</div>`;
+    ov.querySelector("#arCompCount").textContent = `${t.length} car.` + (t.length > lim ? ` — dépasse la limite ${arNet(pvNet).label} (${lim})` : "");
+    ov.querySelector("#arCompCount").style.color = t.length > lim ? "#e0868f" : "var(--dim)";
+  };
+  ov.querySelector("#arCompText").oninput = paintPv;
+  ov.querySelectorAll("#arPvSwitch [data-pv]").forEach((el) => el.onclick = () => { pvNet = el.dataset.pv; ov.querySelectorAll("#arPvSwitch [data-pv]").forEach((x) => x.style.opacity = x === el ? "1" : ".4"); paintPv(); });
+  ov.querySelector("#arCompNets").onclick = (e) => { const bn = e.target.closest("[data-net]"); if (!bn) return; sel.has(bn.dataset.net) ? sel.delete(bn.dataset.net) : sel.add(bn.dataset.net); bn.classList.toggle("on"); };
+  const bestEl = ov.querySelector("#arCompBest");
+  if (top) bestEl.onclick = () => {
+    const d = new Date(); const target = (top.wd + 1) % 7; // wd: Lun=0 → JS Lun=1
+    let add = (target - d.getDay() + 7) % 7; if (add === 0 && d.getHours() >= top.hr) add = 7;
+    d.setDate(d.getDate() + add);
+    ov.querySelector("#arCompDate").value = isoD(d.getFullYear(), d.getMonth(), d.getDate());
+    ov.querySelector("#arCompTime").value = String(top.hr).padStart(2, "0") + ":00";
+  };
+  const save = async (status) => {
+    const text = ov.querySelector("#arCompText").value.trim();
+    if (!text) { const m = ov.querySelector("#arCompMsg"); m.className = "msg err"; m.textContent = "Écris le message d'abord."; return; }
+    await window.olympus.argosPostSave({ id: post.id, brandId: b.id, text, networks: [...sel], date: ov.querySelector("#arCompDate").value, time: ov.querySelector("#arCompTime").value || null, status });
+    close(); if (arView === "publication") arRenderView();
+  };
+  ov.querySelector("#arCompSave").onclick = () => save("scheduled");
+  ov.querySelector("#arCompDraft").onclick = () => save("draft");
+  paintPv();
+}
+
+// ── Inbox unifiée ──
+let arConvSel = null;
+async function arViewInbox(box, b) {
+  const r = await arGet(b.id + ":inbox", () => window.olympus.argosInbox(b.id));
+  if (!r.ok) { box.innerHTML = `<div class="ga-note">${escapeHtml(r.error)}</div>`; return; }
+  const convs = r.conversations || [];
+  if (!arConvSel || !convs.find((c) => c.id === arConvSel)) arConvSel = convs[0]?.id || null;
+  const cur = convs.find((c) => c.id === arConvSel);
+  const MACROS = ["Merci beaucoup ! 🙏", "On vous répond en DM 👌", "Oui, c'est disponible — le lien est en bio.", "Écris-nous à hello@… on s'en occupe !"];
+  let html = arHead("Inbox", "commentaires et messages privés, tous réseaux");
+  html += `<div class="ar-inbox">
+    <div class="ar-convs">${convs.map((c) => `
+      <div class="ar-conv${c.id === arConvSel ? " active" : ""}" data-conv="${c.id}">
+        <div class="av">${initialsOf(c.from)}<span class="nico">${arNet(c.network).ic}</span></div>
+        <div class="ci"><div class="cn">${escapeHtml(c.from)} <span class="ct">${arAgo(c.hoursAgo)}</span></div><div class="cl">${c.kind === "dm" ? "✉ " : "💬 "}${escapeHtml(c.text)}</div></div>
+        ${c.unread && !(c.replies || []).length ? '<span class="unread"></span>' : ""}
+      </div>`).join("") || '<div class="ga-note" style="margin:10px;">Aucune conversation.</div>'}</div>
+    <div class="ar-thread">${cur ? `
+      <div class="ar-th-head">${arNet(cur.network).ic} ${escapeHtml(cur.from)} <span style="color:var(--dim);font-weight:400;font-size:11px;">· ${cur.kind === "dm" ? "message privé" : "commentaire"} ${arNet(cur.network).label}</span></div>
+      <div class="ar-th-msgs">
+        <div class="ar-bubble them">${escapeHtml(cur.text)}<div class="bt">${arAgo(cur.hoursAgo)}</div></div>
+        ${(cur.replies || []).map((rp) => `<div class="ar-bubble me">${escapeHtml(rp.text)}<div class="bt">${rp.pending ? "sera envoyé à la connexion du compte" : ""}</div></div>`).join("")}
+      </div>
+      <div class="ar-replyrow"><input class="mood-in" id="arReplyIn" placeholder="Répondre à ${escapeHtml(cur.from)}…"><button class="cal-btn primary" id="arReplyBtn">Répondre</button></div>
+      <div class="ar-macros">${MACROS.map((m) => `<button class="mq-chip" data-macro="${escapeHtml(m)}">${escapeHtml(m)}</button>`).join("")}</div>
+    ` : '<div class="ga-note" style="margin:14px;">Sélectionne une conversation.</div>'}</div>
+  </div>`;
+  box.innerHTML = html;
+  box.querySelectorAll("[data-conv]").forEach((el) => el.onclick = () => { arConvSel = el.dataset.conv; arRenderView(); });
+  box.querySelectorAll("[data-macro]").forEach((el) => el.onclick = () => { const i = $("arReplyIn"); i.value = el.dataset.macro; i.focus(); });
+  const rb = $("arReplyBtn");
+  if (rb) rb.onclick = async () => {
+    const v = $("arReplyIn").value.trim(); if (!v || !cur) return;
+    await window.olympus.argosInboxReply(b.id, cur.id, v);
+    delete arCache[b.id + ":inbox"]; arRenderView();
+  };
+  const ri = $("arReplyIn"); if (ri) ri.addEventListener("keydown", (e) => { if (e.key === "Enter") rb.click(); });
+}
+
+// ── Écoute : mots-clés + mentions + sentiment ──
+async function arViewEcoute(box, b) {
+  const r = await arGet(b.id + ":listen", () => window.olympus.argosListening(b.id));
+  if (!r.ok) { box.innerHTML = `<div class="ga-note">${escapeHtml(r.error)}</div>`; return; }
+  const d = r.data; const kws = r.keywords || [];
+  let html = arHead("Écoute", "mentions de la marque et mots-clés surveillés");
+  if (d.spike) html += `<div class="ar-alerts"><div class="ar-alert warn"><span class="ai">△</span><span>Pic de mentions inhabituel détecté sur les dernières 24 h — surveille le sentiment avant qu'un bad buzz ne s'installe.</span></div></div>`;
+  html += `<div class="ga-cards">
+    ${pgScore("Mentions", String(d.mentions.length), "", "7 derniers jours")}
+    ${pgScore("Positives", String(d.sentiment.pos), "", "sentiment")}
+    ${pgScore("Neutres", String(d.sentiment.neu))}
+    ${pgScore("Négatives", String(d.sentiment.neg))}
+  </div>`;
+  html += pgPanel("Mots-clés surveillés", `
+    <div style="display:flex;flex-wrap:wrap;gap:8px;">${kws.map((k, i) => `<span class="ar-kw">${escapeHtml(k)}<button data-delkw="${i}">✕</button></span>`).join("")}
+      <span class="ar-kw" style="border-style:dashed;background:none;"><input id="arKwIn" placeholder="＋ ajouter un mot-clé" style="background:none;border:none;outline:none;color:var(--txt);font-size:12px;width:150px;"></span>
+    </div>`);
+  html += pgPanel("Mentions récentes", (d.mentions || []).map((m) => `
+    <div class="ar-mention">
+      <span class="sdot ${m.sentiment}"></span>
+      <div class="mi"><div class="mt">${escapeHtml(m.text)}</div><div class="mm">${arNet(m.source).ic} ${escapeHtml(m.author)} · ${arAgo(m.hoursAgo)} · portée ~${pgFmtN(m.reach)}</div></div>
+      <button class="btn sec" data-reply-mention style="padding:5px 12px;font-size:11.5px;">Répondre</button>
+    </div>`).join("") || '<div class="dim">Aucune mention sur la période.</div>');
+  box.innerHTML = html;
+  const saveKws = async (list) => { await window.olympus.argosKeywords(b.id, list); arState = null; delete arCache[b.id + ":listen"]; await renderArgos(); };
+  box.querySelectorAll("[data-delkw]").forEach((el) => el.onclick = () => { const l = kws.slice(); l.splice(+el.dataset.delkw, 1); saveKws(l); });
+  const ki = $("arKwIn"); if (ki) ki.addEventListener("keydown", (e) => { if (e.key === "Enter" && ki.value.trim()) saveKws([...kws, ki.value.trim()]); });
+  box.querySelectorAll("[data-reply-mention]").forEach((el) => el.onclick = () => { arView = "inbox"; arSideRender(); arRenderView(); });
+}
+
+// ── Publicité ──
+async function arViewAds(box, b) {
+  const r = await arGet(b.id + ":ads", () => window.olympus.argosAds(b.id));
+  if (!r.ok) { box.innerHTML = `<div class="ga-note">${escapeHtml(r.error)}</div>`; return; }
+  const d = r.data;
+  const eur = (n) => n.toLocaleString("fr-FR") + " €";
+  let html = arHead("Publicité", "campagnes Meta Ads et Google Ads");
+  html += `<div class="ga-cards">
+    ${pgScore("Dépense", eur(d.totals.spend), "", "sur la période")}
+    ${pgScore("Conversions", String(d.totals.conversions))}
+    ${pgScore("ROAS moyen", "×" + d.totals.roas)}
+  </div>`;
+  html += pgPanel("Campagnes", (d.campaigns || []).map((c) => `
+    <div class="ar-camp">
+      <span class="st ${c.status}">${c.status === "active" ? "active" : "terminée"}</span>
+      <div class="cn">
+        <div class="n">${escapeHtml(c.name)}</div>
+        <div class="s">${arNet(c.platform).label} · CPC ${String(c.cpc).replace(".", ",")} € · ${pgFmtN(c.impressions)} impressions · ${pgFmtN(c.clicks)} clics</div>
+        <div class="ar-budget"><i style="width:${Math.min(100, Math.round(c.spend / c.budget * 100))}%"></i></div>
+      </div>
+      <div class="cv"><div class="b">${eur(c.spend)} / ${eur(c.budget)}</div><div class="s">ROAS ×${c.roas} · ${c.conversions} conv.</div></div>
+    </div>`).join(""));
+  box.innerHTML = html;
+}
+
+// ── Concurrence ──
+async function arViewConcurrence(box, b) {
+  const r = await arGet(b.id + ":comp", () => window.olympus.argosCompetitors(b.id));
+  if (!r.ok) { box.innerHTML = `<div class="ga-note">${escapeHtml(r.error)}</div>`; return; }
+  const rows = r.data.rows || [];
+  let html = arHead("Concurrence", "benchmark face aux comptes suivis", `<button class="btn sec" id="arAddComp">＋ Suivre un concurrent</button>`);
+  html += pgPanel("Benchmark", `
+    <div class="ar-comp-row head"><span>Compte</span><span class="v">Abonnés</span><span class="v">Croissance</span><span class="v">Engagement</span><span class="v">Posts/30 j</span></div>
+    ${rows.map((c) => `<div class="ar-comp-row${c.mine ? " mine" : ""}">
+      <span class="n">${escapeHtml(c.name)}${c.mine ? " ◂ vous" : ""}<small>${escapeHtml(c.handle || "")}</small></span>
+      <span class="v">${pgFmtN(c.followers)}</span>
+      <span class="v" style="color:${c.growth >= 0 ? "var(--ok)" : "#e0868f"};">${c.growth >= 0 ? "▲" : "▼"} ${Math.abs(c.growth)} %</span>
+      <span class="v">${String(c.engagement).replace(".", ",")} %</span>
+      <span class="v">${c.posts30}</span>
+    </div>`).join("")}`);
+  const meIdx = rows.findIndex((x) => x.mine);
+  if (meIdx >= 0) html += `<div class="ga-note" style="margin-top:12px;">${escapeHtml(b.name)} est <b>${meIdx + 1}ᵉ sur ${rows.length}</b> en abonnés dans son groupe de veille${meIdx > 0 ? " — l'engagement est le levier le plus rapide pour remonter" : " — position de leader à défendre"}.</div>`;
+  box.innerHTML = html;
+  $("arAddComp").onclick = async () => {
+    const nm = await arMiniInput(box, "Nom du concurrent (ex : Sézane)");
+    if (!nm) return;
+    const hd = await arMiniInput(box, "Son compte principal (ex : @sezane)");
+    const list = [...(b.competitors || []), { name: nm, handle: hd || "" }];
+    await window.olympus.argosCompetitorSave(b.id, list);
+    b.competitors = list; delete arCache[b.id + ":comp"]; arRenderView();
+  };
+}
+// Mini-saisie inline (window.prompt n'existe pas sous Electron)
+function arMiniInput(box, label) {
+  return new Promise((res) => {
+    const ov = document.createElement("div"); ov.className = "modal-overlay show";
+    ov.innerHTML = `<div class="modal-panel" style="width:420px;"><div class="modal-head"><h2 style="font-size:15px;">${escapeHtml(label)}</h2><button class="modal-x" data-x>✕</button></div>
+      <div class="modal-body"><input class="mood-in" id="arMiniIn" autofocus><div class="pg-actrow" style="margin-top:12px;"><button class="cal-btn primary" id="arMiniOk">Valider</button></div></div></div>`;
+    document.body.appendChild(ov);
+    const done = (v) => { ov.remove(); res(v); };
+    ov.querySelector("[data-x]").onclick = () => done(null);
+    ov.onclick = (e) => { if (e.target === ov) done(null); };
+    ov.querySelector("#arMiniOk").onclick = () => done(ov.querySelector("#arMiniIn").value.trim() || null);
+    ov.querySelector("#arMiniIn").addEventListener("keydown", (e) => { if (e.key === "Enter") done(e.target.value.trim() || null); });
+    setTimeout(() => ov.querySelector("#arMiniIn").focus(), 60);
+  });
+}
+
+// ── Rapport : narratif + export PDF ──
+async function arViewRapport(box, b) {
+  const [ov, ads, lst] = await Promise.all([
+    arGet(b.id + ":ov:30", () => window.olympus.argosOverview(b.id, 30)),
+    arGet(b.id + ":ads", () => window.olympus.argosAds(b.id)),
+    arGet(b.id + ":listen", () => window.olympus.argosListening(b.id)),
+  ]);
+  const d = ov.ok ? ov.data : null; const a = ads.ok ? ads.data : null; const l = lst.ok ? lst.data : null;
+  if (!d) { box.innerHTML = `<div class="ga-note">Pas de données.</div>`; return; }
+  const bestNet = d.perNet.slice().sort((x, y) => y.engagement - x.engagement)[0];
+  const lines = [
+    `<b>${pgFmtN(d.reach)}</b> personnes touchées sur 30 jours, pour ${d.published} publication(s) — engagement moyen <b>${d.engagement} %</b>.`,
+    bestNet ? `${arNet(bestNet.network).label} est le réseau le plus engageant (${bestNet.engagement} %) — y concentrer les formats qui performent.` : "",
+    a ? `Publicité : <b>${a.totals.spend.toLocaleString("fr-FR")} €</b> dépensés pour ${a.totals.conversions} conversions (ROAS moyen ×${a.totals.roas}).` : "",
+    l ? `Écoute : ${l.mentions.length} mention(s), dont ${l.sentiment.neg} négative(s)${l.sentiment.neg > 1 ? " — à traiter en priorité dans l'inbox" : ""}.` : "",
+    d.topPosts[0] ? `Le post « ${escapeHtml(d.topPosts[0].title)} » domine (${pgFmtN(d.topPosts[0].reach)} de portée) — un candidat au recyclage.` : "",
+  ].filter(Boolean);
+  let html = arHead("Rapport", "bilan social · 30 derniers jours", `<button class="cal-btn primary" id="arPdf">⤓ Exporter en PDF</button>`);
+  html += `<div class="ga-cards">
+    ${pgScore("Portée", pgFmtN(d.reach))}
+    ${pgScore("Engagement", d.engagement + " %")}
+    ${pgScore("Dépense pub", (a ? a.totals.spend.toLocaleString("fr-FR") : "—") + " €")}
+    ${pgScore("Santé", `${d.health}<span class="ga-unit">/100</span>`)}
+  </div>`;
+  html += pgPanel("Portée par jour", pgAreaChart((d.byDay || []).map((x) => ({ label: pgDayLabel(x.date), value: x.reach }))));
+  html += pgPanel("Analyse", lines.map((x) => `<div class="ga-anz-l">${x}</div>`).join(""));
+  box.innerHTML = html;
+  $("arPdf").onclick = async (e) => {
+    const btn = e.currentTarget; btn.disabled = true; btn.textContent = "Génération…";
+    const r = await window.olympus.pegasusExportPdf(arReportPdfHTML(b, d, a, lines), `argos-${b.id}-${todayIsoNow()}.pdf`);
+    btn.disabled = false; btn.textContent = "⤓ Exporter en PDF";
+    if (!r.ok && r.error !== "Export annulé.") alert("Échec : " + (r.error || ""));
+  };
+}
+function arReportPdfHTML(b, d, a, lines) {
+  const C = { acc: "#7a1b28" };
+  const now = new Date().toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" });
+  const kpi = (v, l) => `<div style="text-align:center;"><div style="font-size:28px;font-weight:800;color:${C.acc};">${v}</div><div style="font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#888;margin-top:3px;">${l}</div></div>`;
+  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><style>
+    *{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1c1c1c;font-size:13px;line-height:1.55;padding:8px 4px}
+    .head{border-bottom:3px solid ${C.acc};padding-bottom:14px;margin-bottom:22px}.brand{color:${C.acc};font-weight:800;letter-spacing:.14em;font-size:12px}
+    h1{font-size:24px;margin:6px 0 3px;font-weight:700}.meta{color:#666;font-size:12px}
+    .kpis{display:flex;gap:34px;justify-content:center;border:1px solid #e6e6e6;border-radius:12px;padding:18px;margin-bottom:18px}
+    .anz p{margin:6px 0;color:#333}b{color:#111}
+    .foot{margin-top:28px;border-top:1px solid #eee;padding-top:12px;color:#999;font-size:11px;text-align:center}
+  </style></head><body>
+    <div class="head"><div class="brand">ORPHIC AGENCY · ARGOS</div><h1>Bilan social — ${escapeHtml(b.name)}</h1><div class="meta">30 derniers jours · édité le ${now}</div></div>
+    <div class="kpis">${kpi(pgFmtN(d.reach), "portée")}${kpi(d.engagement + " %", "engagement")}${kpi(pgFmtN(d.followers), "abonnés")}${a ? kpi("×" + a.totals.roas, "ROAS") : ""}</div>
+    <div class="anz">${lines.map((x) => `<p>${x}</p>`).join("")}</div>
+    <div class="foot">Généré par Argos · Olympus — Orphic Agency, Monaco</div>
+  </body></html>`;
+}
+
+// ── Connexions : plateformes + clés + documentation d'API réelle ──
+async function arViewConnexions(box) {
+  arState = null; const st = await window.olympus.argosState(); if (st.ok) arState = st;
+  const conns = Object.values(arState.connections || {});
+  let html = arHead("Connexions", "les comptes qui alimentent Argos — clés d'app puis OAuth par client");
+  html += `<div class="ga-note" style="margin-bottom:16px;">Chaque plateforme demande d'abord les <b>clés d'application de l'agence</b> (une fois), puis une autorisation par compte client. Les appels d'API sont déjà écrits — Argos passera automatiquement des données de démonstration aux vraies données à la connexion.</div>`;
+  html += `<div class="ar-conns">` + conns.map((c) => `
+    <div class="ar-connc" data-conn="${c.id}">
+      <div class="ch"><span class="ic">${c.icon}</span><span class="n">${c.label}</span>${c.docs ? '<span class="tag" style="font-size:9px;color:var(--ok);border:1px solid color-mix(in srgb,var(--ok) 40%,transparent);border-radius:20px;padding:2px 8px;">API documentée</span>' : ""}</div>
+      <div class="api">${escapeHtml(c.api)}</div>
+      <div class="st ${c.status === "connected" ? "ok" : ""}"><span class="dot"></span>${c.status === "connected" ? "connecté · " + escapeHtml(c.account || "") : (c.hasKeys ? "clés enregistrées — OAuth à venir" : "non connecté")}</div>
+      <div class="act">
+        <button class="btn sec" data-keys="${c.id}" style="padding:6px 14px;font-size:12px;">${c.hasKeys ? "Modifier les clés" : "Renseigner les clés"}</button>
+        <button class="btn sec" data-docs="${c.id}" style="padding:6px 14px;font-size:12px;">Voir l'API</button>
+        ${c.status === "connected" ? `<button class="btn sec" data-disc="${c.id}" style="padding:6px 14px;font-size:12px;">Déconnecter</button>` : ""}
+      </div>
+      <div class="ar-keys" data-keysform="${c.id}" style="display:none;">
+        <input class="mood-in" data-k="app_id" placeholder="App ID / Client ID">
+        <input class="mood-in" data-k="app_secret" placeholder="App Secret / Client Secret" type="password">
+        <div class="pg-actrow"><button class="cal-btn" data-savekeys="${c.id}">Enregistrer</button><span class="msg" data-keymsg="${c.id}"></span></div>
+      </div>
+      <div class="ar-doc" data-docbox="${c.id}" style="display:none;"></div>
+    </div>`).join("") + `</div>`;
+  box.innerHTML = html;
+  box.querySelectorAll("[data-keys]").forEach((el) => el.onclick = () => { const f = box.querySelector(`[data-keysform="${el.dataset.keys}"]`); f.style.display = f.style.display === "none" ? "flex" : "none"; });
+  box.querySelectorAll("[data-savekeys]").forEach((el) => el.onclick = async () => {
+    const id = el.dataset.savekeys; const f = box.querySelector(`[data-keysform="${id}"]`);
+    const keys = {}; f.querySelectorAll("[data-k]").forEach((i) => { if (i.value.trim()) keys[i.dataset.k] = i.value.trim(); });
+    const r = await window.olympus.argosConnSaveKeys(id, keys);
+    const m = box.querySelector(`[data-keymsg="${id}"]`);
+    m.className = "msg " + (r.ok ? "ok" : "err");
+    m.textContent = r.ok ? "Clés chiffrées et enregistrées — tu peux maintenant connecter un compte." : (r.error || "Échec de l'enregistrement.");
+    const s = await window.olympus.argosState(); if (s.ok) arState = s; // recharge sans casser la sidebar
+    arSideRender();
+  });
+  box.querySelectorAll("[data-disc]").forEach((el) => el.onclick = async () => { await window.olympus.argosConnDisconnect(el.dataset.disc); arState = null; await renderArgos(); });
+  box.querySelectorAll("[data-docs]").forEach((el) => el.onclick = async () => {
+    const id = el.dataset.docs; const db = box.querySelector(`[data-docbox="${id}"]`);
+    if (db.style.display !== "none") { db.style.display = "none"; return; }
+    db.style.display = "block"; db.innerHTML = "Lecture de la documentation…";
+    const r = await window.olympus.argosApiDocs(id);
+    if (!r.spec) { db.innerHTML = "Documentation à générer."; return; }
+    const s = r.spec;
+    db.innerHTML = `<div><b>${escapeHtml(s.api_name || "")}</b> ${s.api_version ? "· " + escapeHtml(String(s.api_version).slice(0, 60)) : ""}</div>
+      ${s.oauth ? `<div class="ep"><b>OAuth</b> — scopes : ${(s.oauth.scopes || []).slice(0, 8).map((x) => `<code>${escapeHtml(x.scope)}</code>`).join(" ")}</div>` : ""}
+      ${(s.endpoints || []).slice(0, 8).map((e) => `<div class="ep"><b>${escapeHtml(e.purpose || e.id).slice(0, 70)}</b><br><code>${escapeHtml(e.method)} ${escapeHtml(e.url_template)}</code></div>`).join("")}
+      ${(s.endpoints || []).length > 8 ? `<div class="dim">+ ${(s.endpoints || []).length - 8} autres endpoints documentés</div>` : ""}`;
+  });
+}
+
+// ── Nouvelle marque ──
+function arBrandModal(brand) {
+  brand = brand || {};
+  const ov = document.createElement("div"); ov.className = "modal-overlay show";
+  const nets = ["instagram", "facebook", "tiktok", "linkedin", "x", "youtube"];
+  ov.innerHTML = `<div class="modal-panel" style="width:520px;">
+    <div class="modal-head"><h2>${brand.id ? "Modifier la marque" : "Nouvelle marque"}</h2><button class="modal-x" data-x>✕</button></div>
+    <div class="modal-body">
+      <div class="auth-field"><label>Nom</label><input class="auth-input" id="arBrName" value="${escapeHtml(brand.name || "")}" placeholder="Nom du client / de la marque"></div>
+      <div class="auth-field"><label>Secteur</label><input class="auth-input" id="arBrSect" value="${escapeHtml(brand.secteur || "")}" placeholder="mode, hôtellerie, restaurant…"></div>
+      <div class="mq-label" style="margin-top:6px;">Comptes (laisser vide si absent du réseau)</div>
+      ${nets.map((n) => `<div class="auth-field" style="margin-top:6px;"><label>${arNet(n).ic} ${arNet(n).label}</label><input class="auth-input" data-brnet="${n}" value="${escapeHtml((brand.networks || {})[n] || "")}" placeholder="@compte"></div>`).join("")}
+      <div class="pg-actrow" style="margin-top:14px;">
+        <button class="cal-btn primary" id="arBrSave">${brand.id ? "Enregistrer" : "Créer la marque"}</button>
+        ${brand.id ? '<button class="btn sec" id="arBrDel" style="color:#e0868f;">Supprimer</button>' : ""}
+      </div>
+    </div>
+  </div>`;
+  document.body.appendChild(ov);
+  const close = () => ov.remove();
+  ov.querySelector("[data-x]").onclick = close;
+  ov.onclick = (e) => { if (e.target === ov) close(); };
+  ov.querySelector("#arBrSave").onclick = async () => {
+    const name = ov.querySelector("#arBrName").value.trim();
+    if (!name) return;
+    const networks = {};
+    ov.querySelectorAll("[data-brnet]").forEach((i) => { if (i.value.trim()) networks[i.dataset.brnet] = i.value.trim(); });
+    const r = await window.olympus.argosBrandSave({ id: brand.id, name, secteur: ov.querySelector("#arBrSect").value.trim(), networks });
+    arState = null; if (r.ok && r.brand) arBrand = r.brand.id; arInvalidate();
+    close(); renderArgos();
+  };
+  const del = ov.querySelector("#arBrDel");
+  if (del) del.onclick = async () => {
+    if (!confirm(`Supprimer « ${brand.name} » et ses posts programmés ?`)) return;
+    await window.olympus.argosBrandDelete(brand.id);
+    arState = null; arBrand = null; arInvalidate(); close(); renderArgos();
+  };
+}
+$("arNewBrand").onclick = () => arBrandModal();
 document.querySelector('.nav-item[data-page="argos"]').addEventListener("click", renderArgos);
 
 // ══════════ ATLAS (drive — démo) ══════════
