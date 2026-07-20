@@ -441,17 +441,19 @@ const pgArboId = () => "n" + Math.random().toString(36).slice(2, 8);
 const AB_COLORS = ["#e8c268", "#8fd6a6", "#7fb2e8", "#e0868f", "#c9a2e8", "#8fd6cf"];
 let pgAbLink = null;                          // {p, s} : section en cours de câblage
 const pgAbSel = new Set();                    // maj+clic : sélection multiple de nodes
+// Géométrie des colonnes (partagée entre le layout auto et le changement de niveau)
+const AB_X0 = 70, AB_Y0 = 70, AB_COLX = 340, AB_GAP = 26;
+const abNodeH = (n) => 64 + (n.wp_id ? 27 : 0) + (n.sections.length ? 15 + n.sections.length * 23 : 0);
 
 // Rangement par NIVEAUX en colonnes : home = niveau 1 (à gauche), les pages
 // qu'elle atteint = niveau 2 (colonne suivante), etc. Header/Footer = artefacts
 // posés au-dessus / en-dessous de la home. `force` réorganise tout.
 function pgAbLayout(nodes, force) {
   if (force) nodes.forEach((n) => { n.x = null; n.y = null; });
-  if (!nodes.some((n) => n.x == null)) return false;
   const pages = nodes.filter((n) => !n.artefact);
   const artefacts = nodes.filter((n) => n.artefact);
   const byId = new Map(nodes.map((n) => [n.id, n]));
-  const H = (n) => 64 + (n.wp_id ? 27 : 0) + (n.sections.length ? 15 + n.sections.length * 23 : 0);
+  const H = abNodeH;
   // Niveaux : LA HIÉRARCHIE DU MENU PRIME. Phase 1 (menu) : Header/Footer → niveau 2,
   // sections marquées menu → niveau parent + 1. Phase 2 (contenu) : les pages restantes
   // héritent du BFS sur les liens de contenu — un raccourci de contenu ne remonte
@@ -506,15 +508,22 @@ function pgAbLayout(nodes, force) {
   for (const [id, v] of level) if (!terminal.has(id)) maxL = Math.max(maxL, v);
   for (const id of terminal) level.set(id, maxL + 1);
   for (const n of pages) if (!level.has(n.id)) level.set(n.id, maxL + (terminal.size ? 2 : 1));
+  // Un niveau fixé À LA MAIN (p.level) prime sur le calcul automatique.
+  for (const n of pages) if (Number.isFinite(n.level)) level.set(n.id, n.level);
+  // Niveau résolu, exposé pour l'affichage du badge (recalculé à chaque rendu).
+  for (const n of nodes) n._lvl = n.artefact ? 1 : Math.max(2, level.get(n.id) || 2);
+  if (home) home._lvl = 1;
+  // Positions : ne (re)calculées que si au moins un node n'en a pas (ou force).
+  if (!nodes.some((n) => n.x == null)) return false;
   // Colonnes : niveau 1 = [Header, home, Footer] empilés ; niveaux suivants à droite
-  const X0 = 70, Y0 = 70, COLX = 340, GAP = 26;
+  const X0 = AB_X0, Y0 = AB_Y0, COLX = AB_COLX, GAP = AB_GAP;
   const col1 = [artefacts.find((a) => a.artefact === "header"), home, artefacts.find((a) => a.artefact === "footer")].filter(Boolean);
   let y = Y0;
   for (const n of col1) { n.x = X0; n.y = y; y += H(n) + GAP; }
   const cols = new Map();
   for (const n of pages) {
     if (n === home) continue;
-    const l = Math.max(2, level.get(n.id));
+    const l = n._lvl;
     if (!cols.has(l)) cols.set(l, []);
     cols.get(l).push(n);
   }
@@ -523,6 +532,22 @@ function pgAbLayout(nodes, force) {
     for (const n of list) { n.x = X0 + (l - 1) * COLX; n.y = cy; cy += H(n) + GAP; }
   }
   return true;
+}
+
+// Pose un node en bas de la colonne du niveau `lvl`, sans déranger les autres.
+function pgAbPlace(p, lvl, pages) {
+  const x = AB_X0 + (lvl - 1) * AB_COLX;
+  let y = AB_Y0;
+  for (const n of pages) {
+    if (n === p || n.artefact) continue;
+    if (Math.abs((n.x || 0) - x) < 4) y = Math.max(y, (n.y || 0) + abNodeH(n) + AB_GAP);
+  }
+  p.x = x; p.y = y;
+}
+// Fixe le niveau d'un node à la main (override persisté).
+function pgAbSetLevel(p, lvl, pages) {
+  p.level = Math.max(2, Math.min(9, lvl));
+  pgAbPlace(p, p.level, pages);
 }
 
 // Fusionne un scan du site avec l'arborescence existante : positions/accueil/pages
@@ -540,6 +565,7 @@ function pgAbMerge(cur, scanned) {
     if (old) {
       if (old.x != null) { np.x = old.x; np.y = old.y; }
       if (hadHome) np.home = !!old.home;
+      if (Number.isFinite(old.level)) np.level = old.level; // niveau fixé à la main conservé
       if (old.titre && old.titre !== np.titre && !old.wp_id) np.titre = old.titre;
     }
     for (const sc of np.sections) sc.cible = idMap.get(sc.cible) || "";
@@ -632,7 +658,14 @@ async function pgArboRender(s) {
               <button class="ab-mini" data-act="addsec" title="Ajouter une section">＋</button>
               <button class="ab-mini" data-act="delpage" title="Supprimer la page">✕</button>
             </div>
-            ${p.wp_id ? `<div style="margin-top:4px;"><span class="ab-badge dim">WP #${p.wp_id}</span></div>` : ""}
+            ${p.artefact ? "" : `<div class="ab-meta">
+              ${p.wp_id ? `<span class="ab-badge dim">WP #${p.wp_id}</span>` : ""}
+              ${p.home ? '<span class="ab-badge dim">niveau 1</span>' : `<span class="ab-lvl${p.level != null ? " fixed" : ""}" title="${p.level != null ? "Niveau fixé à la main — clic droit pour revenir à l'auto" : "Niveau calculé — utilise ‹ › pour le fixer"}">
+                <button class="ab-lvlb" data-act="lvldn" title="Reculer d'une colonne">‹</button>
+                <b data-lvl>N${p._lvl}</b>
+                <button class="ab-lvlb" data-act="lvlup" title="Avancer d'une colonne">›</button>
+              </span>`}
+            </div>`}
             ${p.sections.length ? `<div class="ab-secs">${p.sections.map((sec) => `
               <div class="ab-sec" data-s="${sec.id}">
                 <span class="ab-secdot" style="background:${sec.color};box-shadow:0 0 6px ${sec.color}55;"></span>
@@ -786,6 +819,23 @@ async function pgArboRender(s) {
         pgArboSave(s.key); pgArboRender(s);
       };
     });
+    // Steppers de niveau : ‹ recule, › avance ; clic droit = retour au niveau auto
+    ne.querySelectorAll(".ab-meta [data-act]").forEach((b) => {
+      b.onclick = (e) => {
+        e.stopPropagation();
+        pgAbSetLevel(p, (Number.isFinite(p.level) ? p.level : p._lvl) + (b.dataset.act === "lvlup" ? 1 : -1), pages);
+        pgArboSave(s.key); pgArboRender(s);
+      };
+    });
+    const lvlEl = ne.querySelector(".ab-lvl");
+    if (lvlEl) lvlEl.oncontextmenu = (e) => {
+      e.preventDefault(); e.stopPropagation();
+      if (p.level == null) return;
+      delete p.level;
+      pgAbLayout(pages);        // recalcule _lvl (auto) sans repositionner les autres
+      pgAbPlace(p, p._lvl, pages);
+      pgArboSave(s.key); pgArboRender(s);
+    };
     ne.querySelectorAll(".ab-sec").forEach((se) => {
       const sec = p.sections.find((x) => x.id === se.dataset.s);
       const secTitle = se.querySelector('[data-f="sec-titre"]');
