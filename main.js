@@ -1235,6 +1235,8 @@ ipcMain.handle("pegasus:arboScan", async (_e, key, homeWp) => {
       parseMenu(header, url);
       for (const l of linksIn(footer, url, selfWp)) if (!footerLinks.has(l.wp)) footerLinks.set(l.wp, l.label);
       if (pageNode) {
+        const contentLinks = linksIn(content, url, selfWp);
+        pageNode._all = contentLinks;
         const secs = topSections(content);
         if (secs.length) {
           // Les vraies sections de la page (avec ou sans destination)
@@ -1244,7 +1246,7 @@ ipcMain.handle("pegasus:arboScan", async (_e, key, homeWp) => {
           });
         } else {
           // Markup sans <section> (Elementor conteneurs…) → repli sur les liens
-          pageNode._links = linksIn(content, url, selfWp);
+          pageNode._links = contentLinks;
         }
       }
     };
@@ -1258,26 +1260,28 @@ ipcMain.handle("pegasus:arboScan", async (_e, key, homeWp) => {
       homePage.home = true;
       await scanPage(sites2[key].base_url + "/", homePage, homePage.wp_id);
     }
-    // Un lien présent dans le contenu de ≥ 80 % des pages scannées = navigation
-    // globale (menu dont le balisage n'est ni <header> ni <nav>) → artefact Header.
-    const scanned = pages.filter((p) => p._links && p._links.length);
+    // Un lien présent dans le contenu de ≥ 70 % des pages scannées = navigation
+    // globale (menu mobile ou autre balisage hors <header>/<nav>) → artefact Header.
+    // La fréquence se compte sur TOUTES les pages scannées (_all), pas seulement
+    // celles en repli liens — sinon le menu répété passe sous le seuil.
+    const scanned = pages.filter((p) => p._all && p._all.length);
     if (scanned.length >= 4) {
       const freq = new Map();
-      for (const p of scanned) for (const l of p._links) freq.set(l.wp, (freq.get(l.wp) || 0) + 1);
+      for (const p of scanned) for (const l of p._all) freq.set(l.wp, (freq.get(l.wp) || 0) + 1);
       for (const [wp, n] of freq) {
         if (n / scanned.length >= 0.7 && !footerLinks.has(wp)) {
           if (!headerLinks.has(wp)) {
-            const any = scanned.flatMap((p) => p._links).find((l) => l.wp === wp);
+            const any = scanned.flatMap((p) => p._all).find((l) => l.wp === wp);
             headerLinks.set(wp, any ? any.label : "Lien");
           }
-          for (const p of scanned) p._links = p._links.filter((l) => l.wp !== wp);
+          for (const p of scanned) { if (p._links) p._links = p._links.filter((l) => l.wp !== wp); }
         }
       }
     }
     for (const p of pages) {
       for (const sc of p._secs || []) p.sections.push({ id: mkId(), titre: sc.titre, cible: sc.cibleWp ? idByWp.get(sc.cibleWp) : "", color: nextColor() });
       for (const l of p._links || []) p.sections.push({ id: mkId(), titre: l.label, cible: idByWp.get(l.wp), color: nextColor() });
-      delete p._secs; delete p._links;
+      delete p._secs; delete p._links; delete p._all;
     }
     // Hiérarchie des sous-menus : enfants attachés à leur page parente (→ niveau 3)
     for (const [parentWp, children] of subRels) {
