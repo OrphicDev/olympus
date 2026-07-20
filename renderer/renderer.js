@@ -1261,39 +1261,75 @@ function pgPipelineAdvancePrompt(s, pl, niveau) {
     `Respecte la doctrine du skill orphic-web-design (règle-mère, pas de registre par défaut, offre N1-N4, zones protégées). Ne construis pas le site tant qu'il n'a pas choisi l'issue (a) : cette conversation SERT À REMPLIR le pipeline, la génération est une étape à part.`,
   ].join("\n");
 }
-// Colonne « Projets enregistrés » de la vue pipeline : snapshots retrouvables
-// (créés par « 💾 Enregistrer et reprendre plus tard »).
-async function pgPrjRenderCol(s) {
+// Colonne « Versions du site (local) » de la vue pipeline. Toujours : une copie
+// LOCALE de la version en ligne (immuable, référence) + au moins une version « en
+// cours de modification » (mutable). On peut en créer plusieurs et les modifier.
+let pgSvBusy = false;
+async function pgSiteVersionsCol(s) {
   const box = $("plVersions"); if (!box) return;
-  const r = await window.olympus.pegasusPrjList(s.key);
-  const vs = ((r.ok && r.versions) || []).slice().sort((a, b) => (a.ts < b.ts ? 1 : -1));
+  let r = await window.olympus.pegasusWireList(s.key);
+  let versions = (r.ok && r.versions) || [];
+  let deployed = r.ok ? r.deployed : null;
+  // Toujours 2 versions en local : si la copie de l'en-ligne existe mais qu'aucune
+  // version de travail n'a encore été créée, on la duplique automatiquement.
+  const drafts0 = versions.filter((v) => v.id !== deployed);
+  if (deployed && !drafts0.length && !pgSvBusy) {
+    pgSvBusy = true;
+    const base = await window.olympus.pegasusWireLoad(s.key, deployed);
+    if (base.ok) await window.olympus.pegasusWireSave(s.key, base.arbo, "En cours de modification 1", false);
+    pgSvBusy = false;
+    r = await window.olympus.pegasusWireList(s.key);
+    versions = (r.ok && r.versions) || []; deployed = r.ok ? r.deployed : null;
+  }
   const fmt = (ts) => { try { return new Date(ts).toLocaleString("fr-FR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }); } catch { return ts; } };
+  const enligne = versions.find((v) => v.id === deployed);
+  const encours = versions.filter((v) => v.id !== deployed).sort((a, b) => (a.ts < b.ts ? 1 : -1));
+
   box.innerHTML = `
-    <div class="abv-h">Projets enregistrés</div>
-    ${vs.length ? vs.map((v) => `
+    <div class="abv-h">Versions du site (local)</div>
+    ${enligne ? `<div class="abv-item deployed">
+        <div class="abv-top"><span class="abv-name">Copie de la version en ligne</span></div>
+        <div class="abv-live">● reflète le site en ligne</div>
+        <div class="abv-acts"><button class="abv-open" data-consult="${enligne.id}" title="Consulter la copie (lecture seule)">Consulter →</button></div>
+      </div>` : ""}
+    <div class="abv-sub">En cours de modification</div>
+    ${encours.length ? encours.map((v) => `
       <div class="abv-item" data-id="${v.id}">
         <div class="abv-top"><span class="abv-name" data-f="vname" title="Double-clic pour renommer">${escapeHtml(v.label || "Sans nom")}</span></div>
         <div class="abv-date">${fmt(v.ts)}</div>
         <div class="abv-acts">
-          <button class="abv-work" data-act="resume" title="Recharger ce projet dans le pipeline">Reprendre ce projet</button>
+          <button class="abv-work" data-act="edit" title="Modifier cette version dans l'arborescence">Modifier</button>
           <button class="abv-b" data-act="del" title="Supprimer">✕</button>
         </div>
-      </div>`).join("") : '<div class="abv-empty">Aucun projet enregistré. Utilise « 💾 Enregistrer et reprendre plus tard » en bas du pipeline pour retrouver ton travail ici.</div>'}`;
+      </div>`).join("") : '<div class="abv-empty">Aucune version de travail.</div>'}
+    <button class="mood-add" id="svNew" style="margin-top:8px;">＋ Nouvelle version</button>`;
 
-  box.querySelectorAll(".abv-item").forEach((el) => {
+  const openInArbo = async (id, msg) => {
+    const lr = await window.olympus.pegasusWireLoad(s.key, id);
+    if (!lr.ok) { alert("Échec : " + (lr.error || "")); return; }
+    lr.arbo.versionId = id; pgArboCache[s.key] = lr.arbo;
+    await window.olympus.pegasusArboSave(s.key, lr.arbo);
+    pgSiteTab = "arbo"; pgRenderSide(); pgRenderDetail();
+    const m = $("pgWorkMsg"); if (m && msg) { m.className = "msg ok"; m.textContent = msg; }
+  };
+  const consult = box.querySelector("[data-consult]");
+  if (consult) consult.onclick = () => openInArbo(consult.dataset.consult, "Copie de la version en ligne ouverte (lecture seule).");
+  box.querySelector("#svNew").onclick = async () => {
+    if (!deployed) return;
+    const base = await window.olympus.pegasusWireLoad(s.key, deployed);
+    if (!base.ok) { alert("Échec : " + (base.error || "")); return; }
+    await window.olympus.pegasusWireSave(s.key, base.arbo, "En cours de modification " + (encours.length + 1), false);
+    pgSiteVersionsCol(s);
+  };
+  box.querySelectorAll(".abv-item[data-id]").forEach((el) => {
     const id = el.dataset.id;
     const nameEl = el.querySelector('[data-f="vname"]');
-    pgAbEditable(nameEl, async (v) => { await window.olympus.pegasusPrjRename(s.key, id, v || "Sans nom"); });
-    el.querySelector('[data-act="resume"]').onclick = async () => {
-      if (!confirm("Reprendre ce projet ? L'état actuel du pipeline sera remplacé.")) return;
-      const lr = await window.olympus.pegasusPrjLoad(s.key, id);
-      if (lr.ok) { pgPlCache[s.key] = lr.pipeline; pgPlSave(s.key); pgPipelineRender(s); }
-      else alert("Échec : " + (lr.error || ""));
-    };
+    pgAbEditable(nameEl, async (v) => { await window.olympus.pegasusWireRename(s.key, id, v || "Sans nom"); });
+    el.querySelector('[data-act="edit"]').onclick = () => openInArbo(id, "Version ouverte dans l'arborescence — tes modifications s'enregistrent dans cette version.");
     el.querySelector('[data-act="del"]').onclick = async () => {
-      if (!confirm("Supprimer ce projet enregistré ?")) return;
-      await window.olympus.pegasusPrjDelete(s.key, id);
-      pgPrjRenderCol(s);
+      if (!confirm("Supprimer cette version en cours ?")) return;
+      await window.olympus.pegasusWireDelete(s.key, id);
+      pgSiteVersionsCol(s);
     };
   });
 }
@@ -1378,25 +1414,37 @@ async function pgPipelineRender(s) {
     };
     const offre = isExisting ? [modes.refonte, modes.micro] : [modes.nouveau];
     box.innerHTML = `
-      <p class="pg-mnote">Comment veux-tu travailler sur <b>${escapeHtml(s.label)}</b> ?${isExisting ? " Ce site est déjà en ligne — tu peux le refondre entièrement ou y faire des retouches." : ""} Le pipeline te guide étape par étape — chaque étape peut être passée ou confiée à l'IA, et tu génères le site quand tu veux.</p>
-      <div class="wk-choices" style="max-width:640px;">${offre.join("")}</div>`;
+      <div class="pl-layout">
+      <div class="pl-main">
+        <p class="pg-mnote">Comment veux-tu travailler sur <b>${escapeHtml(s.label)}</b> ?${isExisting ? " Ce site est déjà en ligne — tu peux le refondre entièrement ou y faire des retouches." : ""} Le pipeline te guide étape par étape — chaque étape peut être passée ou confiée à l'IA, et tu génères le site quand tu veux.</p>
+        <div class="wk-choices" style="max-width:640px;">${offre.join("")}</div>
+      </div>
+      <div class="ab-versions" id="plVersions"><div class="rb-empty">Versions…</div></div>
+      </div>`;
     box.querySelectorAll(".wk-choice").forEach((b) => b.onclick = () => {
       pgPlCache[s.key] = pgPlNew(b.dataset.mode);
       pgPlSave(s.key); pgPipelineRender(s);
     });
+    if (isExisting) pgSiteVersionsCol(s);
     return;
   }
 
   // ── Micro-modifications : ouvrir le projet en local + conversation contextualisée ──
   if (pl.mode === "micro") {
     box.innerHTML = `
-      <p class="pg-mnote">Mode <b>micro-modifications</b> : j'ouvre le projet en local et une conversation avec moi, en contexte. Dis-moi les retouches à faire, je les applique en local — le site en ligne n'est pas touché.</p>
-      <div class="pl-shortcuts">
-        <button class="pg-bigbtn" id="plMicroStart"><span class="t">Ouvrir le projet + discuter avec Claude</span><span class="d">local + conversation en contexte</span></button>
+      <div class="pl-layout">
+      <div class="pl-main">
+        <p class="pg-mnote">Mode <b>micro-modifications</b> : j'ouvre le projet en local et une conversation avec moi, en contexte. Dis-moi les retouches à faire, je les applique en local — le site en ligne n'est pas touché.</p>
+        <div class="pl-shortcuts">
+          <button class="pg-bigbtn" id="plMicroStart"><span class="t">Ouvrir le projet + discuter avec Claude</span><span class="d">local + conversation en contexte</span></button>
+        </div>
+        <div style="margin-top:18px;"><button class="btn sec" id="plReset">Changer de mode de travail</button></div>
       </div>
-      <div style="margin-top:18px;"><button class="btn sec" id="plReset">Changer de mode de travail</button></div>`;
+      <div class="ab-versions" id="plVersions"><div class="rb-empty">Versions…</div></div>
+      </div>`;
     $("plMicroStart").onclick = () => pgMicroStart(s);
     $("plReset").onclick = () => { if (confirm("Changer de mode ? (les statuts d'étapes seront conservés)")) { pl.mode = null; pgPlSave(s.key); pgPipelineRender(s); } };
+    pgSiteVersionsCol(s);
     return;
   }
 
@@ -1468,10 +1516,10 @@ async function pgPipelineRender(s) {
       ${pl.savedAt ? `<div class="pl-saved">✓ Projet enregistré le ${new Date(pl.savedAt).toLocaleString("fr-FR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })} — tu peux reprendre à tout moment.</div>` : ""}
     </div>
     </div>
-    <div class="ab-versions" id="plVersions"><div class="rb-empty">Projets…</div></div>
+    <div class="ab-versions" id="plVersions"><div class="rb-empty">Versions…</div></div>
     </div>`;
 
-  pgPrjRenderCol(s);
+  pgSiteVersionsCol(s);
 
   const gen = async () => {
     const manquantes = PL_ETAPES.filter((e) => {
@@ -1486,15 +1534,10 @@ async function pgPipelineRender(s) {
   };
   $("plGen").onclick = gen;
   $("plEndGen").onclick = gen;
-  $("plEndSave").onclick = async (ev) => {
-    const btn = ev.currentTarget; btn.disabled = true;
+  $("plEndSave").onclick = () => {
     pl.savedAt = Date.now(); pgPlSave(s.key);
-    // Snapshot retrouvable dans la colonne de droite
-    const label = "Projet du " + new Date().toLocaleDateString("fr-FR", { day: "2-digit", month: "short" }) + ` · ${remplies}/${PL_ETAPES.length}`;
-    await window.olympus.pegasusPrjSave(s.key, pl, label);
-    btn.disabled = false;
     const msg = $("pgWorkMsg");
-    if (msg) { msg.className = "msg ok"; msg.textContent = "Projet enregistré — retrouve-le dans la colonne de droite, tu peux fermer et reprendre quand tu veux."; }
+    if (msg) { msg.className = "msg ok"; msg.textContent = "Projet enregistré — tout est sauvegardé (pipeline + versions du site), tu peux fermer et reprendre quand tu veux."; }
     pgPipelineRender(s);
   };
   $("plReset").onclick = () => { pl.mode = null; pgPlSave(s.key); pgPipelineRender(s); };

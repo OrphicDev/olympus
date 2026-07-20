@@ -1320,6 +1320,17 @@ ipcMain.handle("pegasus:arboSave", async (_e, key, arbo) => {
   try {
     const p = await pegArboPath(key);
     writeFileSync(p, JSON.stringify(arbo, null, 2));
+    // Version de travail MUTABLE : si le doc est rattaché à une version « en cours de
+    // modification » (non déployée), on la met à jour EN PLACE. La copie de l'en-ligne
+    // (deployed) reste immuable.
+    if (arbo && arbo.versionId) {
+      const wdir = join(await pegSiteDir(key), "wireframes");
+      const man = pegVerManifest(wdir);
+      if (man.deployed !== arbo.versionId && man.versions.some((v) => v.id === arbo.versionId)) {
+        const vf = join(wdir, String(arbo.versionId).replace(/[^\w]/g, "") + ".json");
+        if (existsSync(vf)) writeFileSync(vf, JSON.stringify(arbo, null, 2));
+      }
+    }
     return { ok: true, path: p };
   } catch (e) { return { ok: false, error: e.message }; }
 });
