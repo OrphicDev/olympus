@@ -430,7 +430,7 @@ function pgTabHTML(tab, s) {
   return "";
 }
 
-// ══ Arborescence du site : nodes pages + sections, avec destinations ══
+// ══ Arborescence : canvas de nodes — pages flottantes, câbles = où chaque section emmène ══
 const pgArboCache = {};                       // par site : l'arborescence en cours d'édition
 let pgArboSaveT = null;
 function pgArboSave(key) {
@@ -438,6 +438,21 @@ function pgArboSave(key) {
   pgArboSaveT = setTimeout(() => window.olympus.pegasusArboSave(key, pgArboCache[key]), 400);
 }
 const pgArboId = () => "n" + Math.random().toString(36).slice(2, 8);
+let pgAbLink = null;                          // {p, s} : section en cours de câblage
+
+// Position auto pour les nodes sans coordonnées : accueil à gauche, grille ensuite
+function pgAbLayout(pages) {
+  let changed = false, i = 0;
+  const home = pages.find((p) => p.home);
+  if (home && home.x == null) { home.x = 70; home.y = 300; changed = true; }
+  for (const p of pages) {
+    if (p === home || p.x != null) { if (p !== home && p.x != null) i++; continue; }
+    p.x = 430 + Math.floor(i / 4) * 330;
+    p.y = 70 + (i % 4) * 215;
+    i++; changed = true;
+  }
+  return changed;
+}
 
 async function pgArboRender(s) {
   const box = $("pgArbo"); if (!box) return;
@@ -448,7 +463,7 @@ async function pgArboRender(s) {
   }
   const arbo = pgArboCache[s.key];
 
-  // Pas encore d'arborescence → proposer de la générer ou de partir de zéro
+  // Pas encore d'arborescence → la générer depuis le site, ou partir de zéro
   if (!arbo) {
     box.innerHTML = `<div class="ab-empty">
         <p class="pg-mnote">Aucune arborescence pour ce site. Génère-la depuis les pages réelles du site en ligne, ou construis-la de zéro.</p>
@@ -477,45 +492,66 @@ async function pgArboRender(s) {
     return;
   }
 
-  // Rendu de l'arbre : racine → pages (nodes) → sections (sous-nodes avec destination)
   const pages = arbo.pages || [];
-  const cibleOptions = (sel) => `<option value="">— nulle part —</option>` + pages.map((p) => `<option value="${p.id}" ${sel === p.id ? "selected" : ""}>${escapeHtml(p.titre)}</option>`).join("");
+  if (pgAbLayout(pages)) pgArboSave(s.key);
+  pgAbLink = null;
+  const HINT = `Glisse les nodes · clique le <b>port</b> d'une section puis sa page de destination · clic droit sur un port pour détacher`;
+
   box.innerHTML = `
-    <div class="pg-actrow" style="margin-bottom:14px;">
+    <div class="pg-actrow" style="margin-bottom:12px;">
       <button class="cal-btn" id="abAddPage">＋ Page</button>
-      <button class="btn sec" id="abResync">⟳ Resynchroniser les pages du site</button>
-      <span class="pg-mnote dim" style="margin:0;">Chaque section indique où elle emmène. Sauvegarde automatique dans le dossier du site.</span>
+      <button class="btn sec" id="abResync">⟳ Resynchroniser</button>
+      <span class="ab-hint" id="abHint">${HINT}</span>
     </div>
-    <div class="ab-tree">
-      <div class="ab-root"><span class="pg-dot ok"></span><b>${escapeHtml(s.label)}</b><small>${pages.length} page${pages.length > 1 ? "s" : ""}</small></div>
-      <div class="ab-pages">
+    <div class="ab-canvas" id="abCanvas">
+      <div class="ab-stage" id="abStage">
+        <svg class="ab-wires" id="abWires"></svg>
         ${pages.map((p) => `
-          <div class="ab-page" data-p="${p.id}">
+          <div class="ab-node${p.home ? " home" : ""}" data-p="${p.id}" style="left:${p.x}px;top:${p.y}px;">
+            <span class="inport"></span>
             <div class="ab-phead">
-              <span class="ab-nodedot${p.home ? " home" : ""}" title="${p.home ? "Page d'accueil" : "Page"}"></span>
-              <input class="ab-in title" data-f="titre" value="${escapeHtml(p.titre)}" spellcheck="false">
+              <input class="ab-in" data-f="titre" value="${escapeHtml(p.titre)}" spellcheck="false">
               ${p.home ? '<span class="ab-badge">accueil</span>' : `<button class="ab-mini" data-act="home" title="Définir comme accueil">⌂</button>`}
-              ${p.wp_id ? `<span class="ab-badge dim">WP #${p.wp_id}</span>` : ""}
-              <button class="ab-mini" data-act="addsec" title="Ajouter une section">＋ section</button>
+              <button class="ab-mini" data-act="addsec" title="Ajouter une section">＋</button>
               <button class="ab-mini" data-act="delpage" title="Supprimer la page">✕</button>
             </div>
-            ${p.sections.length ? `<div class="ab-secs">
-              ${p.sections.map((sec) => `
-                <div class="ab-sec" data-s="${sec.id}">
-                  <span class="ab-secdot"></span>
-                  <input class="ab-in" data-f="sec-titre" value="${escapeHtml(sec.titre)}" spellcheck="false">
-                  <span class="ab-arrow">⇢</span>
-                  <select class="pg-select ab-cible" data-f="cible">${cibleOptions(sec.cible)}</select>
-                  <button class="ab-mini" data-act="delsec" title="Supprimer la section">✕</button>
-                </div>`).join("")}
-            </div>` : ""}
+            ${p.wp_id ? `<div style="margin-top:4px;"><span class="ab-badge dim">WP #${p.wp_id}</span></div>` : ""}
+            ${p.sections.length ? `<div class="ab-secs">${p.sections.map((sec) => `
+              <div class="ab-sec" data-s="${sec.id}">
+                <input class="ab-in" data-f="sec-titre" value="${escapeHtml(sec.titre)}" spellcheck="false">
+                <button class="ab-mini" data-act="delsec" title="Supprimer la section">✕</button>
+                <span class="ab-port${sec.cible ? " linked" : ""}" data-port title="${sec.cible ? "⇢ " + escapeHtml((pages.find((x) => x.id === sec.cible) || {}).titre || "?") + " — clic droit pour détacher" : "Clique, puis choisis la page de destination"}"></span>
+              </div>`).join("")}</div>` : ""}
           </div>`).join("")}
       </div>
     </div>`;
 
+  const stage = $("abStage"), canvas = $("abCanvas"), svgW = $("abWires");
   const find = (pid) => pages.find((x) => x.id === pid);
+  const hintReset = () => { $("abHint").innerHTML = HINT; };
+
+  // Câbles : du port de chaque section vers le port d'entrée de sa page cible
+  function drawWires() {
+    const sr = stage.getBoundingClientRect();
+    const paths = [];
+    for (const p of pages) for (const sec of p.sections) {
+      if (!sec.cible) continue;
+      const from = stage.querySelector(`.ab-sec[data-s="${sec.id}"] .ab-port`);
+      const to = stage.querySelector(`.ab-node[data-p="${sec.cible}"] .inport`);
+      if (!from || !to) continue;
+      const a = from.getBoundingClientRect(), b = to.getBoundingClientRect();
+      const x1 = a.left - sr.left + a.width / 2, y1 = a.top - sr.top + a.height / 2;
+      const x2 = b.left - sr.left + b.width / 2, y2 = b.top - sr.top + b.height / 2;
+      const dx = Math.max(50, Math.abs(x2 - x1) * 0.45);
+      paths.push(`<path d="M ${x1.toFixed(1)} ${y1.toFixed(1)} C ${(x1 + dx).toFixed(1)} ${y1.toFixed(1)}, ${(x2 - dx).toFixed(1)} ${y2.toFixed(1)}, ${x2.toFixed(1)} ${y2.toFixed(1)}"/>`);
+    }
+    svgW.innerHTML = paths.join("");
+  }
+  drawWires();
+
+  // Barre d'actions
   box.querySelector("#abAddPage").onclick = () => {
-    pages.push({ id: pgArboId(), titre: "Nouvelle page", sections: [] });
+    pages.push({ id: pgArboId(), titre: "Nouvelle page", sections: [], x: 70 + canvas.scrollLeft, y: 70 + canvas.scrollTop });
     pgArboSave(s.key); pgArboRender(s);
   };
   box.querySelector("#abResync").onclick = async (e) => {
@@ -532,23 +568,84 @@ async function pgArboRender(s) {
     }
     pgArboRender(s);
   };
-  box.querySelectorAll(".ab-page").forEach((pe) => {
-    const p = find(pe.dataset.p);
-    pe.querySelector('[data-f="titre"]').onchange = (e) => { p.titre = e.target.value.trim() || "Sans titre"; pgArboSave(s.key); };
-    pe.querySelectorAll("[data-act]").forEach((b) => {
-      b.onclick = () => {
-        if (b.dataset.act === "addsec") { p.sections.push({ id: pgArboId(), titre: "Nouvelle section", cible: "" }); }
-        if (b.dataset.act === "delpage") { arbo.pages = pages.filter((x) => x.id !== p.id); pgArboCache[s.key] = arbo; }
-        if (b.dataset.act === "home") { pages.forEach((x) => { x.home = x.id === p.id; }); }
-        if (b.dataset.act === "delsec") return; // géré par section
+
+  // Pan du canvas (fond) — et clic dans le vide = annule le câblage en cours
+  stage.addEventListener("pointerdown", (e) => {
+    if (e.target !== stage) return;
+    if (pgAbLink) { pgAbLink = null; pgArboRender(s); return; }
+    canvas.classList.add("panning");
+    const sx = e.clientX, sy = e.clientY, sl = canvas.scrollLeft, st = canvas.scrollTop;
+    const move = (ev) => { canvas.scrollLeft = sl - (ev.clientX - sx); canvas.scrollTop = st - (ev.clientY - sy); };
+    const up = () => { canvas.classList.remove("panning"); window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  });
+
+  // Nodes : drag, câblage, édition
+  stage.querySelectorAll(".ab-node").forEach((ne) => {
+    const p = find(ne.dataset.p);
+    // Drag par l'en-tête
+    ne.querySelector(".ab-phead").addEventListener("pointerdown", (e) => {
+      if (e.target.closest("input,button")) return;
+      e.preventDefault();
+      const sx = e.clientX, sy = e.clientY, ox = p.x, oy = p.y;
+      const move = (ev) => {
+        p.x = Math.max(0, ox + ev.clientX - sx);
+        p.y = Math.max(0, oy + ev.clientY - sy);
+        ne.style.left = p.x + "px"; ne.style.top = p.y + "px";
+        requestAnimationFrame(drawWires);
+      };
+      const up = () => {
+        window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up);
+        p.x = Math.round(p.x); p.y = Math.round(p.y); pgArboSave(s.key);
+      };
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", up);
+    });
+    // En mode câblage, cliquer une page = destination de la section
+    ne.addEventListener("click", () => {
+      if (!pgAbLink || ne.dataset.p === pgAbLink.p) return;
+      const src = find(pgAbLink.p);
+      const sec = src && src.sections.find((x) => x.id === pgAbLink.s);
+      if (sec) { sec.cible = ne.dataset.p; pgArboSave(s.key); }
+      pgAbLink = null;
+      pgArboRender(s);
+    });
+    ne.querySelector('[data-f="titre"]').onchange = (e) => { p.titre = e.target.value.trim() || "Sans titre"; pgArboSave(s.key); };
+    ne.querySelectorAll(".ab-phead [data-act]").forEach((b) => {
+      b.onclick = (e) => {
+        e.stopPropagation();
+        if (b.dataset.act === "addsec") p.sections.push({ id: pgArboId(), titre: "Nouvelle section", cible: "" });
+        if (b.dataset.act === "home") pages.forEach((x) => { x.home = x.id === p.id; });
+        if (b.dataset.act === "delpage") {
+          arbo.pages = pages.filter((x) => x.id !== p.id);
+          for (const q of arbo.pages) for (const sc of q.sections) if (sc.cible === p.id) sc.cible = "";
+          pgArboCache[s.key] = arbo;
+        }
         pgArboSave(s.key); pgArboRender(s);
       };
     });
-    pe.querySelectorAll(".ab-sec").forEach((se) => {
+    ne.querySelectorAll(".ab-sec").forEach((se) => {
       const sec = p.sections.find((x) => x.id === se.dataset.s);
       se.querySelector('[data-f="sec-titre"]').onchange = (e) => { sec.titre = e.target.value.trim() || "Section"; pgArboSave(s.key); };
-      se.querySelector('[data-f="cible"]').onchange = (e) => { sec.cible = e.target.value; pgArboSave(s.key); };
-      se.querySelector('[data-act="delsec"]').onclick = () => { p.sections = p.sections.filter((x) => x.id !== sec.id); pgArboSave(s.key); pgArboRender(s); };
+      se.querySelector('[data-act="delsec"]').onclick = (e) => {
+        e.stopPropagation();
+        p.sections = p.sections.filter((x) => x.id !== sec.id);
+        pgArboSave(s.key); pgArboRender(s);
+      };
+      const port = se.querySelector("[data-port]");
+      port.onclick = (e) => {
+        e.stopPropagation();
+        pgAbLink = pgAbLink && pgAbLink.s === sec.id ? null : { p: p.id, s: sec.id };
+        stage.querySelectorAll(".ab-port").forEach((x) => x.classList.remove("linking"));
+        stage.querySelectorAll(".ab-node").forEach((x) => x.classList.toggle("linktarget", !!pgAbLink && x.dataset.p !== p.id));
+        if (pgAbLink) { port.classList.add("linking"); $("abHint").innerHTML = "Clique la <b>page de destination</b> — clic dans le vide pour annuler"; }
+        else hintReset();
+      };
+      port.oncontextmenu = (e) => {
+        e.preventDefault(); e.stopPropagation();
+        sec.cible = ""; pgArboSave(s.key); pgArboRender(s);
+      };
     });
   });
 }

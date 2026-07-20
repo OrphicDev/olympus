@@ -832,33 +832,42 @@
   .pg-flabel{display:block;font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--dim);margin-bottom:6px;}
   .pg-frow{display:flex;gap:12px;margin-bottom:12px;}
   .pg-frow>div{flex:1;min-width:0;}
-  /* ── Arborescence du site (nodes pages → sections → destinations) ── */
+  /* ── Arborescence : canvas de nodes (pages flottantes, câbles de destination) ── */
   .ab-empty{max-width:560px;padding:8px 0;}
-  .ab-tree{max-width:760px;padding:4px 0 30px;}
-  .ab-root{display:flex;align-items:center;gap:11px;background:var(--card);border:1px solid var(--line);border-radius:13px;padding:13px 17px;font-size:14px;width:fit-content;}
-  .ab-root small{color:var(--dim);font-size:11.5px;}
-  .ab-pages{border-left:1px solid var(--line);margin-left:22px;padding:14px 0 2px 30px;display:flex;flex-direction:column;gap:12px;}
-  .ab-page{position:relative;background:var(--card);border:1px solid var(--line);border-radius:13px;padding:11px 13px;transition:border-color .16s,box-shadow .2s;}
-  .ab-page:hover{border-color:var(--line2);}
-  .ab-page::before{content:"";position:absolute;left:-31px;top:26px;width:30px;height:1px;background:var(--line);}
-  .ab-phead{display:flex;align-items:center;gap:9px;}
-  .ab-nodedot{width:9px;height:9px;border-radius:50%;background:var(--card2);border:1px solid var(--line2);flex-shrink:0;}
-  .ab-nodedot.home{background:var(--accent2);border-color:transparent;box-shadow:0 0 9px color-mix(in srgb,var(--accent2) 60%,transparent);}
-  .ab-in{background:transparent;border:none;outline:none;color:var(--txt);font-size:13px;font-weight:560;flex:1;min-width:60px;padding:3px 5px;border-radius:7px;transition:background .12s;}
+  .ab-canvas{position:relative;height:calc(100vh - 310px);min-height:460px;overflow:auto;border:1px solid var(--line);border-radius:16px;background:var(--bg2);scrollbar-width:none;cursor:grab;
+    -webkit-mask-image:linear-gradient(to bottom,transparent,#000 12px,#000 calc(100% - 12px),transparent);mask-image:linear-gradient(to bottom,transparent,#000 12px,#000 calc(100% - 12px),transparent);}
+  .ab-canvas::-webkit-scrollbar{display:none;}
+  .ab-canvas.panning{cursor:grabbing;}
+  .ab-stage{position:relative;width:2600px;height:1600px;
+    background-image:radial-gradient(circle,rgba(var(--glow-rgb),.07) 1px,transparent 1px);background-size:24px 24px;}
+  .ab-wires{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;}
+  .ab-wires path{fill:none;stroke:var(--line2);stroke-width:1.5;}
+  .ab-wires path.hot{stroke:var(--accent2);filter:drop-shadow(0 0 4px rgba(var(--glow-rgb),.5));}
+  .ab-node{position:absolute;width:250px;background:var(--panel);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:1px solid var(--line);border-radius:15px;padding:11px 13px 10px;box-shadow:0 14px 34px rgba(0,0,0,.35);transition:border-color .16s,box-shadow .2s;}
+  .ab-node:hover{border-color:var(--line2);z-index:5;}
+  .ab-node.home{box-shadow:0 0 0 1px color-mix(in srgb,var(--accent2) 40%,transparent),0 0 26px -6px var(--accent2),0 14px 34px rgba(0,0,0,.35);}
+  .ab-node.linktarget{border-color:var(--txt);cursor:crosshair;}
+  .ab-node .inport{position:absolute;left:-5px;top:22px;width:9px;height:9px;border-radius:50%;background:var(--card2);border:1px solid var(--line2);}
+  .ab-node.home .inport{background:var(--accent2);border-color:transparent;box-shadow:0 0 8px color-mix(in srgb,var(--accent2) 60%,transparent);}
+  .ab-phead{display:flex;align-items:center;gap:8px;cursor:grab;}
+  .ab-phead:active{cursor:grabbing;}
+  .ab-in{background:transparent;border:none;outline:none;color:var(--txt);font-size:13px;font-weight:600;flex:1;min-width:40px;padding:3px 5px;border-radius:7px;transition:background .12s;}
   .ab-in:hover,.ab-in:focus{background:var(--card2);}
-  .ab-badge{font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--txt);background:var(--card2);border-radius:10px;padding:2px 8px;flex-shrink:0;}
+  .ab-badge{font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--txt);background:var(--card2);border-radius:10px;padding:2px 7px;flex-shrink:0;}
   .ab-badge.dim{color:var(--dim);background:transparent;border:1px solid var(--line);}
-  .ab-mini{background:none;border:none;color:var(--dim);font-size:11px;cursor:pointer;padding:4px 7px;border-radius:7px;flex-shrink:0;opacity:0;transition:opacity .12s,color .12s,background .12s;}
-  .ab-page:hover .ab-phead>.ab-mini,.ab-sec:hover .ab-mini{opacity:1;}
+  .ab-mini{background:none;border:none;color:var(--dim);font-size:11px;cursor:pointer;padding:3px 6px;border-radius:7px;flex-shrink:0;opacity:0;transition:opacity .12s,color .12s,background .12s;}
+  .ab-node:hover .ab-mini{opacity:1;}
   .ab-mini:hover{color:var(--txt);background:var(--card2);}
-  .ab-secs{border-left:1px solid var(--line);margin:9px 0 2px 3px;padding-left:20px;display:flex;flex-direction:column;gap:3px;}
-  .ab-sec{position:relative;display:flex;align-items:center;gap:8px;padding:3px 0;}
-  .ab-sec::before{content:"";position:absolute;left:-20px;top:50%;width:14px;height:1px;background:var(--line);}
-  .ab-sec .ab-in{font-weight:450;font-size:12.5px;flex:0 1 auto;width:32%;}
-  .ab-secdot{width:6px;height:6px;border-radius:50%;background:var(--card2);flex-shrink:0;}
-  .ab-arrow{color:var(--dim);font-size:13px;flex-shrink:0;}
-  .ab-cible{padding:4px 9px;font-size:11.5px;max-width:190px;color:var(--txt);}
-  .ab-cible:has(option[value=""]:checked){color:var(--dim);}
+  .ab-secs{display:flex;flex-direction:column;gap:1px;margin-top:8px;border-top:1px solid var(--line);padding-top:7px;}
+  .ab-sec{position:relative;display:flex;align-items:center;gap:7px;padding:2px 0;}
+  .ab-sec .ab-in{font-weight:450;font-size:12px;color:var(--muted);}
+  .ab-sec .ab-in:focus{color:var(--txt);}
+  .ab-port{position:absolute;right:-18px;top:50%;transform:translateY(-50%);width:9px;height:9px;border-radius:50%;background:var(--card2);border:1px solid var(--line2);cursor:crosshair;transition:box-shadow .15s,background .15s;}
+  .ab-port:hover{background:var(--txt);}
+  .ab-port.linked{background:var(--ok);border-color:transparent;box-shadow:0 0 7px color-mix(in srgb,var(--ok) 55%,transparent);}
+  .ab-port.linking{background:var(--accent2);border-color:transparent;box-shadow:0 0 10px var(--accent2);animation:pgPulse 1s ease-in-out infinite;}
+  .ab-hint{color:var(--dim);font-size:11.5px;}
+  .ab-hint b{color:var(--txt);font-weight:550;}
   /* ── Medusa : statut + capacités ── */
   .md-hero{display:flex;align-items:center;gap:16px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px 20px;max-width:660px;}
   .md-hero .pg-dot{width:11px;height:11px;}
