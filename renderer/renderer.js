@@ -387,6 +387,7 @@ async function pgSelect(key) {
 
 const PG_TABS = [
   { id: "general", label: "Général" },
+  { id: "pipeline", label: "Pipeline" },
   { id: "arbo", label: "Arborescence" },
   { id: "mood", label: "Moodboard" },
   { id: "seo", label: "SEO" },
@@ -414,6 +415,7 @@ function pgRenderDetail() {
   const sb = box.querySelector("#pgSeoBtn"); if (sb) sb.onclick = () => pgRunSeo(s.key);
   const pb = box.querySelector("#pgPerfBtn"); if (pb) pb.onclick = () => pgRunPerf(s.key);
   pgRenderSecPanel(s);
+  if (pgSiteTab === "pipeline") pgPipelineRender(s);
   if (pgSiteTab === "arbo") pgArboRender(s);
   if (pgSiteTab === "mood") pgMoodRender(s);
   // Le nombre de pages se compte une seule fois par site (pas à chaque rafraîchissement)
@@ -425,6 +427,7 @@ const pgCounted = new Set();
 
 function pgTabHTML(tab, s) {
   if (tab === "general") return pgTabGeneral(s);
+  if (tab === "pipeline") return `<div id="pgPipeline"><div class="rb-empty">Chargement du pipeline…</div></div>`;
   if (tab === "arbo") return `<div id="pgArbo"><div class="rb-empty">Chargement de l'arborescence…</div></div>`;
   if (tab === "mood") return `<div id="pgMood"><div class="rb-empty">Chargement du moodboard…</div></div>`;
   if (tab === "seo") return pgTabSeo(s);
@@ -571,6 +574,10 @@ function pgAbMerge(cur, scanned) {
       if (Number.isFinite(old.level)) np.level = old.level; // niveau fixé à la main conservé
       if (old.links && old.links.length) np.links = old.links; // liens node→node manuels conservés
       if (old.titre && old.titre !== np.titre && !old.wp_id) np.titre = old.titre;
+      // Maquette conservée : contexte de page + textes de sections (matchés par titre)
+      if (old.contexte) np.contexte = old.contexte;
+      const oldTxt = new Map((old.sections || []).filter((x) => x.texte).map((x) => [x.titre, x.texte]));
+      for (const sc of np.sections) if (!sc.texte && oldTxt.has(sc.titre)) sc.texte = oldTxt.get(sc.titre);
     }
     for (const sc of np.sections) sc.cible = idMap.get(sc.cible) || "";
   }
@@ -672,6 +679,7 @@ async function pgArboRender(s) {
             <div class="ab-phead">
               <div class="ab-title" data-f="titre" title="Double-clic pour renommer">${escapeHtml(p.titre)}</div>
               ${p.artefact ? '<span class="ab-badge dim">artefact</span>' : p.home ? '<span class="ab-badge">accueil</span>' : `<button class="ab-mini" data-act="home" title="Définir comme accueil">⌂</button>`}
+              ${p.artefact ? "" : `<button class="ab-mini${p.contexte || (p.sections || []).some((sc) => sc.texte) ? " has" : ""}" data-act="maquette" title="Maquette : contexte de la page + textes des sections">📝</button>`}
               <button class="ab-mini" data-act="rename" title="Renommer">✎</button>
               <button class="ab-mini" data-act="addsec" title="Ajouter une section">＋</button>
               <button class="ab-mini" data-act="delpage" title="Supprimer la page">✕</button>
@@ -920,6 +928,7 @@ async function pgArboRender(s) {
     ne.querySelectorAll(".ab-phead [data-act]").forEach((b) => {
       b.onclick = (e) => {
         e.stopPropagation();
+        if (b.dataset.act === "maquette") { pgAbMaquetteModal(s, p); return; }
         if (b.dataset.act === "rename") { titleEl.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })); return; }
         if (b.dataset.act === "addsec") p.sections.push({ id: pgArboId(), titre: "Nouvelle section", cible: "", color: AB_COLORS[p.sections.length % AB_COLORS.length] });
         if (b.dataset.act === "home") pages.forEach((x) => { x.home = x.id === p.id; });
@@ -1081,6 +1090,234 @@ function pgWireWorkModal(s, v) {
   });
 }
 
+// Modale « Maquette » d'une page du wireframe : le contexte de la page + le texte
+// de chaque section. C'est la matière que le brief transmet à la construction.
+function pgAbMaquetteModal(s, p) {
+  const ov = document.createElement("div");
+  ov.className = "modal-overlay show";
+  ov.innerHTML = `
+    <div class="modal-panel" style="width:640px;">
+      <div class="modal-head"><h2>Maquette — ${escapeHtml(p.titre)}</h2><button class="modal-x" data-x aria-label="Fermer">✕</button></div>
+      <div class="modal-body">
+        <div class="mood-h" style="margin-bottom:8px;">Contexte de la page</div>
+        <textarea class="mood-in mood-ta" data-mq="ctx" placeholder="À quoi sert cette page, à qui elle parle, ce qu'elle doit provoquer…">${escapeHtml(p.contexte || "")}</textarea>
+        ${(p.sections || []).length ? `<div class="mood-h" style="margin:16px 0 8px;">Textes des sections</div>` : ""}
+        ${(p.sections || []).map((sec, i) => `
+          <div class="mq-sec">
+            <div class="mq-t"><span class="ab-secdot" style="background:${sec.color || "var(--line2)"};"></span>${escapeHtml(sec.titre)}</div>
+            <textarea class="mood-in mood-ta mini" data-mq="${i}" placeholder="Le texte / contenu voulu pour cette section…">${escapeHtml(sec.texte || "")}</textarea>
+          </div>`).join("")}
+      </div>
+      <div class="modal-foot"><span class="ab-hint" style="flex:1;">Enregistré automatiquement — repris dans le brief de construction.</span><button class="btn" data-x>Fermer</button></div>
+    </div>`;
+  document.body.appendChild(ov);
+  const close = () => ov.remove();
+  ov.querySelectorAll("[data-x]").forEach((b) => b.onclick = close);
+  ov.onclick = (e) => { if (e.target === ov) close(); };
+  ov.querySelectorAll("[data-mq]").forEach((t) => t.oninput = () => {
+    if (t.dataset.mq === "ctx") p.contexte = t.value;
+    else p.sections[+t.dataset.mq].texte = t.value;
+    pgArboSave(s.key);
+    // Le badge 📝 du node s'allume dès qu'une maquette existe
+    const btn = document.querySelector(`.ab-node[data-p="${p.id}"] [data-act="maquette"]`);
+    if (btn) btn.classList.toggle("has", !!(p.contexte || (p.sections || []).some((sc) => sc.texte)));
+  });
+}
+
+// ══ Pipeline de travail : le fil conducteur d'un site ══
+// Nouveau site (9 étapes guidées) / Refonte complète (mêmes étapes, vues
+// préremplies) / Micro-modifications (tout prérempli, retouches libres).
+// Chaque étape : guidée, passable, « laisser l'IA choisir », discussion Claude.
+// Le dev peut générer le site QUAND il veut — étapes vides = résultat plus
+// éloigné de ses attentes, et il en est averti.
+const pgPlCache = {};
+let pgPlSaveT = null;
+function pgPlSave(key) {
+  clearTimeout(pgPlSaveT);
+  pgPlSaveT = setTimeout(() => window.olympus.pegasusPipelineSave(key, pgPlCache[key]), 400);
+}
+const PL_ETAPES = [
+  { id: "wireframe", titre: "Mise en place du wireframe", vue: "arbo",
+    desc: "Structure du site en nodes : pages, sections, connexions. Scanne le site ou pars de zéro, puis enregistre une version.",
+    prompt: "On travaille le wireframe du site (arborescence.json : pages, sections, connexions). Regarde l'existant et aide-moi à structurer les pages et les parcours. Quand on décide quelque chose, mets à jour arborescence.json." },
+  { id: "maquette", titre: "Maquette — textes & contexte", vue: "arbo",
+    desc: "Chaque page du wireframe porte sa maquette : le contexte de la page et le texte de chaque section (bouton 📝 sur les nodes). C'est la matière du site.",
+    prompt: "On remplit la maquette : le contexte de chaque page (champ contexte) et le texte de chaque section (champ texte) dans arborescence.json. Propose des textes fidèles au positionnement du site, page par page — je valide ou j'ajuste." },
+  { id: "charte", titre: "Charte graphique", vue: "mood",
+    desc: "Couleurs, typographies, logo — dans le Moodboard. Pré-remplie si le site existe déjà.",
+    prompt: "On définit la charte graphique dans moodboard.json (couleurs, typos, logo, notes). Propose une direction cohérente avec le secteur et l'ambition du site." },
+  { id: "niveau", titre: "Niveau du site (1 à 4)", vue: "mood",
+    desc: "Le dev choisit le palier de l'offre Orphic : N1 Premium → N4 Ultra luxe. Il conditionne les étapes Blender (7-8).",
+    prompt: "Aide-moi à choisir le niveau du site (1 à 4, l'offre Orphic : N1 Premium, N2 Luxe, N3 Luxe supérieur, N4 Ultra luxe) selon le budget, le secteur et l'ambition. Inscris le choix dans moodboard.json (champ niveau)." },
+  { id: "references", titre: "Choix des références", vue: "mood",
+    desc: "Les références du projet, placées dans le Moodboard. La bibliothèque Orphic est là pour piocher.",
+    prompt: "On choisit les références du projet (moodboard.json → refs, format {url, note}). Puise dans la bibliothèque Orphic si les outils pegasus_get_references sont disponibles, et propose-moi une short-list argumentée." },
+  { id: "local", titre: "Création du projet en local", action: "local",
+    desc: "Le projet prend forme sur le disque. Site de niveau 1-2 (pas de scène Blender) : première génération complète dès cette étape.",
+    prompt: "Prépare le projet en local dans ce dossier. Si le site est de niveau 1-2 (pas de scène Blender), lance une première génération complète : suis wireframes/build-*/BRIEF.md s'il existe, sinon construis depuis arborescence.json + moodboard.json, en suivant la doctrine orphic-build." },
+  { id: "storytelling", titre: "Scène Blender — le storytelling", n34: true, inline: "story",
+    desc: "Site de niveau 3-4 : explique ce que tu recherches — l'émotion, le parcours, ce que la scène raconte.",
+    prompt: "On écrit le storytelling de la scène Blender (site de niveau 3-4) : ce que je recherche, l'émotion, le parcours de l'utilisateur, ce que la scène raconte. Mets le résultat dans pipeline.json → etapes.storytelling.texte." },
+  { id: "assets", titre: "Les assets", n34: true, inline: "assets",
+    desc: "Claude établit la liste des assets nécessaires depuis le storytelling — et te dit quoi fournir. Coche au fur et à mesure.",
+    prompt: "Lis le storytelling (pipeline.json → etapes.storytelling.texte), le wireframe (arborescence.json) et le moodboard, puis établis la liste complète des assets nécessaires (images, vidéos, modèles/scènes Blender, textures, sons). Écris-la dans pipeline.json → etapes.assets.liste (format [{nom, note, fourni:false}]) et dis-moi précisément ce que je dois te fournir." },
+  { id: "generation", titre: "Génération du site", action: "gen",
+    desc: "La construction, en collaboration : Claude peut demander des optimisations d'assets ou des assets supplémentaires.",
+    prompt: "On génère le site : suis le brief le plus récent (wireframes/build-*/BRIEF.md) et la doctrine orphic-build. Si un asset manque ou mérite d'être optimisé, demande-le-moi explicitement." },
+];
+const PL_STATUTS = { afaire: "À faire", fait: "✓ Fait", passee: "Passée", ia: "🤖 IA" };
+function pgPlNew(mode) {
+  return { mode, etapes: Object.fromEntries(PL_ETAPES.map((e) => [e.id, { statut: "afaire" }])) };
+}
+async function pgPipelineRender(s) {
+  const box = $("pgPipeline"); if (!box) return;
+  if (!pgPlCache[s.key]) {
+    const r = await window.olympus.pegasusPipelineGet(s.key);
+    pgPlCache[s.key] = (r.ok && r.pipeline) || null;
+  }
+  const pl = pgPlCache[s.key];
+
+  // ── Pas encore de pipeline : choisir le mode de travail ──
+  if (!pl || !pl.mode) {
+    box.innerHTML = `
+      <p class="pg-mnote">Comment veux-tu travailler sur <b>${escapeHtml(s.label)}</b> ? Le pipeline te guide étape par étape — chaque étape peut être passée ou confiée à l'IA, et tu génères le site quand tu veux.</p>
+      <div class="wk-choices" style="max-width:640px;">
+        <button class="wk-choice" data-mode="nouveau">
+          <div class="wk-t">🆕 Nouveau site</div>
+          <div class="wk-d">Le site part de zéro. 9 étapes guidées : wireframe → maquette → charte → niveau → références → local → (scène Blender) → génération.</div>
+        </button>
+        <button class="wk-choice" data-mode="refonte">
+          <div class="wk-t">🔄 Refonte complète</div>
+          <div class="wk-d">Le site existe : tout est prérempli depuis le site réel (wireframe scanné, charte extraite), et tu reprends chaque étape pour le réinventer.</div>
+        </button>
+        <button class="wk-choice" data-mode="micro">
+          <div class="wk-t">🔧 Micro-modifications</div>
+          <div class="wk-d">Tout est prérempli — tu fais des retouches ponctuelles quand nécessaire, sans suivre de pipeline.</div>
+        </button>
+      </div>`;
+    box.querySelectorAll(".wk-choice").forEach((b) => b.onclick = () => {
+      pgPlCache[s.key] = pgPlNew(b.dataset.mode);
+      pgPlSave(s.key); pgPipelineRender(s);
+    });
+    return;
+  }
+
+  // ── Micro-modifications : pas de stepper, des raccourcis ──
+  if (pl.mode === "micro") {
+    box.innerHTML = `
+      <p class="pg-mnote">Mode <b>micro-modifications</b> : les vues sont préremplies depuis le site réel. Tu retouches ce que tu veux, quand tu veux — le wireframe, la charte, ou directement le code en local.</p>
+      <div class="pl-shortcuts">
+        <button class="pg-bigbtn" data-goto="arbo"><span class="t">Arborescence</span><span class="d">retoucher le wireframe</span></button>
+        <button class="pg-bigbtn" data-goto="mood"><span class="t">Moodboard</span><span class="d">retoucher la charte</span></button>
+        <button class="pg-bigbtn" id="plWorkBtn"><span class="t">Travailler sur le site</span><span class="d">local + session Claude</span></button>
+      </div>
+      <div style="margin-top:18px;"><button class="btn sec" id="plReset">Changer de mode de travail</button></div>`;
+    box.querySelectorAll("[data-goto]").forEach((b) => b.onclick = () => { pgSiteTab = b.dataset.goto; pgRenderSide(); pgRenderDetail(); });
+    $("plWorkBtn").onclick = async () => {
+      if (!confirm("Lancer le site en local + ouvrir une session Claude Code ?")) return;
+      await window.olympus.pegasusWorkOn(s.key);
+    };
+    $("plReset").onclick = () => { if (confirm("Changer de mode ? (les statuts d'étapes seront conservés)")) { pl.mode = null; pgPlSave(s.key); pgPipelineRender(s); } };
+    return;
+  }
+
+  // ── Nouveau / Refonte : le stepper des 9 étapes ──
+  // Le niveau choisi (moodboard) conditionne les étapes Blender (7-8)
+  let niveau = pgMoodCache[s.key]?.niveau;
+  if (niveau === undefined) {
+    const mr = await window.olympus.pegasusMoodboardGet(s.key);
+    niveau = (mr.ok && mr.moodboard && mr.moodboard.niveau) || null;
+  }
+  const et = pl.etapes;
+  const remplies = PL_ETAPES.filter((e) => ["fait", "ia"].includes(et[e.id]?.statut)).length;
+  const passees = PL_ETAPES.filter((e) => et[e.id]?.statut === "passee");
+  const stBadge = (st) => `<span class="pl-badge ${st}">${PL_STATUTS[st] || st}</span>`;
+
+  box.innerHTML = `
+    <div class="pl-head">
+      <div class="pl-progress"><div class="pl-bar" style="width:${Math.round((remplies / PL_ETAPES.length) * 100)}%"></div></div>
+      <span class="pl-count">${remplies}/${PL_ETAPES.length} étapes remplies · mode ${pl.mode === "nouveau" ? "nouveau site" : "refonte"}</span>
+      <button class="cal-btn primary" id="plGen">⚡ Générer le site</button>
+      <button class="btn sec" id="plReset" title="Revenir au choix du mode">Mode…</button>
+    </div>
+    ${passees.length ? `<div class="pg-alert warn">⚠ Étapes passées sans être remplies : ${passees.map((e) => e.titre).join(", ")}. Le résultat pourra s'éloigner de tes attentes sur ces points.</div>` : ""}
+    <div class="pl-steps">
+    ${PL_ETAPES.map((e, i) => {
+      const st = et[e.id]?.statut || "afaire";
+      const na = e.n34 && niveau && niveau <= 2;
+      return `<div class="pl-step ${st}${na ? " na" : ""}" data-e="${e.id}">
+        <div class="pl-num">${i + 1}</div>
+        <div class="pl-body">
+          <div class="pl-t">${e.titre} ${na ? '<span class="pl-badge na">non applicable · site N1-N2</span>' : stBadge(st)}</div>
+          <div class="pl-d">${e.desc}${e.n34 && !niveau ? " <i>(selon le niveau choisi à l'étape 4)</i>" : ""}</div>
+          ${!na && e.inline === "story" ? `<textarea class="mood-in mood-ta pl-story" placeholder="Ce que tu recherches : l'émotion, le parcours, ce que la scène raconte…">${escapeHtml(et.storytelling?.texte || "")}</textarea>` : ""}
+          ${!na && e.inline === "assets" ? `<div class="pl-assets">${(et.assets?.liste || []).map((a, j) => `
+            <label class="pl-asset"><input type="checkbox" data-j="${j}" ${a.fourni ? "checked" : ""}><span>${escapeHtml(a.nom)}${a.note ? ` <i>— ${escapeHtml(a.note)}</i>` : ""}</span><button class="mood-del" data-delasset="${j}">✕</button></label>`).join("")}
+            <button class="mood-add" id="plAddAsset">＋ Ajouter un asset</button></div>` : ""}
+          ${na ? "" : `<div class="pl-acts">
+            ${e.vue ? `<button class="pl-b" data-act="open">Ouvrir ${e.vue === "arbo" ? "l'arborescence" : "le moodboard"} →</button>` : ""}
+            ${e.action === "local" ? `<button class="pl-b" data-act="work">Lancer en local + Claude</button>` : ""}
+            ${e.action === "gen" ? `<button class="pl-b" data-act="gen">⚡ Générer</button>` : ""}
+            <button class="pl-b ok${st === "fait" ? " on" : ""}" data-act="fait">✓ Fait</button>
+            <button class="pl-b${st === "passee" ? " on" : ""}" data-act="passee">Passer</button>
+            <button class="pl-b${st === "ia" ? " on" : ""}" data-act="ia" title="Claude décidera pour cette étape, en suivant la doctrine Orphic">🤖 Laisser l'IA choisir</button>
+            <button class="pl-b" data-act="discuss" title="Ouvre une session Claude Code dans le dossier du site, sur cette étape">💬 Discuter avec Claude</button>
+          </div>`}
+        </div>
+      </div>`;
+    }).join("")}
+    </div>`;
+
+  const gen = async () => {
+    const manquantes = PL_ETAPES.filter((e) => {
+      const na = e.n34 && niveau && niveau <= 2;
+      return !na && e.id !== "generation" && (et[e.id]?.statut || "afaire") === "afaire";
+    });
+    if (manquantes.length && !confirm(`Étapes non remplies : ${manquantes.map((e) => e.titre).join(", ")}.\n\nTu peux générer quand même, mais le résultat pourra s'éloigner de tes attentes. Continuer ?`)) return;
+    const wl = await window.olympus.pegasusWireList(s.key);
+    const vs = ((wl.ok && wl.versions) || []).sort((a, b) => (a.ts < b.ts ? 1 : -1));
+    if (!vs.length) { alert("Aucune version de wireframe. Va dans l'onglet Arborescence et enregistre une version d'abord."); return; }
+    pgWireWorkModal(s, vs[0]);
+  };
+  $("plGen").onclick = gen;
+  $("plReset").onclick = () => { pl.mode = null; pgPlSave(s.key); pgPipelineRender(s); };
+
+  box.querySelectorAll(".pl-step").forEach((el) => {
+    const e = PL_ETAPES.find((x) => x.id === el.dataset.e);
+    const st = () => et[e.id] || (et[e.id] = { statut: "afaire" });
+    el.querySelectorAll(".pl-acts .pl-b").forEach((b) => b.onclick = async () => {
+      const act = b.dataset.act;
+      if (act === "open") { pgSiteTab = e.vue; pgRenderSide(); pgRenderDetail(); return; }
+      if (act === "work") {
+        if (!confirm("Créer/lancer le projet en local + ouvrir une session Claude Code ?")) return;
+        await window.olympus.pegasusWorkOn(s.key); return;
+      }
+      if (act === "gen") { gen(); return; }
+      if (act === "discuss") {
+        const p = `Site « ${s.label} » — pipeline Pegasus, étape « ${e.titre} » (statuts dans pipeline.json). ${e.prompt} Discute avec moi avant d'écrire, et mets à jour les fichiers du projet quand on tranche.`;
+        const r = await window.olympus.pegasusPipelineDiscuss(s.key, p);
+        if (!r.ok) alert("Échec : " + (r.error || ""));
+        return;
+      }
+      // fait / passee / ia : toggle (re-cliquer = revenir à « à faire »)
+      st().statut = st().statut === act ? "afaire" : act;
+      pgPlSave(s.key); pgPipelineRender(s);
+    });
+    // Storytelling inline
+    const story = el.querySelector(".pl-story");
+    if (story) story.oninput = (ev) => { (et.storytelling = et.storytelling || { statut: "afaire" }).texte = ev.target.value; pgPlSave(s.key); };
+    // Assets inline
+    el.querySelectorAll(".pl-asset input[type=checkbox]").forEach((c) => c.onchange = () => { et.assets.liste[+c.dataset.j].fourni = c.checked; pgPlSave(s.key); });
+    el.querySelectorAll("[data-delasset]").forEach((d) => d.onclick = (ev) => { ev.preventDefault(); et.assets.liste.splice(+d.dataset.delasset, 1); pgPlSave(s.key); pgPipelineRender(s); });
+    const add = el.querySelector("#plAddAsset");
+    if (add) add.onclick = () => {
+      (et.assets = et.assets || { statut: "afaire" }).liste = et.assets.liste || [];
+      et.assets.liste.push({ nom: "Nouvel asset", note: "", fourni: false });
+      pgPlSave(s.key); pgPipelineRender(s);
+    };
+  });
+}
+
 // ══ Moodboard : charte graphique (couleurs, typos, logo) + références du site ══
 // Même logique que le wireframe : pré-réglé depuis le SITE RÉEL (scan des couleurs,
 // typos et logo), versionné (socle « Site en ligne » toujours présent, lecture
@@ -1139,6 +1376,13 @@ async function pgMoodRender(s) {
     <div class="mood-main">
     <p class="pg-mnote">La charte graphique de <b>${escapeHtml(s.label)}</b> : couleurs, typographies, logo et références. C'est la base sur laquelle Pegasus construit le site quand tu travailles depuis un wireframe.</p>
     <div class="mood-grid${ro ? " readonly" : ""}">
+      <div class="mood-card mood-wide">
+        <div class="mood-h">Niveau du site</div>
+        <div class="mood-nivs">
+          ${[[1, "N1", "Premium"], [2, "N2", "Luxe"], [3, "N3", "Luxe supérieur"], [4, "N4", "Ultra luxe"]].map(([n, t, l]) =>
+            `<button class="mood-niv${mb.niveau === n ? " on" : ""}" data-niv="${n}" ${ro ? "disabled" : ""}><b>${t}</b><span>${l}</span>${n >= 3 ? '<i>scène Blender</i>' : ""}</button>`).join("")}
+        </div>
+      </div>
       <div class="mood-card">
         <div class="mood-h">Couleurs ${ro ? "" : '<button class="mood-add" data-add="couleur">＋</button>'}</div>
         <div class="mood-swatches" id="mbColors">${mb.couleurs.map((c, i) => moodSwatch(c, i, ro)).join("") || '<span class="mood-empty">Aucune couleur</span>'}</div>
@@ -1193,6 +1437,11 @@ async function pgMoodRender(s) {
     btn.disabled = false;
     pgMoodRender(s);
   };
+  // Niveau du site (1-4) — conditionne les étapes Blender du pipeline
+  box.querySelectorAll(".mood-niv").forEach((b) => b.onclick = () => {
+    mb.niveau = mb.niveau === +b.dataset.niv ? null : +b.dataset.niv;
+    save(); pgMoodRender(s);
+  });
   box.querySelectorAll("[data-add]").forEach((b) => b.onclick = () => {
     if (b.dataset.add === "couleur") mb.couleurs.push({ hex: "#b23a48", nom: "" });
     if (b.dataset.add === "typo") mb.typos.push({ nom: "", role: "" });

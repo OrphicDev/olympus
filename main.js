@@ -1325,10 +1325,40 @@ ipcMain.handle("pegasus:arboSave", async (_e, key, arbo) => {
 
 // ── Moodboard / charte graphique du site (couleurs, typos, logo, références) ──
 async function pegSiteDir(key) {
+  // « proj:<slug> » = projet local (Nouveau site, pas encore connecté à Pegasus)
+  if (String(key).startsWith("proj:")) return pegProjectDir(String(key).slice(5));
   const sites = await pegSites(); const s = sites[key];
   if (!s) throw new Error("Site inconnu.");
   return pegProjectDir(pegSlug(s.host || key));
 }
+
+// ── Pipeline de travail : le fil conducteur d'un site (nouveau / refonte / micro-modifs),
+// étapes guidées avec statuts (afaire | fait | passee | ia) — persisté avec le projet ──
+ipcMain.handle("pegasus:pipelineGet", async (_e, key) => {
+  try {
+    const p = join(await pegSiteDir(key), "pipeline.json");
+    if (!existsSync(p)) return { ok: true, pipeline: null };
+    return { ok: true, pipeline: JSON.parse(readFileSync(p, "utf8")) };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+ipcMain.handle("pegasus:pipelineSave", async (_e, key, pl) => {
+  try {
+    const p = join(await pegSiteDir(key), "pipeline.json");
+    writeFileSync(p, JSON.stringify(pl, null, 2));
+    return { ok: true, path: p };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+// « Discuter avec Claude » sur une étape : session Claude Code dans le dossier du
+// site, avec un prompt contextualisé (construit côté renderer). Medusa + les
+// fichiers du projet (pipeline.json, moodboard.json, arborescence.json…) donnent
+// à Claude tout le contexte.
+ipcMain.handle("pegasus:pipelineDiscuss", async (_e, key, prompt) => {
+  try {
+    const dir = await pegSiteDir(key);
+    await pegTerminal(`cd '${dir}' && claude ${JSON.stringify(String(prompt || "").slice(0, 4000))}`);
+    return { ok: true, dir };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
 ipcMain.handle("pegasus:moodboardGet", async (_e, key) => {
   try {
     const p = join(await pegSiteDir(key), "moodboard.json");
@@ -1476,15 +1506,17 @@ ipcMain.handle("pegasus:moodboardScan", async (_e, key) => {
 // Génère le BRIEF DE CONSTRUCTION d'une version (pages + boutons + charte) et ouvre
 // une session Claude Code pour la bâtir en local. Marque la version comme « à mettre
 // en ligne » (deployed). Ne touche PAS au site distant (c'est « Pousser en ligne »).
-function pegBuildBrief(arbo, mb, siteLabel) {
+const PEG_NIVEAUX = { 1: "N1 · Premium", 2: "N2 · Luxe", 3: "N3 · Luxe supérieur", 4: "N4 · Ultra luxe" };
+function pegBuildBrief(arbo, mb, siteLabel, pipeline) {
   const pages = (arbo.pages || []).filter((p) => !p.artefact);
   const byId = new Map((arbo.pages || []).map((p) => [p.id, p]));
   const nameOf = (id) => { const n = byId.get(id); return n ? n.titre : "?"; };
   const lvl = (p) => Number.isFinite(p.level) ? p.level : (p.home ? 1 : null);
   let md = `# Brief de construction — ${siteLabel}\n\n`;
-  md += `Généré par Pegasus depuis le wireframe validé. Construis les pages ci-dessous en local, avec la charte graphique indiquée. Chaque « section » est un bloc de la page ; une section « → Page » est un bouton/lien menant à cette page.\n\n`;
+  md += `Généré par Pegasus depuis le wireframe validé. Construis les pages ci-dessous en local, avec la charte graphique indiquée. Chaque « section » est un bloc de la page ; une section « → Page » est un bouton/lien menant à cette page. Les lignes « > … » sont le texte/contexte voulu par le dev (la maquette) : c'est la matière, reprends-la.\n\n`;
   if (mb) {
     md += `## Charte graphique\n`;
+    if (mb.niveau) md += `- **Niveau du site** : ${PEG_NIVEAUX[mb.niveau] || mb.niveau}\n`;
     if (mb.couleurs?.length) md += `- **Couleurs** : ${mb.couleurs.map((c) => `${c.nom || ""} ${c.hex}`.trim()).join(" · ")}\n`;
     if (mb.typos?.length) md += `- **Typographies** : ${mb.typos.map((t) => `${t.nom}${t.role ? ` (${t.role})` : ""}`).join(" · ")}\n`;
     if (mb.logo) md += `- **Logo** : ${mb.logo}\n`;
@@ -1499,13 +1531,27 @@ function pegBuildBrief(arbo, mb, siteLabel) {
   const ord = (p) => (lvl(p) == null ? 99 : lvl(p));
   for (const p of pages.sort((a, b) => ord(a) - ord(b))) {
     md += `### ${p.titre}${p.home ? " (accueil)" : ""}${lvl(p) != null ? ` — niveau ${lvl(p)}` : ""}\n`;
+    if (p.contexte) md += `> ${String(p.contexte).replace(/\n/g, "\n> ")}\n`;
     const secs = p.sections || [];
-    if (secs.length) md += secs.map((sc) => `- Section « ${sc.titre} »${sc.cible ? ` — bouton → ${nameOf(sc.cible)}` : ""}`).join("\n") + "\n";
+    if (secs.length) md += secs.map((sc) => `- Section « ${sc.titre} »${sc.cible ? ` — bouton → ${nameOf(sc.cible)}` : ""}${sc.texte ? `\n  > ${String(sc.texte).replace(/\n/g, "\n  > ")}` : ""}`).join("\n") + "\n";
     else md += `- (aucune section détaillée)\n`;
     for (const lk of p.links || []) md += `- Lien → ${nameOf(lk.to)}\n`;
     md += `\n`;
   }
   if (artFooter) md += `### Footer\n${(artFooter.sections || []).map((sc) => `- ${sc.titre}${sc.cible ? ` → ${nameOf(sc.cible)}` : ""}`).join("\n") || "- (vide)"}\n\n`;
+  if (pipeline) {
+    const et = pipeline.etapes || {};
+    if (et.storytelling?.texte) md += `## Scène 3D / Storytelling (niveau 3-4)\n${et.storytelling.texte}\n\n`;
+    if (et.assets?.liste?.length) md += `## Assets\n${et.assets.liste.map((a) => `- [${a.fourni ? "x" : " "}] ${a.nom}${a.note ? ` — ${a.note}` : ""}`).join("\n")}\n\n`;
+    const ia = Object.entries(et).filter(([, v]) => v && v.statut === "ia").map(([k]) => k);
+    const passees = Object.entries(et).filter(([, v]) => v && v.statut === "passee").map(([k]) => k);
+    if (ia.length || passees.length) {
+      md += `## Latitude laissée à l'IA\n`;
+      if (ia.length) md += `- Étapes explicitement laissées à ta discrétion : ${ia.join(", ")}. Décide en suivant la doctrine orphic-web-design et le contexte du site.\n`;
+      if (passees.length) md += `- Étapes passées sans être renseignées : ${passees.join(", ")}. Fais au mieux — le dev sait que le résultat peut s'éloigner de ses attentes sur ces points.\n`;
+      md += `\n`;
+    }
+  }
   return md;
 }
 // « Travailler sur le site depuis ce wireframe » : ouvre la version locale (copie si
@@ -1540,7 +1586,9 @@ ipcMain.handle("pegasus:wireWork", async (_e, key, id, mode) => {
       const arbo = JSON.parse(readFileSync(vf, "utf8"));
       const mbf = join(dir, "moodboard.json");
       const mb = existsSync(mbf) ? JSON.parse(readFileSync(mbf, "utf8")) : null;
-      const brief = pegBuildBrief(arbo, mb, s.label || s.host || key);
+      const plf = join(dir, "pipeline.json");
+      const pl = existsSync(plf) ? JSON.parse(readFileSync(plf, "utf8")) : null;
+      const brief = pegBuildBrief(arbo, mb, s.label || s.host || key, pl);
       const bdir = join(wdir, "build-" + id);
       mkdirSync(bdir, { recursive: true });
       const briefPath = join(bdir, "BRIEF.md");

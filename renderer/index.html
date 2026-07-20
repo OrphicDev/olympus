@@ -865,6 +865,56 @@
   .wk-choice:disabled{opacity:.5;cursor:default;}
   .wk-t{font-size:14px;font-weight:600;color:var(--txt);margin-bottom:5px;}
   .wk-d{font-size:12px;color:var(--muted);line-height:1.5;}
+  /* ── Pipeline de travail ── */
+  .pl-head{display:flex;align-items:center;gap:14px;margin-bottom:14px;}
+  .pl-progress{flex:1;height:6px;border-radius:4px;background:var(--card2);overflow:hidden;}
+  .pl-bar{height:100%;border-radius:4px;background:var(--accent);transition:width .5s var(--m-ease,ease);}
+  .pl-count{font-size:11.5px;color:var(--dim);white-space:nowrap;}
+  .pg-alert.warn{color:var(--warn,#e8c268);border-bottom-color:color-mix(in srgb,var(--warn,#e8c268) 30%,transparent);margin-bottom:12px;}
+  .pl-steps{display:flex;flex-direction:column;gap:10px;max-width:880px;}
+  .pl-step{display:flex;gap:14px;border:1px solid var(--line);border-radius:14px;padding:14px 16px;background:var(--bg2);transition:border-color .15s,opacity .2s;}
+  .pl-step:hover{border-color:var(--line2);}
+  .pl-step.fait{border-color:color-mix(in srgb,var(--ok) 45%,transparent);}
+  .pl-step.ia{border-color:color-mix(in srgb,var(--accent2) 40%,transparent);}
+  .pl-step.passee{opacity:.6;}
+  .pl-step.na{opacity:.45;}
+  .pl-num{width:26px;height:26px;border-radius:50%;background:var(--card2);color:var(--muted);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;flex-shrink:0;margin-top:2px;}
+  .pl-step.fait .pl-num{background:color-mix(in srgb,var(--ok) 20%,transparent);color:var(--ok);}
+  .pl-body{flex:1;min-width:0;}
+  .pl-t{font-size:13.5px;font-weight:600;color:var(--txt);display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .pl-d{font-size:12px;color:var(--muted);line-height:1.5;margin-top:3px;}
+  .pl-d i{color:var(--dim);}
+  .pl-badge{font-size:9px;letter-spacing:.06em;text-transform:uppercase;padding:2px 8px;border-radius:9px;background:var(--card2);color:var(--dim);}
+  .pl-badge.fait{color:var(--ok);background:color-mix(in srgb,var(--ok) 14%,transparent);}
+  .pl-badge.ia{color:var(--accent2);background:color-mix(in srgb,var(--accent2) 14%,transparent);}
+  .pl-acts{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;}
+  .pl-b{background:var(--card2);border:1px solid var(--line);color:var(--muted);font-size:11px;cursor:pointer;padding:5px 10px;border-radius:8px;transition:color .12s,border-color .12s,background .12s;}
+  .pl-b:hover{color:var(--txt);border-color:var(--line2);}
+  .pl-b.on{color:var(--txt);border-color:var(--txt);}
+  .pl-b.ok.on{color:var(--ok);border-color:var(--ok);}
+  .pl-story{margin-top:10px;width:100%;}
+  .pl-assets{margin-top:10px;display:flex;flex-direction:column;gap:5px;align-items:flex-start;}
+  .pl-asset{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);cursor:pointer;}
+  .pl-asset input{accent-color:var(--accent);}
+  .pl-asset i{color:var(--dim);font-style:normal;}
+  .pl-shortcuts{display:flex;gap:10px;flex-wrap:wrap;}
+  .pl-shortcuts .pg-bigbtn{flex-direction:column;align-items:flex-start;gap:3px;min-width:180px;}
+  .pl-shortcuts .pg-bigbtn .d{font-size:11px;color:var(--dim);font-weight:400;}
+  /* Niveau du site (moodboard) */
+  .mood-nivs{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;}
+  .mood-niv{background:var(--card2);border:1px solid var(--line);border-radius:11px;padding:10px 8px;cursor:pointer;display:flex;flex-direction:column;gap:2px;align-items:center;color:var(--muted);transition:border-color .13s,box-shadow .13s;}
+  .mood-niv b{font-size:14px;color:var(--txt);}
+  .mood-niv span{font-size:10.5px;}
+  .mood-niv i{font-size:9px;color:var(--dim);font-style:normal;}
+  .mood-niv.on{border-color:var(--accent);box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 35%,transparent);}
+  .mood-niv.on b{color:var(--accent);}
+  .mood-niv:disabled{cursor:default;opacity:.8;}
+  /* Modale maquette */
+  .mq-sec{margin-bottom:10px;}
+  .mq-t{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--txt);font-weight:550;margin-bottom:5px;}
+  .mood-ta.mini{min-height:44px;}
+  .ab-mini.has{color:var(--accent);}
+  .ab-node:hover .ab-mini.has{opacity:1;}
   /* Moodboard */
   .mood-layout{display:flex;gap:12px;align-items:flex-start;}
   .mood-main{flex:1;min-width:0;}
