@@ -1082,46 +1082,117 @@ function pgWireWorkModal(s, v) {
 }
 
 // ══ Moodboard : charte graphique (couleurs, typos, logo) + références du site ══
+// Même logique que le wireframe : pré-réglé depuis le SITE RÉEL (scan des couleurs,
+// typos et logo), versionné (socle « Site en ligne » toujours présent, lecture
+// seule), duplicable pour être modifié.
 const pgMoodCache = {};
 let pgMoodSaveT = null;
 function pgMoodSave(key) {
   clearTimeout(pgMoodSaveT);
   pgMoodSaveT = setTimeout(() => window.olympus.pegasusMoodboardSave(key, pgMoodCache[key]), 400);
 }
-async function pgMoodRender(s) {
-  const box = $("pgMood"); if (!box) return;
+const pgMoodBlank = () => ({ couleurs: [], typos: [], logo: "", notes: "", refs: [] });
+let pgMbBaselining = false;
+// Prépare le moodboard : pré-réglage par scan du site réel au tout premier
+// chargement, puis socle « Site en ligne » (version deployed, toujours présente).
+async function pgMbPrep(s) {
   if (!pgMoodCache[s.key]) {
     const r = await window.olympus.pegasusMoodboardGet(s.key);
-    pgMoodCache[s.key] = (r.ok && r.moodboard) || { couleurs: [], typos: [], logo: "", notes: "", refs: [] };
+    if (r.ok && r.moodboard) pgMoodCache[s.key] = r.moodboard;
+    else {
+      const sc = await window.olympus.pegasusMoodboardScan(s.key);
+      pgMoodCache[s.key] = (sc.ok && sc.moodboard) || pgMoodBlank();
+      pgMoodSave(s.key);
+    }
   }
+  let l = await window.olympus.pegasusMbList(s.key);
   const mb = pgMoodCache[s.key];
+  if (l.ok && (!l.versions || !l.versions.length) && !pgMbBaselining) {
+    pgMbBaselining = true;
+    const sr = await window.olympus.pegasusMbSave(s.key, mb, "Site en ligne", true);
+    pgMbBaselining = false;
+    if (sr.ok) { mb.versionId = sr.id; pgMoodSave(s.key); }
+    l = await window.olympus.pegasusMbList(s.key);
+  }
+  return l.ok ? { versions: l.versions || [], deployed: l.deployed || null } : { versions: [], deployed: null };
+}
+async function pgMoodRender(s) {
+  const box = $("pgMood"); if (!box) return;
+  box.innerHTML = `<div class="rb-empty">Lecture de la charte du site…</div>`;
+  const man = await pgMbPrep(s);
+  const mb = pgMoodCache[s.key];
+  const editable = (mb.versionId ?? null) !== man.deployed;
+  const ro = !editable;
   const save = () => pgMoodSave(s.key);
   box.innerHTML = `
-    <p class="pg-mnote">La charte graphique de <b>${escapeHtml(s.label)}</b> : couleurs, typographies, logo et références. C'est la base sur laquelle Pegasus construit le site quand tu pousses un wireframe.</p>
-    <div class="mood-grid">
+    <div class="pg-actrow" style="margin-bottom:12px;">
+      ${editable ? `
+      <button class="cal-btn primary" id="mbSaveVer" title="Fige l'état actuel comme une version du moodboard">✓ Enregistrer une version</button>
+      <span class="ab-hint">Charte de travail — modifie librement, puis enregistre une version.</span>
+      ` : `
+      <span class="ab-lock">🔒 Charte du site en ligne — lecture seule. Pour la modifier, crée une version de travail :</span>
+      <button class="cal-btn primary" id="mbDupLive" title="Repart de la charte actuelle du site">Dupliquer la version en ligne</button>
+      <button class="btn sec" id="mbBlankNew" title="Charte vierge">Partir de zéro</button>
+      `}
+    </div>
+    <div class="mood-layout">
+    <div class="mood-main">
+    <p class="pg-mnote">La charte graphique de <b>${escapeHtml(s.label)}</b> : couleurs, typographies, logo et références. C'est la base sur laquelle Pegasus construit le site quand tu travailles depuis un wireframe.</p>
+    <div class="mood-grid${ro ? " readonly" : ""}">
       <div class="mood-card">
-        <div class="mood-h">Couleurs <button class="mood-add" data-add="couleur">＋</button></div>
-        <div class="mood-swatches" id="mbColors">${mb.couleurs.map((c, i) => moodSwatch(c, i)).join("") || '<span class="mood-empty">Aucune couleur</span>'}</div>
+        <div class="mood-h">Couleurs ${ro ? "" : '<button class="mood-add" data-add="couleur">＋</button>'}</div>
+        <div class="mood-swatches" id="mbColors">${mb.couleurs.map((c, i) => moodSwatch(c, i, ro)).join("") || '<span class="mood-empty">Aucune couleur</span>'}</div>
       </div>
       <div class="mood-card">
-        <div class="mood-h">Typographies <button class="mood-add" data-add="typo">＋</button></div>
-        <div id="mbTypos">${mb.typos.map((t, i) => moodTypo(t, i)).join("") || '<span class="mood-empty">Aucune typo</span>'}</div>
+        <div class="mood-h">Typographies ${ro ? "" : '<button class="mood-add" data-add="typo">＋</button>'}</div>
+        <div id="mbTypos">${mb.typos.map((t, i) => moodTypo(t, i, ro)).join("") || '<span class="mood-empty">Aucune typo</span>'}</div>
       </div>
       <div class="mood-card">
         <div class="mood-h">Logo</div>
-        <input class="mood-in" id="mbLogo" placeholder="URL ou chemin du logo" value="${escapeHtml(mb.logo || "")}">
+        <input class="mood-in" id="mbLogo" placeholder="URL ou chemin du logo" value="${escapeHtml(mb.logo || "")}" ${ro ? "disabled" : ""}>
         ${mb.logo ? `<div class="mood-logo">${/^https?:|^\/|\.(svg|png|jpe?g|webp)$/i.test(mb.logo) ? `<img src="${escapeHtml(mb.logo)}" alt="logo">` : escapeHtml(mb.logo)}</div>` : ""}
       </div>
       <div class="mood-card mood-wide">
-        <div class="mood-h">Références <button class="mood-add" data-add="ref">＋</button></div>
-        <div id="mbRefs">${mb.refs.map((r, i) => moodRef(r, i)).join("") || '<span class="mood-empty">Aucune référence</span>'}</div>
+        <div class="mood-h">Références ${ro ? "" : '<button class="mood-add" data-add="ref">＋</button>'}</div>
+        <div id="mbRefs">${mb.refs.map((r, i) => moodRef(r, i, ro)).join("") || '<span class="mood-empty">Aucune référence</span>'}</div>
       </div>
       <div class="mood-card mood-wide">
         <div class="mood-h">Notes de direction artistique</div>
-        <textarea class="mood-in mood-ta" id="mbNotes" placeholder="Ambiance, intentions, contraintes…">${escapeHtml(mb.notes || "")}</textarea>
+        <textarea class="mood-in mood-ta" id="mbNotes" placeholder="Ambiance, intentions, contraintes…" ${ro ? "disabled" : ""}>${escapeHtml(mb.notes || "")}</textarea>
       </div>
+    </div>
+    </div>
+    <div class="ab-versions" id="mbVersions"></div>
     </div>`;
 
+  pgMbRenderCol(s, man);
+  // Ouvrir une référence marche dans tous les modes (même en lecture seule)
+  box.querySelectorAll("#mbRefs .mood-row .mood-open").forEach((b, i) => {
+    b.onclick = () => { if (mb.refs[i] && mb.refs[i].url) window.olympus.openExternal(mb.refs[i].url); };
+  });
+
+  if (!editable) {
+    box.querySelector("#mbDupLive").onclick = () => {
+      const copy = JSON.parse(JSON.stringify(mb));
+      copy.versionId = null;            // brouillon non enregistré = éditable
+      pgMoodCache[s.key] = copy; pgMoodSave(s.key); pgMoodRender(s);
+    };
+    box.querySelector("#mbBlankNew").onclick = () => {
+      pgMoodCache[s.key] = { ...pgMoodBlank(), versionId: null };
+      pgMoodSave(s.key); pgMoodRender(s);
+    };
+    return; // lecture seule : aucun handler d'édition
+  }
+
+  box.querySelector("#mbSaveVer").onclick = async (e) => {
+    const btn = e.currentTarget; btn.disabled = true;
+    const l = await window.olympus.pegasusMbList(s.key);
+    const n = ((l.ok && l.versions) || []).filter((v) => /^Version \d+$/.test(v.label || "")).length + 1;
+    const r = await window.olympus.pegasusMbSave(s.key, mb, "Version " + n, false);
+    if (r.ok) { mb.versionId = r.id; pgMoodSave(s.key); }
+    btn.disabled = false;
+    pgMoodRender(s);
+  };
   box.querySelectorAll("[data-add]").forEach((b) => b.onclick = () => {
     if (b.dataset.add === "couleur") mb.couleurs.push({ hex: "#b23a48", nom: "" });
     if (b.dataset.add === "typo") mb.typos.push({ nom: "", role: "" });
@@ -1149,32 +1220,70 @@ async function pgMoodRender(s) {
     el.querySelector('[data-f="url"]').oninput = (e) => { mb.refs[i].url = e.target.value; save(); };
     el.querySelector('[data-f="note"]').oninput = (e) => { mb.refs[i].note = e.target.value; save(); };
     el.querySelector(".mood-del").onclick = () => { mb.refs.splice(i, 1); save(); pgMoodRender(s); };
-    el.querySelector(".mood-open").onclick = () => { if (mb.refs[i].url) window.olympus.openExternal(mb.refs[i].url); };
   });
   box.querySelector("#mbLogo").onchange = (e) => { mb.logo = e.target.value.trim(); save(); pgMoodRender(s); };
   box.querySelector("#mbNotes").oninput = (e) => { mb.notes = e.target.value; save(); };
 }
-function moodSwatch(c, i) {
+// Colonne des versions du moodboard (mêmes cartes que les wireframes, sans « Travailler »)
+function pgMbRenderCol(s, man) {
+  const box = $("mbVersions"); if (!box) return;
+  const vs = [...man.versions].sort((a, b) => (a.ts < b.ts ? 1 : -1));
+  const fmt = (ts) => { try { return new Date(ts).toLocaleString("fr-FR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }); } catch { return ts; } };
+  box.innerHTML = `
+    <div class="abv-h">Versions du moodboard</div>
+    ${vs.length ? vs.map((v, i) => `
+      <div class="abv-item${man.deployed === v.id ? " deployed" : ""}" data-id="${v.id}">
+        <div class="abv-top">
+          <span class="abv-name" data-f="vname" title="Double-clic pour renommer">${escapeHtml(v.label || "Sans nom")}</span>
+          ${i === 0 ? '<span class="abv-tag last">dernière</span>' : ""}
+        </div>
+        <div class="abv-date">${fmt(v.ts)}</div>
+        ${man.deployed === v.id ? '<div class="abv-live">● version en ligne</div>' : ""}
+        <div class="abv-acts">
+          <button class="abv-open" data-act="load" title="Ouvrir cette version dans l'éditeur">Ouvrir dans l'éditeur ↗</button>
+          ${man.deployed === v.id ? '<button class="abv-b" data-act="del" disabled title="La version en ligne ne peut pas être supprimée" style="opacity:.35;cursor:default;">✕</button>' : '<button class="abv-b" data-act="del" title="Supprimer">✕</button>'}
+        </div>
+      </div>`).join("") : '<div class="abv-empty">Aucune version.</div>'}`;
+
+  box.querySelectorAll(".abv-item").forEach((el) => {
+    const id = el.dataset.id;
+    const nameEl = el.querySelector('[data-f="vname"]');
+    pgAbEditable(nameEl, async (v) => { await window.olympus.pegasusMbRename(s.key, id, v || "Sans nom"); });
+    el.querySelector('[data-act="load"]').onclick = async () => {
+      if (!confirm("Ouvrir cette version du moodboard ? L'état actuel sera remplacé (enregistre-le d'abord si besoin).")) return;
+      const lr = await window.olympus.pegasusMbLoad(s.key, id);
+      if (lr.ok) { lr.moodboard.versionId = id; pgMoodCache[s.key] = lr.moodboard; pgMoodSave(s.key); pgMoodRender(s); }
+      else alert("Échec : " + (lr.error || ""));
+    };
+    const delBtn = el.querySelector('[data-act="del"]');
+    if (delBtn && !delBtn.disabled) delBtn.onclick = async () => {
+      if (!confirm("Supprimer cette version du moodboard ?")) return;
+      await window.olympus.pegasusMbDelete(s.key, id);
+      pgMoodRender(s);
+    };
+  });
+}
+function moodSwatch(c, i, ro) {
   return `<div class="mood-swatch" data-i="${i}">
-    <label class="mood-chip" style="background:${escapeHtml(c.hex || "#000")}"><input type="color" data-f="hex" value="${escapeHtml(c.hex || "#000000")}"></label>
-    <input class="mood-in mini" data-f="hextxt" value="${escapeHtml(c.hex || "")}">
-    <input class="mood-in mini" data-f="nom" placeholder="nom" value="${escapeHtml(c.nom || "")}">
-    <button class="mood-del" title="Supprimer">✕</button>
+    <label class="mood-chip" style="background:${escapeHtml(c.hex || "#000")}"><input type="color" data-f="hex" value="${escapeHtml(c.hex || "#000000")}" ${ro ? "disabled" : ""}></label>
+    <input class="mood-in mini" data-f="hextxt" value="${escapeHtml(c.hex || "")}" ${ro ? "disabled" : ""}>
+    <input class="mood-in mini" data-f="nom" placeholder="nom" value="${escapeHtml(c.nom || "")}" ${ro ? "disabled" : ""}>
+    ${ro ? "" : '<button class="mood-del" title="Supprimer">✕</button>'}
   </div>`;
 }
-function moodTypo(t, i) {
+function moodTypo(t, i, ro) {
   return `<div class="mood-row" data-i="${i}">
-    <input class="mood-in" data-f="nom" placeholder="Nom de la police" value="${escapeHtml(t.nom || "")}">
-    <input class="mood-in mini" data-f="role" placeholder="rôle (titres…)" value="${escapeHtml(t.role || "")}">
-    <button class="mood-del" title="Supprimer">✕</button>
+    <input class="mood-in" data-f="nom" placeholder="Nom de la police" value="${escapeHtml(t.nom || "")}" ${ro ? "disabled" : ""}>
+    <input class="mood-in mini" data-f="role" placeholder="rôle (titres…)" value="${escapeHtml(t.role || "")}" ${ro ? "disabled" : ""}>
+    ${ro ? "" : '<button class="mood-del" title="Supprimer">✕</button>'}
   </div>`;
 }
-function moodRef(r, i) {
+function moodRef(r, i, ro) {
   return `<div class="mood-row" data-i="${i}">
-    <input class="mood-in" data-f="url" placeholder="https://…" value="${escapeHtml(r.url || "")}">
-    <input class="mood-in mini" data-f="note" placeholder="note" value="${escapeHtml(r.note || "")}">
+    <input class="mood-in" data-f="url" placeholder="https://…" value="${escapeHtml(r.url || "")}" ${ro ? "disabled" : ""}>
+    <input class="mood-in mini" data-f="note" placeholder="note" value="${escapeHtml(r.note || "")}" ${ro ? "disabled" : ""}>
     <button class="mood-open" title="Ouvrir">↗</button>
-    <button class="mood-del" title="Supprimer">✕</button>
+    ${ro ? "" : '<button class="mood-del" title="Supprimer">✕</button>'}
   </div>`;
 }
 

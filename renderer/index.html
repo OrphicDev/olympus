@@ -2,7 +2,7 @@
 <html lang="fr">
 <head>
 <meta charset="utf-8" />
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:;" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src 'self' data: https:;" />
 <title>Olympus</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -866,6 +866,10 @@
   .wk-t{font-size:14px;font-weight:600;color:var(--txt);margin-bottom:5px;}
   .wk-d{font-size:12px;color:var(--muted);line-height:1.5;}
   /* Moodboard */
+  .mood-layout{display:flex;gap:12px;align-items:flex-start;}
+  .mood-main{flex:1;min-width:0;}
+  .mood-grid.readonly .mood-in:disabled{opacity:.75;cursor:default;}
+  .mood-grid.readonly .mood-chip{cursor:default;}
   .mood-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;}
   .mood-card{border:1px solid var(--line);border-radius:14px;padding:13px 14px;background:var(--bg2);}
   .mood-card.mood-wide{grid-column:1 / -1;}

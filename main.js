@@ -1344,61 +1344,133 @@ ipcMain.handle("pegasus:moodboardSave", async (_e, key, mb) => {
   } catch (e) { return { ok: false, error: e.message }; }
 });
 
-// ── Versions de wireframe : snapshots figés de l'arborescence + version « en ligne » ──
-async function pegWireDir(key) {
-  const dir = join(await pegSiteDir(key), "wireframes");
+// ── Magasin de versions générique (wireframes ET moodboards) : snapshots figés
+// dans <site>/<sous-dossier>/ + manifest {versions:[{id,ts,label}], deployed} ──
+async function pegVerDir(key, sub) {
+  const dir = join(await pegSiteDir(key), sub);
   mkdirSync(dir, { recursive: true });
   return dir;
 }
-function pegWireManifest(dir) {
+function pegVerManifest(dir) {
   const p = join(dir, "manifest.json");
   if (existsSync(p)) { try { return JSON.parse(readFileSync(p, "utf8")); } catch {} }
   return { versions: [], deployed: null };
 }
-ipcMain.handle("pegasus:wireList", async (_e, key) => {
-  try { return { ok: true, ...pegWireManifest(await pegWireDir(key)) }; }
-  catch (e) { return { ok: false, error: e.message }; }
-});
-// Fige l'arborescence courante comme nouvelle version. deployAsCurrent → marque « en ligne »
-// (utilisé pour la 1re version, qui reflète le site réel juste après un scan).
-ipcMain.handle("pegasus:wireSave", async (_e, key, arbo, label, deployAsCurrent) => {
+function pegVerRegister(prefix, sub, field) {
+  ipcMain.handle(`pegasus:${prefix}List`, async (_e, key) => {
+    try { return { ok: true, ...pegVerManifest(await pegVerDir(key, sub)) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+  // Fige l'état courant comme nouvelle version. deployAsCurrent → marque « en ligne »
+  // (utilisé pour la 1re version, qui reflète le site réel juste après un scan).
+  ipcMain.handle(`pegasus:${prefix}Save`, async (_e, key, data, label, deployAsCurrent) => {
+    try {
+      const dir = await pegVerDir(key, sub);
+      const man = pegVerManifest(dir);
+      const id = prefix[0] + Date.now().toString(36);
+      writeFileSync(join(dir, id + ".json"), JSON.stringify(data, null, 2));
+      man.versions.push({ id, ts: new Date().toISOString(), label: String(label || "").slice(0, 60) });
+      if (deployAsCurrent || !man.deployed) man.deployed = id;
+      writeFileSync(join(dir, "manifest.json"), JSON.stringify(man, null, 2));
+      return { ok: true, id, deployed: man.deployed };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+  ipcMain.handle(`pegasus:${prefix}Rename`, async (_e, key, id, label) => {
+    try {
+      const dir = await pegVerDir(key, sub); const man = pegVerManifest(dir);
+      const v = man.versions.find((x) => x.id === id); if (!v) throw new Error("Version introuvable.");
+      v.label = String(label || "").slice(0, 60);
+      writeFileSync(join(dir, "manifest.json"), JSON.stringify(man, null, 2));
+      return { ok: true };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+  ipcMain.handle(`pegasus:${prefix}Load`, async (_e, key, id) => {
+    try {
+      const p = join(await pegVerDir(key, sub), String(id).replace(/[^\w]/g, "") + ".json");
+      if (!existsSync(p)) throw new Error("Version introuvable.");
+      return { ok: true, [field]: JSON.parse(readFileSync(p, "utf8")) };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+  ipcMain.handle(`pegasus:${prefix}Delete`, async (_e, key, id) => {
+    try {
+      const dir = await pegVerDir(key, sub); const man = pegVerManifest(dir);
+      man.versions = man.versions.filter((v) => v.id !== id);
+      if (man.deployed === id) man.deployed = null;
+      const f = join(dir, String(id).replace(/[^\w]/g, "") + ".json");
+      if (existsSync(f)) rmSync(f);
+      writeFileSync(join(dir, "manifest.json"), JSON.stringify(man, null, 2));
+      return { ok: true, deployed: man.deployed };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+}
+pegVerRegister("wire", "wireframes", "arbo");
+pegVerRegister("mb", "moodboards", "moodboard");
+
+// ── Scan de la charte graphique du site réel : couleurs (variables CSS du thème),
+// typographies et logo, extraits du HTML rendu + feuilles de style du domaine ──
+ipcMain.handle("pegasus:moodboardScan", async (_e, key) => {
   try {
-    const dir = await pegWireDir(key);
-    const man = pegWireManifest(dir);
-    const id = "w" + Date.now().toString(36);
-    const ts = new Date().toISOString();
-    writeFileSync(join(dir, id + ".json"), JSON.stringify(arbo, null, 2));
-    man.versions.push({ id, ts, label: String(label || "").slice(0, 60) });
-    if (deployAsCurrent || !man.deployed) man.deployed = id;
-    writeFileSync(join(dir, "manifest.json"), JSON.stringify(man, null, 2));
-    return { ok: true, id, deployed: man.deployed };
-  } catch (e) { return { ok: false, error: e.message }; }
-});
-ipcMain.handle("pegasus:wireRename", async (_e, key, id, label) => {
-  try {
-    const dir = await pegWireDir(key); const man = pegWireManifest(dir);
-    const v = man.versions.find((x) => x.id === id); if (!v) throw new Error("Version introuvable.");
-    v.label = String(label || "").slice(0, 60);
-    writeFileSync(join(dir, "manifest.json"), JSON.stringify(man, null, 2));
-    return { ok: true };
-  } catch (e) { return { ok: false, error: e.message }; }
-});
-ipcMain.handle("pegasus:wireLoad", async (_e, key, id) => {
-  try {
-    const p = join(await pegWireDir(key), String(id).replace(/[^\w]/g, "") + ".json");
-    if (!existsSync(p)) throw new Error("Version introuvable.");
-    return { ok: true, arbo: JSON.parse(readFileSync(p, "utf8")) };
-  } catch (e) { return { ok: false, error: e.message }; }
-});
-ipcMain.handle("pegasus:wireDelete", async (_e, key, id) => {
-  try {
-    const dir = await pegWireDir(key); const man = pegWireManifest(dir);
-    man.versions = man.versions.filter((v) => v.id !== id);
-    if (man.deployed === id) man.deployed = null;
-    const f = join(dir, String(id).replace(/[^\w]/g, "") + ".json");
-    if (existsSync(f)) rmSync(f);
-    writeFileSync(join(dir, "manifest.json"), JSON.stringify(man, null, 2));
-    return { ok: true, deployed: man.deployed };
+    const sites = await pegSites(); const s = sites[key];
+    if (!s) throw new Error("Site inconnu.");
+    const base = s.base_url.replace(/\/+$/, "");
+    const get = async (url) => {
+      try {
+        const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 15000);
+        const r = await fetch(url, { headers: { "User-Agent": "Olympus-Pegasus/1.0" }, signal: ctl.signal });
+        clearTimeout(t);
+        return r.ok ? await r.text() : "";
+      } catch { return ""; }
+    };
+    const html = await get(base + "/");
+    if (!html) throw new Error("Site injoignable.");
+    const host = (u) => { try { return new URL(u).hostname.replace(/^www\./, ""); } catch { return ""; } };
+    // CSS : <style> inline + feuilles du même domaine (les 4 premières suffisent)
+    const cssUrls = [...html.matchAll(/<link[^>]+rel=["']stylesheet["'][^>]*>/gi)]
+      .map((m) => (m[0].match(/href=["']([^"']+)["']/) || [])[1]).filter(Boolean)
+      .map((u) => { try { return new URL(u, base).href; } catch { return null; } })
+      .filter((u) => u && host(u) === host(base));
+    let css = [...html.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)].map((m) => m[1]).join("\n");
+    for (const u of cssUrls.slice(0, 4)) css += "\n" + await get(u);
+    // Couleurs : variables CSS du THÈME (hors bruit --wp*), en hex uniquement
+    const couleurs = [];
+    const seen = new Set();
+    for (const m of css.matchAll(/(--[\w-]+)\s*:\s*(#[0-9a-fA-F]{6})\b/g)) {
+      if (/^--wp/i.test(m[1])) continue;
+      const hex = m[2].toLowerCase();
+      if (seen.has(m[1]) || couleurs.length >= 8) continue;
+      seen.add(m[1]);
+      couleurs.push({ hex, nom: m[1].replace(/^--/, "").replace(/[-_]+/g, " ") });
+    }
+    // Repli : hex les plus fréquents du CSS si le thème n'expose pas de variables
+    if (couleurs.length < 3) {
+      const freq = new Map();
+      for (const m of css.matchAll(/#[0-9a-fA-F]{6}\b/g)) { const h = m[0].toLowerCase(); freq.set(h, (freq.get(h) || 0) + 1); }
+      for (const [hex] of [...freq].sort((a, b) => b[1] - a[1]).slice(0, 6)) {
+        if (!couleurs.some((c) => c.hex === hex)) couleurs.push({ hex, nom: "" });
+      }
+    }
+    // Typographies : font-family réelles (ni génériques ni var()), rôle via --serif/--sans
+    const roleOf = {};
+    for (const m of css.matchAll(/--(serif|sans)\s*:\s*["']?([^;,"'}]+)/gi)) roleOf[m[2].trim()] = m[1] === "serif" ? "Titres" : "Texte";
+    const fset = new Map();
+    for (const m of css.matchAll(/font-family\s*:\s*([^;}]+)/gi)) {
+      const f = m[1].split(",")[0].replace(/["']/g, "").trim();
+      if (!f || /^(inherit|initial|unset|var\(|sans-serif|serif|monospace|system-ui|-apple-system|ui-)/i.test(f)) continue;
+      if (!fset.has(f)) fset.set(f, roleOf[f] || "");
+    }
+    for (const m of html.matchAll(/fonts\.googleapis\.com\/css2?\?[^"']*family=([^"'&]+)/gi)) {
+      const f = decodeURIComponent(m[1]).split(":")[0].replace(/\+/g, " ").trim();
+      if (f && !fset.has(f)) fset.set(f, "");
+    }
+    const typos = [...fset].slice(0, 5).map(([nom, role]) => ({ nom, role }));
+    // Logo : première image « logo » du document (URL absolue)
+    let logo = "";
+    for (const m of html.matchAll(/<img[^>]+>/gi)) {
+      if (!/logo/i.test(m[0])) continue;
+      const src = (m[0].match(/src=["']([^"']+)["']/) || [])[1];
+      if (src) { try { logo = new URL(src, base).href; } catch {} break; }
+    }
+    return { ok: true, moodboard: { couleurs, typos, logo, notes: "", refs: [] } };
   } catch (e) { return { ok: false, error: e.message }; }
 });
 // Génère le BRIEF DE CONSTRUCTION d'une version (pages + boutons + charte) et ouvre
