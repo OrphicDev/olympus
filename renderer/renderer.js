@@ -254,6 +254,13 @@ function pgBreak(rows, opts = {}) {
 }
 // Panneau titré (contient une courbe ou un tableau).
 const pgPanel = (title, inner, extra) => `<div class="ga-panel"><div class="ga-panel-h">${escapeHtml(title)}${extra ? `<span class="ga-panel-x">${extra}</span>` : ""}</div>${inner}</div>`;
+// En-tête console : titre + sous-titre + bouton relancer (id repris par pgRenderDetail).
+const pgGaHead = (title, s, btnId) => `<div class="ga-head">
+    <div class="ga-head-t"><h2>${escapeHtml(title)}</h2><span>${escapeHtml(s.label)} · mesuré par Pegasus</span></div>
+    <div class="ga-controls">${btnId ? `<button class="ga-ic" id="${btnId}" title="Relancer l'analyse">↻</button>` : ""}</div>
+  </div>`;
+// Tableau clé/valeur simple (statuts, métriques détaillées).
+const pgKV = (rows) => `<div class="ga-kv">${rows.map((r) => `<div class="ga-kv-r"><span>${escapeHtml(r[0])}</span><b>${r[2] ? r[1] : escapeHtml(r[1])}</b></div>`).join("")}</div>`;
 const pgDayLabel = (ds) => { try { return new Date(ds + "T12:00:00").toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" }); } catch { return ds; } };
 
 // Tendance entre le 1er et le dernier point d'une série (goodDown = une baisse est bonne)
@@ -2448,54 +2455,49 @@ async function pgRenderBackups(s) {
 
 function pgTabSeo(s) {
   const seo = pgSeo[s.key];
-  if (!seo) return `<p class="pg-mnote">Audit SEO : lecture du HTML rendu de chaque page (title, meta description, H1, canonical, Open Graph, alt, langue) + détection du plugin SEO, sitemap et robots.txt.</p><button class="cal-btn" id="pgSeoBtn" style="margin-top:4px;">Lancer l'audit SEO</button>`;
-  if (seo.loading) return `<div class="rb-empty">Audit en cours… (lecture du HTML rendu de chaque page)</div>`;
-  if (!seo.ok) return `<div class="rb-empty">Audit impossible : ${escapeHtml(seo.error || "")}</div><button class="cal-btn" id="pgSeoBtn" style="margin-top:8px;">Réessayer</button>`;
+  if (!seo) return `<div class="ga-note">Audit SEO : lecture du HTML rendu de chaque page (title, meta description, H1, canonical, Open Graph, alt, langue) + détection du plugin SEO, sitemap et robots.txt.</div><button class="cal-btn" id="pgSeoBtn" style="margin-top:12px;">Lancer l'audit SEO</button>`;
+  if (seo.loading) return `<div class="ga-note">Audit en cours… (lecture du HTML rendu de chaque page)</div>`;
+  if (!seo.ok) return `<div class="ga-note">Audit impossible : ${escapeHtml(seo.error || "")}</div><button class="cal-btn" id="pgSeoBtn" style="margin-top:12px;">Réessayer</button>`;
   const a = seo.seo;
   const problemes = Object.values(a.resume_problemes || {}).reduce((n, x) => n + (x || 0), 0);
   const score = Math.max(0, Math.round(100 - (a.pages_auditees ? (problemes / a.pages_auditees) * 20 : 0)));
-  const sp = (pgMetrics[s.key]?.seo || []).map((m) => m.score);
-  let html = `<div class="pg-dash">
-    <div class="pg-dcard"><div class="pg-gwrap">${pgGauge(score, 100, score >= 85 ? "var(--ok)" : score >= 60 ? "var(--warn,#e8c268)" : "var(--err)")}</div><div class="pg-dlabel">Santé SEO</div></div>
-    <div class="pg-dcard"><div class="pg-dbig">${problemes}</div><div class="pg-dlabel">Problèmes · ${a.pages_auditees} page(s)</div></div>
-    <div class="pg-dcard pg-dwide"><div class="pg-dlabel">Tendance (santé SEO)</div>${pgSparkline(sp, "var(--accent2)")}</div>
+  const hist = (pgMetrics[s.key]?.seo || []).map((m) => m.score);
+  const prev = hist.length >= 2 ? hist[hist.length - 2] : null;
+  let html = pgGaHead("SEO", s, "pgSeoBtn");
+  html += `<div class="ga-cards">
+    ${pgScore("Santé SEO", `${score}<span class="ga-unit">/100</span>`, pgDelta(score, prev))}
+    ${pgScore("Problèmes", String(problemes))}
+    ${pgScore("Pages auditées", String(a.pages_auditees || 0))}
   </div>`;
-  html += `<div class="pg-line"><span class="k">Plugin SEO</span><span class="v">${escapeHtml(a.plugin_seo)}</span></div>`;
-  html += `<div class="pg-line"><span class="k">Sitemap</span><span class="v">${escapeHtml(a.sitemap)}</span></div>`;
-  html += `<div class="pg-line"><span class="k">robots.txt</span><span class="v">${escapeHtml(a.robots_txt)}</span></div>`;
+  if (hist.length >= 2) html += pgPanel("Tendance de la santé SEO", pgAreaChart(hist.map((v, i) => ({ label: "#" + (i + 1), value: v })), { color: "var(--accent2)" }));
+  html += pgPanel("Indexation", pgKV([["Plugin SEO", a.plugin_seo], ["Sitemap", a.sitemap], ["robots.txt", a.robots_txt]]));
   const res = Object.entries(a.resume_problemes || {}).filter(([, n]) => n > 0);
-  html += `<div class="pg-sub">Problèmes · ${a.pages_auditees} page(s)</div>`;
-  if (!res.length) html += `<div class="pg-alert"><span>✓</span> Aucun problème détecté.</div>`;
-  else res.forEach(([k, n]) => { html += `<div class="pg-alert"><span>·</span> ${escapeHtml(k.replace(/_/g, " "))} : <b style="color:var(--txt)">${n}</b></div>`; });
-  (a.detail || []).filter((p) => p.problemes && p.problemes[0] !== "aucun").slice(0, 10).forEach((p) => {
-    html += `<div class="pg-alert"><span style="color:var(--dim)">${escapeHtml(p.page)}</span> ${escapeHtml((p.problemes || []).join(" · "))}</div>`;
-  });
-  html += `<button class="cal-btn" id="pgSeoBtn" style="margin-top:12px;">Relancer l'audit</button>`;
+  if (res.length) html += pgPanel(`Problèmes par type · ${a.pages_auditees} page(s)`, pgBreak(res.map(([k, n]) => ({ label: k.replace(/_/g, " "), value: n })), { color: "#e0868f" }));
+  else html += pgPanel("Problèmes", `<div class="ga-check"><span class="ga-i ok">✓</span> <span>Aucun problème détecté.</span></div>`);
+  const pagesBad = (a.detail || []).filter((p) => p.problemes && p.problemes[0] !== "aucun").slice(0, 12);
+  if (pagesBad.length) html += pgPanel("Pages à corriger", pagesBad.map((p) => `<div class="ga-check"><span class="ga-check-p">${escapeHtml(p.page)}</span> <span class="dim">${escapeHtml((p.problemes || []).join(" · "))}</span></div>`).join(""));
   return html;
 }
 
 function pgTabPerf(s) {
   const perf = pgPerf[s.key];
-  if (!perf) return `<p class="pg-mnote">Rapport de performance via Google PageSpeed (budgets Orphic : LCP &lt; 2,5 s, CLS &lt; 0,1). L'analyse prend 20 à 60 s.</p><button class="cal-btn" id="pgPerfBtn" style="margin-top:4px;">Lancer l'analyse (mobile)</button>`;
-  if (perf.loading) return `<div class="rb-empty">Analyse PageSpeed en cours… (20-60 s)</div>`;
-  if (!perf.ok) return `<div class="rb-empty">Analyse impossible : ${escapeHtml(perf.error || "")}</div><button class="cal-btn" id="pgPerfBtn" style="margin-top:8px;">Réessayer</button>`;
+  if (!perf) return `<div class="ga-note">Rapport de performance via Google PageSpeed (budgets Orphic : LCP &lt; 2,5 s, CLS &lt; 0,1). L'analyse prend 20 à 60 s.</div><button class="cal-btn" id="pgPerfBtn" style="margin-top:12px;">Lancer l'analyse (mobile)</button>`;
+  if (perf.loading) return `<div class="ga-note">Analyse PageSpeed en cours… (20-60 s)</div>`;
+  if (!perf.ok) return `<div class="ga-note">Analyse impossible : ${escapeHtml(perf.error || "")}</div><button class="cal-btn" id="pgPerfBtn" style="margin-top:12px;">Réessayer</button>`;
   const p = perf.perf;
   const lcpOk = p.lcp_ms != null ? p.lcp_ms <= 2500 : null;
   const clsOk = p.cls_val != null ? p.cls_val <= 0.1 : null;
-  const mark = (ok) => ok == null ? "" : ok ? ` <b style="color:var(--ok)">✓</b>` : ` <b style="color:var(--err)">✕ hors budget</b>`;
-  const scoreCol = p.score >= 90 ? "var(--ok)" : p.score >= 50 ? "var(--warn,#e8c268)" : "var(--err)";
-  const sp = (pgMetrics[s.key]?.perf || []).map((m) => m.score);
-  let html = `<div class="pg-dash">
-    <div class="pg-dcard"><div class="pg-gwrap">${pgGauge(p.score, 100, scoreCol)}</div><div class="pg-dlabel">Score perf · ${escapeHtml(p.strategy)}</div></div>
-    <div class="pg-dcard pg-dwide"><div class="pg-dlabel">Tendance (score performance)</div>${pgSparkline(sp, scoreCol)}</div>
+  const budget = (ok) => ok == null ? "" : ok ? `<span class="ga-delta up">✓ budget</span>` : `<span class="ga-delta down">✕ hors budget</span>`;
+  const hist = (pgMetrics[s.key]?.perf || []).map((m) => m.score);
+  const prev = hist.length >= 2 ? hist[hist.length - 2] : null;
+  let html = pgGaHead("Performance", s, "pgPerfBtn");
+  html += `<div class="ga-cards">
+    ${pgScore(`Score perf · ${escapeHtml(p.strategy)}`, `${p.score}<span class="ga-unit">/100</span>`, pgDelta(p.score, prev))}
+    ${pgScore("LCP", escapeHtml(p.lcp || "—"), budget(lcpOk))}
+    ${pgScore("CLS", escapeHtml(p.cls || "—"), budget(clsOk))}
   </div>`;
-  html += `<div class="pg-sub">Métriques (terrain / labo PageSpeed)</div>`;
-  html += `<div class="pg-line"><span class="k">LCP</span><span class="v">${escapeHtml(p.lcp || "—")}${mark(lcpOk)}</span></div>`;
-  html += `<div class="pg-line"><span class="k">CLS</span><span class="v">${escapeHtml(p.cls || "—")}${mark(clsOk)}</span></div>`;
-  html += `<div class="pg-line"><span class="k">First Contentful Paint</span><span class="v">${escapeHtml(p.fcp || "—")}</span></div>`;
-  html += `<div class="pg-line"><span class="k">Total Blocking Time</span><span class="v">${escapeHtml(p.tbt || "—")}</span></div>`;
-  html += `<div class="pg-line"><span class="k">Speed Index</span><span class="v">${escapeHtml(p.si || "—")}</span></div>`;
-  html += `<button class="cal-btn" id="pgPerfBtn" style="margin-top:12px;">Relancer l'analyse</button>`;
+  if (hist.length >= 2) html += pgPanel("Tendance du score", pgAreaChart(hist.map((v, i) => ({ label: "#" + (i + 1), value: v })), { color: "#7fb2e8" }));
+  html += pgPanel("Métriques détaillées", pgKV([["First Contentful Paint", p.fcp || "—"], ["Total Blocking Time", p.tbt || "—"], ["Speed Index", p.si || "—"]]));
   return html;
 }
 
@@ -2523,27 +2525,24 @@ function pgTabSecu(s) {
   if (!dg.ok) return `<div class="rb-empty">Analyse impossible : ${escapeHtml(dg.error || "")}</div><button class="cal-btn" id="pgSecuBtn" style="margin-top:8px;">Réessayer</button>`;
   const d = dg.diag;
   const { checks, nOk, nBad, plugins, inactifs } = pgSecuChecks(s, d);
-  const spark = (pgMetrics[s.key]?.secu || []).map((m) => m.score);
-  const dashTop = `<div class="pg-dash">
-    <div class="pg-dcard"><div class="pg-gwrap">${pgGauge(nOk, checks.length, nBad === 0 ? "var(--ok)" : nBad <= 1 ? "var(--warn,#e8c268)" : "var(--err)", nOk + "/" + checks.length)}</div><div class="pg-dlabel">Contrôles au vert</div></div>
-    <div class="pg-dcard pg-dwide"><div class="pg-dlabel">Tendance (score sécurité)</div>${pgSparkline(spark, "var(--ok)")}</div>
+  const score = Math.round((nOk / (checks.length || 1)) * 100);
+  const hist = (pgMetrics[s.key]?.secu || []).map((m) => m.score);
+  const prev = hist.length >= 2 ? hist[hist.length - 2] : null;
+  const ico = { ok: '<span class="ga-i ok">✓</span>', warn: '<span class="ga-i warn">!</span>', err: '<span class="ga-i err">✕</span>' };
+  let html = pgGaHead("Sécurité", s, "pgSecuBtn");
+  html += `<div class="ga-cards">
+    ${pgScore("Contrôles au vert", `${nOk}<span class="ga-unit">/${checks.length}</span>`, pgDelta(score, prev))}
+    ${pgScore("À traiter", String(nBad))}
+    ${pgScore("Score sécurité", `${score}<span class="ga-unit">/100</span>`)}
   </div>`;
-  const ico = { ok: '<span style="color:var(--ok)">✓</span>', warn: '<span style="color:var(--warn,#e8c268)">!</span>', err: '<span style="color:var(--err)">✕</span>' };
-  let html = `<p class="pg-mnote">Contrôles de sécurité lus à distance par Pegasus (sans FTP). ${nBad === 0 ? "Tout est au vert." : `${nOk} au vert · <b style="color:var(--txt)">${nBad} à traiter</b>.`} Le suivi CVE/uptime continu viendra avec l'agent de monitoring.</p>`;
-  html += dashTop;
-  html += `<div class="pg-sub">Contrôles</div>`;
-  html += checks.map(([st, label, detail]) => `<div class="pg-alert">${ico[st]} ${label}${detail ? ` <span style="color:var(--dim)">— ${detail}</span>` : ""}</div>`).join("");
-  html += `<div class="pg-sub">Ce que Pegasus peut toucher</div>`;
+  if (hist.length >= 2) html += pgPanel("Tendance du score", pgAreaChart(hist.map((v, i) => ({ label: "#" + (i + 1), value: v })), { color: "var(--ok)" }));
+  html += pgPanel("Contrôles", checks.map(([st, label, detail]) => `<div class="ga-check">${ico[st]} <span>${label}${detail ? ` <span class="dim">— ${detail}</span>` : ""}</span></div>`).join(""));
   const caps = d.capacites_pegasus || {};
-  html += `<div class="pg-line"><span class="k">Contenus</span><span class="v">${caps.ecrire_contenus ? "lecture + écriture" : "lecture seule"}</span></div>`;
-  html += `<div class="pg-line"><span class="k">Thèmes / extensions</span><span class="v">${caps.installer_themes ? "installation possible" : "verrouillé"}</span></div>`;
-  html += `<div class="pg-sub">Extensions actives · ${plugins.filter((p) => p.active).length}</div>`;
-  html += plugins.filter((p) => p.active).map((p) => `<div class="pg-line"><span class="k">${escapeHtml(p.name)}</span><span class="v">${escapeHtml(p.version || "?")}</span></div>`).join("");
-  if (inactifs.length) {
-    html += `<div class="pg-sub">Inactives · ${inactifs.length}</div>`;
-    html += inactifs.map((p) => `<div class="pg-line"><span class="k" style="color:var(--dim)">${escapeHtml(p.name)}</span><span class="v">${escapeHtml(p.version || "?")}</span></div>`).join("");
-  }
-  html += `<button class="cal-btn" id="pgSecuBtn" style="margin-top:12px;">Relancer l'analyse</button>`;
+  html += pgPanel("Ce que Pegasus peut toucher", pgKV([["Contenus", caps.ecrire_contenus ? "lecture + écriture" : "lecture seule"], ["Thèmes / extensions", caps.installer_themes ? "installation possible" : "verrouillé"]]));
+  const actifs = plugins.filter((p) => p.active);
+  let extList = actifs.map((p) => `<div class="ga-kv-r"><span>${escapeHtml(p.name)}</span><b>${escapeHtml(p.version || "?")}</b></div>`).join("");
+  if (inactifs.length) extList += `<div class="ga-kv-r"><span class="dim">+ ${inactifs.length} inactive(s) — surface d'attaque à supprimer</span><b></b></div>`;
+  html += pgPanel(`Extensions actives · ${actifs.length}`, `<div class="ga-kv">${extList}</div>`);
   return html;
 }
 async function pgLoadDiag(key) {
@@ -2609,36 +2608,22 @@ function pgReportAnalysis(data, aud) {
   return blocs;
 }
 function pgReportBody(s, data, days, aud, perLabel) {
-  const per = perLabel || (days ? `${days} derniers jours` : "tout l'historique");
-  const dom = (label, arr, key, color) => {
+  const blocs = pgReportAnalysis(data, aud);
+  const card = (label, arr) => {
     if (!arr.length) return "";
     const l = arr[arr.length - 1];
-    return `<div class="rp-domain">
-      <div class="rp-dhead"><h3>${label}</h3><span class="rp-dcount">${arr.length} mesure(s)</span></div>
-      <div class="pg-dash">
-        <div class="pg-dcard"><div class="pg-gwrap">${pgGauge(l[key], 100, color)}</div><div class="pg-dlabel">Score actuel</div></div>
-        <div class="pg-dcard pg-dwide"><div class="pg-dlabel">Évolution</div>${pgSparkline(arr.map((x) => x[key]), color)}</div>
-      </div>
-    </div>`;
+    const prev = arr.length >= 2 ? arr[arr.length - 2].score : null;
+    return pgScore(label, `${l.score}<span class="ga-unit">/100</span>`, pgDelta(l.score, prev));
   };
-  const blocs = pgReportAnalysis(data, aud);
-  const audBlock = aud && aud.total ? `<div class="rp-domain">
-      <div class="rp-dhead"><h3>Audience — visites</h3><span class="rp-dcount">mesuré par Pegasus</span></div>
-      <div class="pg-dash">
-        <div class="pg-dcard"><div class="pg-dbig">${pgFmtN(aud.total)}</div><div class="pg-dlabel">Visites</div></div>
-        <div class="pg-dcard"><div class="pg-dbig">${pgFmtN(aud.uniques)}</div><div class="pg-dlabel">Visiteurs uniques</div></div>
-        <div class="pg-dcard pg-dwide"><div class="pg-dlabel">Visites par jour</div>${pgSparkline((aud.byDay || []).map((x) => x.hits), "var(--accent2)")}</div>
-      </div>
-      ${aud.sources?.length ? `<div class="pg-sub">Provenance</div>${pgBars(aud.sources.map((x) => ({ label: x.label, value: x.value, color: "var(--accent2)" })))}` : ""}
-    </div>` : "";
-  return `
-    <div class="rp-title">Rapport — ${escapeHtml(s.label)} <span>· ${per}</span></div>
-    ${audBlock}
-    ${dom("Référencement (SEO)", data.seo, "score", "var(--accent2)")}
-    ${dom("Performance", data.perf, "score", "#7fb2e8")}
-    ${dom("Sécurité", data.secu, "score", "var(--ok)")}
-    <div class="pg-sub">Analyse</div>
-    ${blocs.map((b) => `<div class="rp-anz"><div class="rp-anz-t">${b.titre}</div>${b.lignes.map((x) => `<div class="rp-anz-l">${x}</div>`).join("")}</div>`).join("") || '<div class="rb-empty">—</div>'}`;
+  let cards = card("SEO", data.seo) + card("Performance", data.perf) + card("Sécurité", data.secu);
+  if (aud && aud.total) cards += pgScore("Visites", pgFmtN(aud.total), "", aud.uniques + " visiteur(s) unique(s)");
+  let html = cards ? `<div class="ga-cards">${cards}</div>` : "";
+  if (aud && aud.total) {
+    if ((aud.byDay || []).length >= 2) html += pgPanel("Visites par jour", pgAreaChart(aud.byDay.map((x) => ({ label: pgDayLabel(x.date), value: x.hits }))));
+    if (aud.sources?.length) html += pgPanel("Provenance", pgBreak(aud.sources.map((x) => ({ label: x.label, value: x.value })), { total: aud.total }));
+  }
+  html += pgPanel("Analyse", blocs.length ? blocs.map((b) => `<div class="ga-anz"><div class="ga-anz-t">${escapeHtml(b.titre)}</div>${b.lignes.map((x) => `<div class="ga-anz-l">${x}</div>`).join("")}</div>`).join("") : `<div class="dim">Pas encore d'analyse — lance les analyses ou attends le prochain rapport.</div>`);
+  return html;
 }
 function pgReportPdfHTML(s, data, days, aud, perLabel) {
   const per = perLabel || (days ? `${days} derniers jours` : "tout l'historique");
@@ -2703,9 +2688,9 @@ function pgReportPdfHTML(s, data, days, aud, perLabel) {
 async function pgRapportRender(s) {
   const box = $("pgRapport"); if (!box) return;
   box.innerHTML = `
-    <p class="pg-mnote">Rapports de <b>${escapeHtml(s.label)}</b> — un bilan complet (SEO, performance, sécurité, audience) est généré <b>automatiquement chaque jour à 18 h</b> et archivé. L'audience se suit aussi en direct dans l'onglet Audience.</p>
-    <div class="pg-sub" style="margin-top:2px;">Rapports quotidiens</div>
-    <div id="pgRapCards"><div class="rb-empty">Lecture des rapports…</div></div>
+    <div class="ga-head"><div class="ga-head-t"><h2>Rapport</h2><span>${escapeHtml(s.label)} · bilan complet généré chaque jour à 18 h</span></div></div>
+    <div class="ga-subhead" style="margin-top:0;border-top:none;padding-top:0;">Rapports quotidiens</div>
+    <div id="pgRapCards"><div class="ga-note">Lecture des rapports…</div></div>
     <div id="pgRapMain"></div>`;
   const r = await window.olympus.pegasusReportsList(s.key);
   pgRapCardsRender(s, r);
@@ -2765,7 +2750,7 @@ function pgRapLatestRender(s, r) {
   const dt = new Date(rep.day + "T12:00:00");
   const dLong = isNaN(dt) ? rep.day : dt.toLocaleDateString("fr-FR", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
   box.innerHTML = `
-    <div class="pg-sub" style="margin-top:28px;">Dernier rapport <span style="text-transform:none;letter-spacing:0;color:var(--dim);">· ${escapeHtml(dLong)}</span></div>
+    <div class="ga-subhead">Dernier rapport <span>· ${escapeHtml(dLong)}</span></div>
     ${pgReportBody(s, data, 1, aud, "rapport du " + dLong)}
     <div class="pg-actrow" style="margin-top:14px;">
       <button class="cal-btn primary" id="rpLatestPdf">⤓ Exporter en PDF</button>
