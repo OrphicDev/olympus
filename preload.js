@@ -67,6 +67,8 @@ contextBridge.exposeInMainWorld("olympus", {
   pegasusMetricsAppend: (key, kind, point) => ipcRenderer.invoke("pegasus:metricsAppend", key, kind, point),
   pegasusExportPdf: (html, filename) => ipcRenderer.invoke("pegasus:exportPdf", html, filename),
   pegasusAnalyticsStatus: () => ipcRenderer.invoke("pegasus:analyticsStatus"),
+  pegasusAudiencePegasus: (key, days) => ipcRenderer.invoke("pegasus:audiencePegasus", key, days),
+  pegasusAudienceReset: (key) => ipcRenderer.invoke("pegasus:audienceReset", key),
   pegasusGoogleConnect: () => ipcRenderer.invoke("pegasus:googleConnect"),
   pegasusGoogleDisconnect: () => ipcRenderer.invoke("pegasus:googleDisconnect"),
   pegasusAnalyticsConfigGet: (key) => ipcRenderer.invoke("pegasus:analyticsConfigGet", key),

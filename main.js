@@ -1189,6 +1189,15 @@ async function pegAnalyticsCfg(key) {
   const p = join(await pegSiteDir(key), "analytics.json");
   return { path: p, cfg: existsSync(p) ? JSON.parse(readFileSync(p, "utf8")) : {} };
 }
+// Audience mesurée par le traqueur Pegasus (route /audience du plugin) — sans Google
+ipcMain.handle("pegasus:audiencePegasus", async (_e, key, days) => {
+  try { return { ok: true, data: await pegCall(key, "GET", `/audience?days=${Math.max(1, Math.min(365, days || 30))}`, 20000) }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
+ipcMain.handle("pegasus:audienceReset", async (_e, key) => {
+  try { return { ok: true, data: await pegCall(key, "POST", "/audience/reset", 20000) }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
 ipcMain.handle("pegasus:analyticsStatus", () => {
   const s = loadSettings();
   return { ok: true, creds: existsSync(PEG_GOOGLE_OAUTH), connected: !!s.googleOAuth?.refresh_token, email: s.googleOAuth?.email || null };
