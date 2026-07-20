@@ -3730,6 +3730,7 @@ const CAT_COLOR = {
   call: "#5b9bd5", rdv: "#45c4b0", reunion: "#a98bd6", shoot: "#e0a862",
   rendu: "#6cc48f", campagne: "#d98cb0", client: "#8a93de", deadline: "#e0885a",
   divers: "#8a8a90", general: "#8a8a90", client_meeting: "#8a93de",
+  apple: "#8ab4f8",
 };
 const catColor = (c) => CAT_COLOR[c] || CAT_COLOR.general;
 const evEnd = (ev) => (ev.end_date && ev.end_date > ev.date ? ev.end_date : ev.date);
@@ -3990,12 +3991,14 @@ function openEventForm(date, ev) {
   renderEvFiles();
   const locs = [...new Set(chronosEvents.map((e) => e.location).filter(Boolean))];
   $("evLocList").innerHTML = locs.map((l) => `<option value="${escapeHtml(l)}">`).join("");
-  $("evModalTitle").textContent = ev ? "Modifier l'événement" : "Nouvel événement";
+  $("evModalTitle").textContent = ev ? (ev.source === "apple" ? "Événement iCloud" : "Modifier l'événement") : "Nouvel événement";
   $("evSave").textContent = ev ? "Enregistrer" : "Ajouter";
-  $("evDelete").style.display = ev ? "" : "none";
-  $("evDone").style.display = ev ? "" : "none";
-  if (ev) $("evDone").textContent = ev.done ? "Marquer à faire" : "Marquer fait";
-  $("evMsg").textContent = "";
+  const isApple = ev && ev.source === "apple";
+  $("evSave").style.display = isApple ? "none" : "";
+  $("evDelete").style.display = ev && !isApple ? "" : "none";
+  $("evDone").style.display = ev && !isApple ? "" : "none";
+  if (ev && !isApple) $("evDone").textContent = ev.done ? "Marquer à faire" : "Marquer fait";
+  $("evMsg").className = "msg"; $("evMsg").textContent = isApple ? `📅 iCloud · ${ev.cal_name || "calendrier Apple"} — lecture seule (édition deux-sens à venir).` : "";
   $("eventModal").classList.add("show");
   $("evTitle").focus();
 }

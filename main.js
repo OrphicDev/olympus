@@ -809,8 +809,11 @@ ipcMain.handle("chat:send", async (_e, body) => {
 ipcMain.handle("chronos:list", async (_e, from, to) => {
   // chevauchement : date <= to ET (date >= from OU end_date >= from) → capture les events multi-jours
   const r = await authedFetch(`/rest/v1/events?select=*&date=lte.${to}&or=(date.gte.${from},end_date.gte.${from})&order=date.asc,time.asc.nullsfirst`);
-  if (!r.ok) return { ok: false, error: "Chronos indisponible." };
-  return { ok: true, events: await r.json() };
+  const internal = r.ok ? await r.json() : [];
+  let apple = [];
+  try { if (loadSettings().appleEmail) apple = await getAppleEvents(from, to); } catch {}
+  if (!r.ok && !apple.length) return { ok: false, error: "Chronos indisponible." };
+  return { ok: true, events: [...internal, ...apple] };
 });
 // Champs autorisés d'un événement (le brief est fusionné dans l'événement).
 const EVENT_FIELDS = ["title", "date", "end_date", "time", "end_time", "category", "assignee", "notes",
@@ -949,11 +952,77 @@ ipcMain.handle("apple:connect", async (_e, email, appPassword) => {
   catch (e) { return { ok: false, error: "Connecté, mais lecture des calendriers impossible : " + String(e.message).slice(0, 140) }; }
   const s = loadSettings(); s.appleEmail = email; s.appleCalendars = cals; if (!s.appleSync && cals[0]) s.appleSync = cals[0].url; saveSettings(s);
   await appleKeychainSet(email, appPassword);
-  appleClient = client;
+  appleClient = client; appleInvalidateCache();
   return { ok: true, calendars: cals };
 });
 ipcMain.handle("apple:setSync", (_e, url) => { const s = loadSettings(); s.appleSync = url; saveSettings(s); return { ok: true }; });
-ipcMain.handle("apple:disconnect", () => { const s = loadSettings(); delete s.appleEmail; delete s.appleCalendars; delete s.appleSync; saveSettings(s); appleClient = null; return { ok: true }; });
+ipcMain.handle("apple:disconnect", () => { const s = loadSettings(); delete s.appleEmail; delete s.appleCalendars; delete s.appleSync; saveSettings(s); appleClient = null; appleInvalidateCache(); return { ok: true }; });
+
+// ── Lecture des événements iCloud (CalDAV → iCal → forme Chronos), avec cache ──
+const pad2 = (n) => String(n).padStart(2, "0");
+const isoLocalD = (d) => d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+const hmD = (d) => pad2(d.getHours()) + ":" + pad2(d.getMinutes());
+function shiftISO(iso, days) { const d = new Date(iso + "T12:00:00"); d.setDate(d.getDate() + days); return isoLocalD(d); }
+async function fetchAppleRange(fromISO, toISO) {
+  const client = await appleGetClient(); if (!client) return [];
+  const cals = loadSettings().appleCalendars || [];
+  const start = new Date(fromISO + "T00:00:00"), end = new Date(toISO + "T23:59:59");
+  const nical = await import("node-ical");
+  const parseICS = (nical.default || nical).sync.parseICS;
+  const out = [];
+  for (const cal of cals) {
+    let objs;
+    try { objs = await client.fetchCalendarObjects({ calendar: { url: cal.url }, timeRange: { start: start.toISOString(), end: end.toISOString() } }); }
+    catch { continue; }
+    for (const o of (objs || [])) {
+      if (!o.data) continue;
+      let parsed; try { parsed = parseICS(o.data); } catch { continue; }
+      for (const key in parsed) {
+        const ev = parsed[key];
+        if (!ev || ev.type !== "VEVENT" || !ev.start) continue;
+        const allDay = ev.datetype === "date";
+        const push = (sd, ed) => {
+          const e = {
+            id: "apple:" + (ev.uid || key) + ":" + isoLocalD(sd),
+            title: ev.summary || "(sans titre)",
+            date: isoLocalD(sd),
+            end_date: allDay ? isoLocalD(new Date(ed.getTime() - 86400000)) : isoLocalD(ed),
+            time: allDay ? null : hmD(sd),
+            end: allDay ? null : hmD(ed),
+            category: "apple", all_day: allDay, source: "apple",
+            location: ev.location || null, description: ev.description || null,
+            cal_name: cal.name, cal_color: cal.color || null,
+            apple_uid: ev.uid || key, apple_cal_url: cal.url, apple_obj_url: o.url, apple_etag: o.etag,
+          };
+          if (e.end_date < e.date) e.end_date = e.date;
+          out.push(e);
+        };
+        if (ev.rrule) {
+          let dates = [];
+          try { dates = ev.rrule.between(start, end, true); } catch {}
+          const durMs = ((ev.end ? ev.end.getTime() : ev.start.getTime()) - ev.start.getTime()) || 0;
+          for (const d of dates.slice(0, 80)) push(d, new Date(d.getTime() + durMs));
+        } else {
+          push(ev.start, ev.end || ev.start);
+        }
+      }
+    }
+  }
+  return out;
+}
+let appleEvCache = { events: [], from: null, to: null, at: 0 };
+function appleInvalidateCache() { appleEvCache = { events: [], from: null, to: null, at: 0 }; }
+async function getAppleEvents(fromISO, toISO) {
+  const now = Date.now();
+  const covered = appleEvCache.from && appleEvCache.from <= fromISO && appleEvCache.to >= toISO && (now - appleEvCache.at) < 180000;
+  if (!covered) {
+    const wFrom = shiftISO(fromISO, -31), wTo = shiftISO(toISO, 62);
+    try { appleEvCache = { events: await fetchAppleRange(wFrom, wTo), from: wFrom, to: wTo, at: now }; }
+    catch { return []; }
+  }
+  return appleEvCache.events.filter((e) => e.date <= toISO && (e.end_date || e.date) >= fromISO);
+}
+ipcMain.handle("apple:refresh", () => { appleInvalidateCache(); return { ok: true }; });
 
 // Libellés Gmail via IMAP (un libellé = une boîte IMAP) — synchro réelle dans les deux sens.
 async function gmailImap() {
