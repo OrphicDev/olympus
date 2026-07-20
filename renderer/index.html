@@ -934,8 +934,10 @@
   /* Arborescence / Moodboard ouverts EN MODALE depuis le pipeline */
   .pg-viewpanel{width:94vw;max-width:1560px;height:90vh;}
   .pg-viewbody{flex:1;overflow:auto;padding:16px 20px;}
-  .pg-viewmodal .ab-canvas,.pg-viewmodal .ab-versions{height:calc(90vh - 210px);}
-  .pg-viewmodal .mood-layout .ab-versions{height:auto;max-height:calc(90vh - 190px);}
+  .pg-viewmodal .ab-canvas{height:calc(90vh - 250px);}
+  /* Dans la modale du pipeline : pas de colonne de versions, place au canvas/moodboard */
+  .pg-viewmodal .ab-versions{display:none;}
+  .pg-viewmodal .pg-viewsave{width:100%;padding:12px;font-size:13.5px;}
   .pl-shortcuts .pg-bigbtn{flex-direction:column;align-items:flex-start;gap:3px;min-width:180px;}
   .pl-shortcuts .pg-bigbtn .d{font-size:11px;color:var(--dim);font-weight:400;}
   /* Niveau du site (moodboard) */
@@ -966,6 +968,11 @@
   .mq-chip:disabled{cursor:default;}
   .mq-chip:disabled:not(.on){opacity:.45;}
   .mq-chip-in{flex:0 0 200px;padding:4px 11px;border-radius:14px;font-size:11px;}
+  .mq-refline{display:flex;align-items:center;gap:7px;}
+  .mq-refline .mood-in{flex:1;min-width:0;}
+  .mq-animref{display:flex;flex-direction:column;gap:7px;}
+  .mq-animref .mq-ari-sec{width:100%;}
+  .mq-ari-scan{white-space:nowrap;flex-shrink:0;}
   .ab-mini.has{color:var(--accent);}
   .ab-node:hover .ab-mini.has{opacity:1;}
   /* Moodboard */

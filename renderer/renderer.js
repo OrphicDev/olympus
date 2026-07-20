@@ -574,15 +574,17 @@ function pgAbMerge(cur, scanned) {
       if (Number.isFinite(old.level)) np.level = old.level; // niveau fixé à la main conservé
       if (old.links && old.links.length) np.links = old.links; // liens node→node manuels conservés
       if (old.titre && old.titre !== np.titre && !old.wp_id) np.titre = old.titre;
-      // Maquette conservée : contexte de page + contenus/animations de sections (matchés par titre)
+      // Maquette conservée : contexte + style de page + contenus/animations/réf. de sections (matchés par titre)
       if (old.contexte) np.contexte = old.contexte;
-      const oldTxt = new Map((old.sections || []).filter((x) => x.texte || x.animation || (x.anims || []).length).map((x) => [x.titre, x]));
+      if (old.refStyle) np.refStyle = old.refStyle;
+      const oldTxt = new Map((old.sections || []).filter((x) => x.texte || x.animation || (x.anims || []).length || x.animRef).map((x) => [x.titre, x]));
       for (const sc of np.sections) {
         const o = oldTxt.get(sc.titre);
         if (!o) continue;
         if (!sc.texte && o.texte) sc.texte = o.texte;
         if (!sc.animation && o.animation) sc.animation = o.animation;
         if (!(sc.anims || []).length && (o.anims || []).length) sc.anims = o.anims;
+        if (!sc.animRef && o.animRef) sc.animRef = o.animRef;
       }
     }
     for (const sc of np.sections) sc.cible = idMap.get(sc.cible) || "";
@@ -685,7 +687,7 @@ async function pgArboRender(s) {
             <div class="ab-phead">
               <div class="ab-title" data-f="titre" title="Double-clic pour renommer">${escapeHtml(p.titre)}</div>
               ${p.artefact ? '<span class="ab-badge dim">artefact</span>' : p.home ? '<span class="ab-badge">accueil</span>' : `<button class="ab-mini" data-act="home" title="Définir comme accueil">⌂</button>`}
-              ${p.artefact ? "" : `<button class="ab-mini${p.contexte || (p.sections || []).some((sc) => sc.texte || sc.animation || (sc.anims || []).length) ? " has" : ""}" data-act="maquette" title="Maquette : contexte, contenu des sections, destinations, animations">📝</button>`}
+              ${p.artefact ? "" : `<button class="ab-mini${p.contexte || p.refStyle || (p.sections || []).some((sc) => sc.texte || sc.animation || (sc.anims || []).length || sc.animRef?.url) ? " has" : ""}" data-act="maquette" title="Maquette : contexte, contenu, destinations, animations, références">📝</button>`}
               <button class="ab-mini" data-act="rename" title="Renommer">✎</button>
               <button class="ab-mini" data-act="addsec" title="Ajouter une section">＋</button>
               <button class="ab-mini" data-act="delpage" title="Supprimer la page">✕</button>
@@ -1168,8 +1170,14 @@ function pgAbMaquetteModal(s, p, ro) {
         ${ro ? `<div class="pg-alert" style="border:0;color:var(--dim);margin-bottom:10px;">🔒 Version en ligne — lecture seule. Duplique la version en ligne (barre du haut) pour modifier la maquette.</div>` : ""}
         <div class="mq-label">Rôle de la page</div>
         <textarea class="mood-in mood-ta" data-mq="ctx" placeholder="À quoi sert cette page, à qui elle parle, ce qu'elle doit provoquer…" ${ro ? "disabled" : ""}>${escapeHtml(p.contexte || "")}</textarea>
+        <div class="mq-label">Style de page — référence</div>
+        <div class="mq-refline">
+          <input class="mood-in" data-refstyle placeholder="Lien d'une page dont le style te plaît (https://…)" value="${escapeHtml(p.refStyle || "")}" ${ro ? "disabled" : ""}>
+          ${p.refStyle ? `<button class="mq-open" data-openref="page" title="Ouvrir">↗</button>` : ""}
+        </div>
         ${(p.sections || []).map((sec, i) => {
           const cible = sec.cible && (pgArboCache[s.key]?.pages || []).find((x) => x.id === sec.cible);
+          const ar = sec.animRef || {};
           return `
           <div class="mq-sec">
             <div class="mq-t">
@@ -1180,6 +1188,16 @@ function pgAbMaquetteModal(s, p, ro) {
             <textarea class="mood-in mood-ta mini" data-mq="${i}" placeholder="Son rôle, son message, son texte…" ${ro ? "disabled" : ""}>${escapeHtml(sec.texte || "")}</textarea>
             <div class="mq-label">Animations</div>
             ${chips(sec, i)}
+            <div class="mq-label">Animation référence — une animation qui te plaît ailleurs</div>
+            <div class="mq-animref" data-ari="${i}">
+              <div class="mq-refline">
+                <input class="mood-in mq-ari-url" placeholder="Lien de la page où se trouve l'animation" value="${escapeHtml(ar.url || "")}" ${ro ? "disabled" : ""}>
+                ${ro ? (ar.url ? `<button class="mq-open" data-openref="ari-${i}" title="Ouvrir">↗</button>` : "") : `<button class="mq-chip mq-ari-scan">Scanner les sections</button>`}
+              </div>
+              <select class="pl-select mq-ari-sec" ${ro ? "disabled" : ""} ${!ar.section ? 'style="display:none"' : ""}>
+                ${ar.section ? `<option value="${escapeHtml(ar.section)}" selected>${escapeHtml(ar.section)}</option>` : '<option value="">— section —</option>'}
+              </select>
+            </div>
           </div>`;
         }).join("")}
       </div>
@@ -1191,14 +1209,48 @@ function pgAbMaquetteModal(s, p, ro) {
   ov.onclick = (e) => { if (e.target === ov) close(); };
   const syncBadge = () => {
     const btn = document.querySelector(`.ab-node[data-p="${p.id}"] [data-act="maquette"]`);
-    if (btn) btn.classList.toggle("has", !!(p.contexte || (p.sections || []).some((sc) => sc.texte || (sc.anims || []).length)));
+    if (btn) btn.classList.toggle("has", !!(p.contexte || p.refStyle || (p.sections || []).some((sc) => sc.texte || (sc.anims || []).length || sc.animRef?.url)));
   };
   ov.querySelectorAll("[data-mq]").forEach((t) => t.oninput = () => {
     if (t.dataset.mq === "ctx") p.contexte = t.value;
     else p.sections[+t.dataset.mq].texte = t.value;
     pgArboSave(s.key); syncBadge();
   });
+  // Ouvrir un lien de référence (dispo en lecture seule aussi)
+  ov.querySelectorAll("[data-openref]").forEach((b) => b.onclick = () => {
+    const k = b.dataset.openref;
+    const url = k === "page" ? p.refStyle : (p.sections[+k.split("-")[1]]?.animRef || {}).url;
+    if (url) window.olympus.openExternal(/^https?:\/\//i.test(url) ? url : "https://" + url);
+  });
   if (ro) return;
+  // Style de page (référence)
+  const rs = ov.querySelector("[data-refstyle]");
+  if (rs) rs.oninput = () => { p.refStyle = rs.value.trim(); pgArboSave(s.key); syncBadge(); };
+  // Animation référence par section : lien + scan des sections + choix dans la liste
+  ov.querySelectorAll(".mq-animref").forEach((box) => {
+    const i = +box.dataset.ari;
+    const sec = p.sections[i];
+    const urlEl = box.querySelector(".mq-ari-url");
+    const selEl = box.querySelector(".mq-ari-sec");
+    urlEl.oninput = () => { sec.animRef = { ...(sec.animRef || {}), url: urlEl.value.trim() }; pgArboSave(s.key); syncBadge(); };
+    selEl.onchange = () => { sec.animRef = { ...(sec.animRef || {}), section: selEl.value || "" }; pgArboSave(s.key); syncBadge(); };
+    const scan = box.querySelector(".mq-ari-scan");
+    if (scan) scan.onclick = async () => {
+      const url = urlEl.value.trim();
+      if (!url) { urlEl.focus(); return; }
+      scan.disabled = true; scan.textContent = "Scan…";
+      const r = await window.olympus.pegasusPageSections(url);
+      scan.disabled = false; scan.textContent = "Scanner les sections";
+      if (!r.ok) { alert("Échec du scan : " + (r.error || "")); return; }
+      if (!r.sections.length) { alert("Aucune section détectée sur cette page."); return; }
+      const keep = sec.animRef?.section || "";
+      selEl.innerHTML = '<option value="">— choisir la section —</option>' + r.sections.map((sc) => {
+        const label = `${sc.n} · ${sc.titre}`;
+        return `<option value="${escapeHtml(label)}" ${keep === label ? "selected" : ""}>${escapeHtml(label)}</option>`;
+      }).join("");
+      selEl.style.display = "";
+    };
+  });
   // Les puces d'animation : clic = choisir/retirer ; « Aucune animation » est exclusive
   const rechips = (box, sec, i) => { box.outerHTML = chips(sec, i); wireChips(ov.querySelector(`.mq-chips[data-ci="${i}"]`), sec, i); };
   function wireChips(box, sec, i) {
@@ -1440,10 +1492,12 @@ function pgOpenViewModal(s, which) {
       <div class="modal-body pg-viewbody">
         <div id="${isArbo ? "pgArbo" : "pgMood"}"><div class="rb-empty">Chargement…</div></div>
       </div>
+      <div class="modal-foot"><button class="cal-btn primary pg-viewsave" data-save>✓ Enregistrer les modifications</button></div>
     </div>`;
   document.body.appendChild(ov);
-  const close = () => { ov.remove(); pgPipelineRender(s); }; // rafraîchit le pipeline à la fermeture
+  const close = () => { ov.remove(); pgPipelineRender(s); }; // les modifs sont déjà auto-enregistrées ; on rafraîchit le pipeline
   ov.querySelector("[data-x]").onclick = close;
+  ov.querySelector("[data-save]").onclick = close;
   ov.onclick = (e) => { if (e.target === ov) close(); };
   if (isArbo) pgArboRender(s); else pgMoodRender(s);
 }

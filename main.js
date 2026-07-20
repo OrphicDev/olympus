@@ -1516,6 +1516,42 @@ ipcMain.handle("pegasus:moodboardScan", async (_e, key) => {
     return { ok: true, moodboard: { couleurs, typos, logo, notes: "", refs: [] } };
   } catch (e) { return { ok: false, error: e.message }; }
 });
+
+// Scan des SECTIONS d'une page de RÉFÉRENCE (n'importe quelle URL) → liste
+// « numéro + nom » pour choisir une animation de référence dans la maquette.
+ipcMain.handle("pegasus:pageSections", async (_e, url) => {
+  try {
+    let u = String(url || "").trim();
+    if (!u) throw new Error("Lien vide.");
+    if (!/^https?:\/\//i.test(u)) u = "https://" + u;
+    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 15000);
+    let html = "";
+    try { const r = await fetch(u, { headers: { "User-Agent": "Olympus-Pegasus/1.0" }, signal: ctl.signal }); clearTimeout(t); html = r.ok ? await r.text() : ""; }
+    catch { clearTimeout(t); }
+    if (!html) throw new Error("Page injoignable.");
+    // On retire header/nav/footer pour ne garder que le contenu
+    let h = html;
+    const hm = h.match(/<header[^>]*>[\s\S]*?<\/header>/i); if (hm) h = h.replace(hm[0], "");
+    for (const nv of h.match(/<nav[^>]*>[\s\S]*?<\/nav>/gi) || []) h = h.replace(nv, "");
+    const fms = h.match(/<footer[^>]*>[\s\S]*?<\/footer>/gi); if (fms && fms.length) h = h.replace(fms[fms.length - 1], "");
+    // Sections top-level (<section>), sinon repli sur les blocs (main > div directs)
+    const out = []; const re = /<section\b[^>]*>|<\/section>/gi;
+    let depth = 0, start = -1, mm, startTag = "";
+    while ((mm = re.exec(h))) {
+      if (mm[0][1] !== "/") { if (depth === 0) { start = re.lastIndex; startTag = mm[0]; } depth++; }
+      else { depth = Math.max(0, depth - 1); if (depth === 0 && start >= 0) { out.push({ tag: startTag, inner: h.slice(start, mm.index) }); start = -1; } }
+    }
+    const title = (tag, inner, i) => {
+      const hh = inner.match(/<h[1-4][^>]*>([\s\S]*?)<\/h[1-4]>/i);
+      let s = hh ? hh[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim() : "";
+      if (!s) { const idm = tag.match(/id=["']([^"']+)["']/); if (idm) s = idm[1].replace(/[-_]+/g, " "); }
+      if (!s) { const cm = tag.match(/class=["']([^"']+)["']/); if (cm) s = cm[1].split(/\s+/)[0].replace(/[-_]+/g, " "); }
+      return (s || "Section " + (i + 1)).slice(0, 60);
+    };
+    const sections = out.slice(0, 30).map((sc, i) => ({ n: i + 1, titre: title(sc.tag, sc.inner, i) }));
+    return { ok: true, url: u, sections };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
 // Génère le BRIEF DE CONSTRUCTION d'une version (pages + boutons + charte) et ouvre
 // une session Claude Code pour la bâtir en local. Marque la version comme « à mettre
 // en ligne » (deployed). Ne touche PAS au site distant (c'est « Pousser en ligne »).
@@ -1545,10 +1581,12 @@ function pegBuildBrief(arbo, mb, siteLabel, pipeline) {
   for (const p of pages.sort((a, b) => ord(a) - ord(b))) {
     md += `### ${p.titre}${p.home ? " (accueil)" : ""}${lvl(p) != null ? ` — niveau ${lvl(p)}` : ""}\n`;
     if (p.contexte) md += `> ${String(p.contexte).replace(/\n/g, "\n> ")}\n`;
+    if (p.refStyle) md += `> [style de page — référence] ${p.refStyle}\n`;
     const secs = p.sections || [];
     if (secs.length) md += secs.map((sc) => {
       const anims = (sc.anims || []).length ? sc.anims.join(" · ") : sc.animation;
-      return `- Section « ${sc.titre} »${sc.cible ? ` — bouton → ${nameOf(sc.cible)}` : ""}${sc.texte ? `\n  > ${String(sc.texte).replace(/\n/g, "\n  > ")}` : ""}${anims ? `\n  > [animations] ${String(anims).replace(/\n/g, "\n  > ")}` : ""}`;
+      const ar = sc.animRef && sc.animRef.url ? `\n  > [animation référence] ${sc.animRef.url}${sc.animRef.section ? ` — section « ${sc.animRef.section} »` : ""}` : "";
+      return `- Section « ${sc.titre} »${sc.cible ? ` — bouton → ${nameOf(sc.cible)}` : ""}${sc.texte ? `\n  > ${String(sc.texte).replace(/\n/g, "\n  > ")}` : ""}${anims ? `\n  > [animations] ${String(anims).replace(/\n/g, "\n  > ")}` : ""}${ar}`;
     }).join("\n") + "\n";
     else md += `- (aucune section détaillée)\n`;
     for (const lk of p.links || []) md += `- Lien → ${nameOf(lk.to)}\n`;

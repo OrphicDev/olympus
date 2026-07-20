@@ -70,6 +70,7 @@ contextBridge.exposeInMainWorld("olympus", {
   pegasusMoodboardGet: (key) => ipcRenderer.invoke("pegasus:moodboardGet", key),
   pegasusMoodboardSave: (key, mb) => ipcRenderer.invoke("pegasus:moodboardSave", key, mb),
   pegasusMoodboardScan: (key) => ipcRenderer.invoke("pegasus:moodboardScan", key),
+  pegasusPageSections: (url) => ipcRenderer.invoke("pegasus:pageSections", url),
   pegasusMbList: (key) => ipcRenderer.invoke("pegasus:mbList", key),
   pegasusMbSave: (key, mb, label, deployAsCurrent) => ipcRenderer.invoke("pegasus:mbSave", key, mb, label, deployAsCurrent),
   pegasusMbLoad: (key, id) => ipcRenderer.invoke("pegasus:mbLoad", key, id),
