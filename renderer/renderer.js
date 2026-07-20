@@ -387,6 +387,7 @@ async function pgSelect(key) {
 
 const PG_TABS = [
   { id: "general", label: "Général" },
+  { id: "arbo", label: "Arborescence" },
   { id: "seo", label: "SEO" },
   { id: "perf", label: "Performance" },
   { id: "secu", label: "Sécurité" },
@@ -412,6 +413,7 @@ function pgRenderDetail() {
   const sb = box.querySelector("#pgSeoBtn"); if (sb) sb.onclick = () => pgRunSeo(s.key);
   const pb = box.querySelector("#pgPerfBtn"); if (pb) pb.onclick = () => pgRunPerf(s.key);
   pgRenderSecPanel(s);
+  if (pgSiteTab === "arbo") pgArboRender(s);
   // Le nombre de pages se compte une seule fois par site (pas à chaque rafraîchissement)
   const insOk = pgInspect[s.key] && pgInspect[s.key].ok;
   if (insOk && !pgCounted.has(s.key)) { pgCounted.add(s.key); mCountUp(box, ".pg-kpi .n"); }
@@ -421,10 +423,134 @@ const pgCounted = new Set();
 
 function pgTabHTML(tab, s) {
   if (tab === "general") return pgTabGeneral(s);
+  if (tab === "arbo") return `<div id="pgArbo"><div class="rb-empty">Chargement de l'arborescence…</div></div>`;
   if (tab === "seo") return pgTabSeo(s);
   if (tab === "perf") return pgTabPerf(s);
   if (tab === "secu") return pgTabSecu(s);
   return "";
+}
+
+// ══ Arborescence du site : nodes pages + sections, avec destinations ══
+const pgArboCache = {};                       // par site : l'arborescence en cours d'édition
+let pgArboSaveT = null;
+function pgArboSave(key) {
+  clearTimeout(pgArboSaveT);
+  pgArboSaveT = setTimeout(() => window.olympus.pegasusArboSave(key, pgArboCache[key]), 400);
+}
+const pgArboId = () => "n" + Math.random().toString(36).slice(2, 8);
+
+async function pgArboRender(s) {
+  const box = $("pgArbo"); if (!box) return;
+  if (!pgArboCache[s.key]) {
+    const r = await window.olympus.pegasusArboGet(s.key);
+    if (!r.ok) { box.innerHTML = `<div class="rb-empty">${escapeHtml(r.error || "Indisponible.")}</div>`; return; }
+    pgArboCache[s.key] = r.arbo || null;
+  }
+  const arbo = pgArboCache[s.key];
+
+  // Pas encore d'arborescence → proposer de la générer ou de partir de zéro
+  if (!arbo) {
+    box.innerHTML = `<div class="ab-empty">
+        <p class="pg-mnote">Aucune arborescence pour ce site. Génère-la depuis les pages réelles du site en ligne, ou construis-la de zéro.</p>
+        <div class="pg-actrow">
+          <button class="cal-btn primary" id="abGen">Générer depuis le site</button>
+          <button class="btn sec" id="abBlank">Partir de zéro</button>
+          <span class="msg" id="abMsg"></span>
+        </div>
+      </div>`;
+    box.querySelector("#abGen").onclick = async (e) => {
+      const m = box.querySelector("#abMsg"); e.currentTarget.disabled = true;
+      m.className = "msg"; m.textContent = "Lecture des pages du site…";
+      const r = await window.olympus.pegasusSiteContent(s.key);
+      if (!r.ok) { m.className = "msg err"; m.textContent = r.error || "Échec."; e.target.disabled = false; return; }
+      const items = (Array.isArray(r.content) ? r.content : r.content?.items || []).filter((c) => !c.type || c.type === "page");
+      pgArboCache[s.key] = { pages: items.map((c) => ({
+        id: pgArboId(), wp_id: c.id, titre: String(c.title || "Sans titre"),
+        home: /accueil|home/i.test(String(c.title || "")), sections: [],
+      })) };
+      pgArboSave(s.key); pgArboRender(s);
+    };
+    box.querySelector("#abBlank").onclick = () => {
+      pgArboCache[s.key] = { pages: [{ id: pgArboId(), titre: "Accueil", home: true, sections: [] }] };
+      pgArboSave(s.key); pgArboRender(s);
+    };
+    return;
+  }
+
+  // Rendu de l'arbre : racine → pages (nodes) → sections (sous-nodes avec destination)
+  const pages = arbo.pages || [];
+  const cibleOptions = (sel) => `<option value="">— nulle part —</option>` + pages.map((p) => `<option value="${p.id}" ${sel === p.id ? "selected" : ""}>${escapeHtml(p.titre)}</option>`).join("");
+  box.innerHTML = `
+    <div class="pg-actrow" style="margin-bottom:14px;">
+      <button class="cal-btn" id="abAddPage">＋ Page</button>
+      <button class="btn sec" id="abResync">⟳ Resynchroniser les pages du site</button>
+      <span class="pg-mnote dim" style="margin:0;">Chaque section indique où elle emmène. Sauvegarde automatique dans le dossier du site.</span>
+    </div>
+    <div class="ab-tree">
+      <div class="ab-root"><span class="pg-dot ok"></span><b>${escapeHtml(s.label)}</b><small>${pages.length} page${pages.length > 1 ? "s" : ""}</small></div>
+      <div class="ab-pages">
+        ${pages.map((p) => `
+          <div class="ab-page" data-p="${p.id}">
+            <div class="ab-phead">
+              <span class="ab-nodedot${p.home ? " home" : ""}" title="${p.home ? "Page d'accueil" : "Page"}"></span>
+              <input class="ab-in title" data-f="titre" value="${escapeHtml(p.titre)}" spellcheck="false">
+              ${p.home ? '<span class="ab-badge">accueil</span>' : `<button class="ab-mini" data-act="home" title="Définir comme accueil">⌂</button>`}
+              ${p.wp_id ? `<span class="ab-badge dim">WP #${p.wp_id}</span>` : ""}
+              <button class="ab-mini" data-act="addsec" title="Ajouter une section">＋ section</button>
+              <button class="ab-mini" data-act="delpage" title="Supprimer la page">✕</button>
+            </div>
+            ${p.sections.length ? `<div class="ab-secs">
+              ${p.sections.map((sec) => `
+                <div class="ab-sec" data-s="${sec.id}">
+                  <span class="ab-secdot"></span>
+                  <input class="ab-in" data-f="sec-titre" value="${escapeHtml(sec.titre)}" spellcheck="false">
+                  <span class="ab-arrow">⇢</span>
+                  <select class="pg-select ab-cible" data-f="cible">${cibleOptions(sec.cible)}</select>
+                  <button class="ab-mini" data-act="delsec" title="Supprimer la section">✕</button>
+                </div>`).join("")}
+            </div>` : ""}
+          </div>`).join("")}
+      </div>
+    </div>`;
+
+  const find = (pid) => pages.find((x) => x.id === pid);
+  box.querySelector("#abAddPage").onclick = () => {
+    pages.push({ id: pgArboId(), titre: "Nouvelle page", sections: [] });
+    pgArboSave(s.key); pgArboRender(s);
+  };
+  box.querySelector("#abResync").onclick = async (e) => {
+    e.currentTarget.disabled = true;
+    const r = await window.olympus.pegasusSiteContent(s.key);
+    if (r.ok) {
+      const items = (Array.isArray(r.content) ? r.content : r.content?.items || []).filter((c) => !c.type || c.type === "page");
+      for (const c of items) {
+        if (!pages.some((p) => p.wp_id === c.id || p.titre === String(c.title))) {
+          pages.push({ id: pgArboId(), wp_id: c.id, titre: String(c.title || "Sans titre"), sections: [] });
+        }
+      }
+      pgArboSave(s.key);
+    }
+    pgArboRender(s);
+  };
+  box.querySelectorAll(".ab-page").forEach((pe) => {
+    const p = find(pe.dataset.p);
+    pe.querySelector('[data-f="titre"]').onchange = (e) => { p.titre = e.target.value.trim() || "Sans titre"; pgArboSave(s.key); };
+    pe.querySelectorAll("[data-act]").forEach((b) => {
+      b.onclick = () => {
+        if (b.dataset.act === "addsec") { p.sections.push({ id: pgArboId(), titre: "Nouvelle section", cible: "" }); }
+        if (b.dataset.act === "delpage") { arbo.pages = pages.filter((x) => x.id !== p.id); pgArboCache[s.key] = arbo; }
+        if (b.dataset.act === "home") { pages.forEach((x) => { x.home = x.id === p.id; }); }
+        if (b.dataset.act === "delsec") return; // géré par section
+        pgArboSave(s.key); pgArboRender(s);
+      };
+    });
+    pe.querySelectorAll(".ab-sec").forEach((se) => {
+      const sec = p.sections.find((x) => x.id === se.dataset.s);
+      se.querySelector('[data-f="sec-titre"]').onchange = (e) => { sec.titre = e.target.value.trim() || "Section"; pgArboSave(s.key); };
+      se.querySelector('[data-f="cible"]').onchange = (e) => { sec.cible = e.target.value; pgArboSave(s.key); };
+      se.querySelector('[data-act="delsec"]').onclick = () => { p.sections = p.sections.filter((x) => x.id !== sec.id); pgArboSave(s.key); pgArboRender(s); };
+    });
+  });
 }
 
 function pgTabGeneral(s) {

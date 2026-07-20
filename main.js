@@ -1096,6 +1096,31 @@ ipcMain.handle("pegasus:siteInspect", async (_e, key) => {
   try { return { ok: true, inspect: await pegCall(key, "GET", "/inspect") }; }
   catch (e) { return { ok: false, error: e.message }; }
 });
+// Contenus du site (pages réelles) — sert à générer l'arborescence
+ipcMain.handle("pegasus:siteContent", async (_e, key) => {
+  try { return { ok: true, content: await pegCall(key, "GET", "/content") }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
+// Arborescence du site : stockée dans le dossier du site (~/Pegasus/<site>/arborescence.json)
+async function pegArboPath(key) {
+  const sites = await pegSites(); const s = sites[key];
+  if (!s) throw new Error("Site inconnu.");
+  return join(pegProjectDir(pegSlug(s.host || key)), "arborescence.json");
+}
+ipcMain.handle("pegasus:arboGet", async (_e, key) => {
+  try {
+    const p = await pegArboPath(key);
+    if (!existsSync(p)) return { ok: true, arbo: null };
+    return { ok: true, arbo: JSON.parse(readFileSync(p, "utf8")) };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+ipcMain.handle("pegasus:arboSave", async (_e, key, arbo) => {
+  try {
+    const p = await pegArboPath(key);
+    writeFileSync(p, JSON.stringify(arbo, null, 2));
+    return { ok: true, path: p };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
 ipcMain.handle("pegasus:siteSeo", async (_e, key, limit) => {
   try { return { ok: true, seo: await pegCall(key, "GET", `/seo-audit${limit ? `?limit=${Number(limit)}` : ""}`, 60000) }; }
   catch (e) { return { ok: false, error: e.message }; }
