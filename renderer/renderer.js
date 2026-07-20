@@ -1270,23 +1270,28 @@ async function pgPipelineRender(s) {
   const pl = pgPlCache[s.key];
 
   // ── Pas encore de pipeline : choisir le mode de travail ──
+  // « Nouveau site » n'est proposé que pour un nouveau projet (colonne, pas encore
+  // en ligne). Un site déjà connecté ne peut être que refait ou retouché.
   if (!pl || !pl.mode) {
-    box.innerHTML = `
-      <p class="pg-mnote">Comment veux-tu travailler sur <b>${escapeHtml(s.label)}</b> ? Le pipeline te guide étape par étape — chaque étape peut être passée ou confiée à l'IA, et tu génères le site quand tu veux.</p>
-      <div class="wk-choices" style="max-width:640px;">
-        <button class="wk-choice" data-mode="nouveau">
+    const isExisting = !!s.base_url; // site connecté du Parc = existant
+    const modes = {
+      nouveau: `<button class="wk-choice" data-mode="nouveau">
           <div class="wk-t">🆕 Nouveau site</div>
           <div class="wk-d">Le site part de zéro. 9 étapes guidées : wireframe → maquette → charte → niveau → références → local → (scène Blender) → génération.</div>
-        </button>
-        <button class="wk-choice" data-mode="refonte">
+        </button>`,
+      refonte: `<button class="wk-choice" data-mode="refonte">
           <div class="wk-t">🔄 Refonte complète</div>
           <div class="wk-d">Le site existe : tout est prérempli depuis le site réel (wireframe scanné, charte extraite), et tu reprends chaque étape pour le réinventer.</div>
-        </button>
-        <button class="wk-choice" data-mode="micro">
+        </button>`,
+      micro: `<button class="wk-choice" data-mode="micro">
           <div class="wk-t">🔧 Micro-modifications</div>
           <div class="wk-d">Tout est prérempli — tu fais des retouches ponctuelles quand nécessaire, sans suivre de pipeline.</div>
-        </button>
-      </div>`;
+        </button>`,
+    };
+    const offre = isExisting ? [modes.refonte, modes.micro] : [modes.nouveau];
+    box.innerHTML = `
+      <p class="pg-mnote">Comment veux-tu travailler sur <b>${escapeHtml(s.label)}</b> ?${isExisting ? " Ce site est déjà en ligne — tu peux le refondre entièrement ou y faire des retouches." : ""} Le pipeline te guide étape par étape — chaque étape peut être passée ou confiée à l'IA, et tu génères le site quand tu veux.</p>
+      <div class="wk-choices" style="max-width:640px;">${offre.join("")}</div>`;
     box.querySelectorAll(".wk-choice").forEach((b) => b.onclick = () => {
       pgPlCache[s.key] = pgPlNew(b.dataset.mode);
       pgPlSave(s.key); pgPipelineRender(s);
