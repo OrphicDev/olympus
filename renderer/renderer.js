@@ -3660,13 +3660,36 @@ async function renderWheel() {
   const iso = isoD(d.getFullYear(), d.getMonth(), d.getDate());
   const r = await window.olympus.chronosList(iso, iso);
   agendaEvents = (r.ok ? r.events : []).sort((a, b) => (a.time || "").localeCompare(b.time || ""));
-  $("agendaDay").innerHTML = agendaEvents.length
-    ? agendaEvents.map((e) => {
-        const dot = e.is_personal ? "" : `<span class="ev-dot" style="background:${catColor(e.category)}"></span>`;
-        const who = e.is_personal && e.assignee ? `<span class="ev-name">${escapeHtml(e.assignee)}</span> · ` : "";
-        return `<div class="agenda-ev${e.is_personal ? " perso" : ""}" data-ev="${e.id}"><div>${dot}${who}${escapeHtml(e.title)}</div>${e.time ? `<div class="t">${e.time.slice(0, 5)}</div>` : ""}</div>`;
-      }).join("")
-    : '<div class="rb-empty">Rien de prévu ce jour-là.</div>';
+  $("agendaDay").innerHTML = agendaHoursHtml(agendaEvents);
+}
+// Un événement dans l'agenda (pastille + heure + titre)
+function agItem(e) {
+  const dot = e.is_personal ? "" : `<span class="ev-dot" style="background:${catColor(e.category)}"></span>`;
+  const who = e.is_personal && e.assignee ? `<span class="ev-name">${escapeHtml(e.assignee)}</span> · ` : "";
+  const t = e.time ? `<span class="ag-t">${e.time.slice(0, 5)}</span>` : "";
+  return `<div class="agenda-ev${e.is_personal ? " perso" : ""}" data-ev="${e.id}">${dot}${t}${who}${escapeHtml(e.title)}</div>`;
+}
+// Agenda du jour découpé en heures : bandeau « toute la journée » + créneaux horaires.
+function agendaHoursHtml(events) {
+  const allday = events.filter((e) => !e.time);
+  const timed = events.filter((e) => e.time).sort((a, b) => a.time.localeCompare(b.time));
+  if (!allday.length && !timed.length) return '<div class="rb-empty">Rien de prévu ce jour-là.</div>';
+  const hourOf = (e) => parseInt(e.time.slice(0, 2), 10);
+  let startH = 8, endH = 20;
+  if (timed.length) {
+    startH = Math.max(0, Math.min(8, ...timed.map(hourOf)));
+    endH = Math.min(24, Math.max(20, ...timed.map(hourOf).map((h) => h + 1)));
+  }
+  const byHour = {};
+  timed.forEach((e) => { (byHour[hourOf(e)] = byHour[hourOf(e)] || []).push(e); });
+  let html = "";
+  if (allday.length) html += `<div class="ag-allday"><div class="ag-allday-l">Toute la journée</div>${allday.map(agItem).join("")}</div>`;
+  html += '<div class="ag-hours">';
+  for (let h = startH; h < endH; h++) {
+    html += `<div class="ag-hour"><div class="ag-hlabel">${String(h).padStart(2, "0")}</div><div class="ag-hslot">${(byHour[h] || []).map(agItem).join("")}</div></div>`;
+  }
+  html += "</div>";
+  return html;
 }
 function highlightSelected() {
   document.querySelectorAll("#calScroll .cal-cell").forEach((c) => c.classList.toggle("sel", c.dataset.date === calSelected));
