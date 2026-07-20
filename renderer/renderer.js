@@ -615,7 +615,7 @@ async function pgArboRender(s) {
     if (!r.ok) { box.innerHTML = `<div class="rb-empty">${escapeHtml(r.error || "Indisponible.")}</div>`; return; }
     pgArboCache[s.key] = r.arbo || null;
   }
-  const arbo = pgArboCache[s.key];
+  let arbo = pgArboCache[s.key];
 
   // Pas encore d'arborescence → scan auto du site (pages + liens réels), ou zéro
   if (!arbo) {
@@ -643,8 +643,10 @@ async function pgArboRender(s) {
   }
 
   // La version en ligne (le socle) n'est PAS éditable : on ne modifie jamais le site
-  // en place. Pour toucher au wireframe il faut une version de travail distincte.
+  // en place. pgWirePrep garantit une copie de l'en-ligne + un wireframe de travail,
+  // et fait atterrir directement sur le wireframe de travail (éditable).
   const man = await pgWirePrep(s);
+  arbo = pgArboCache[s.key]; // pgWirePrep a pu basculer sur la version de travail
   const editable = (arbo.versionId ?? null) !== man.deployed;
 
   const pages = arbo.pages || [];
@@ -984,12 +986,38 @@ let pgWireBaselining = false;
 // c'est le tout premier chargement. Renvoie le manifeste {versions, deployed}.
 async function pgWirePrep(s) {
   let r = await window.olympus.pegasusWireList(s.key);
+  let versions = (r.ok && r.versions) || [];
+  let deployed = r.ok ? r.deployed : null;
   const arbo = pgArboCache[s.key];
-  if (r.ok && (!r.versions || r.versions.length === 0) && arbo && arbo.pages && !pgWireBaselining) {
+  if (arbo && arbo.pages && !pgWireBaselining) {
     pgWireBaselining = true;
-    const sr = await window.olympus.pegasusWireSave(s.key, arbo, "Site en ligne", true);
+    // 1. La copie de la version en ligne (socle, immuable, deployed)
+    if (!versions.length) {
+      await window.olympus.pegasusWireSave(s.key, arbo, "Site en ligne", true);
+      r = await window.olympus.pegasusWireList(s.key);
+      versions = (r.ok && r.versions) || []; deployed = r.ok ? r.deployed : null;
+    }
+    // 2. Toujours au moins UN wireframe de travail (dupliqué du socle)
+    let drafts = versions.filter((v) => v.id !== deployed);
+    if (deployed && !drafts.length) {
+      const base = await window.olympus.pegasusWireLoad(s.key, deployed);
+      if (base.ok) await window.olympus.pegasusWireSave(s.key, base.arbo, "Wireframe 1", false);
+      r = await window.olympus.pegasusWireList(s.key);
+      versions = (r.ok && r.versions) || []; deployed = r.ok ? r.deployed : null;
+      drafts = versions.filter((v) => v.id !== deployed);
+    }
+    // 3. On atterrit DIRECTEMENT sur le wireframe de travail (éditable). On respecte
+    //    un choix explicite : si le doc pointe déjà une version valide (y compris la
+    //    version en ligne consultée via « Voir cette version »), on n'y touche pas.
+    const validIds = new Set(versions.map((v) => v.id));
+    if (!arbo.versionId || !validIds.has(arbo.versionId)) {
+      const latest = drafts.slice().sort((a, b) => (a.ts < b.ts ? 1 : -1))[0];
+      if (latest) {
+        const ld = await window.olympus.pegasusWireLoad(s.key, latest.id);
+        if (ld.ok) { ld.arbo.versionId = latest.id; pgArboCache[s.key] = ld.arbo; await window.olympus.pegasusArboSave(s.key, ld.arbo); }
+      }
+    }
     pgWireBaselining = false;
-    if (sr.ok) { arbo.versionId = sr.id; pgArboSave(s.key); } // le doc de travail = la version en ligne (lecture seule)
     r = await window.olympus.pegasusWireList(s.key);
   }
   return pgWireCache[s.key] = r.ok ? { versions: r.versions || [], deployed: r.deployed || null } : { versions: [], deployed: null };
