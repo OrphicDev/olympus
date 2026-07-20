@@ -202,6 +202,21 @@
   .hm-side{width:252px;flex-shrink:0;display:flex;flex-direction:column;padding:24px 18px 14px 40px;border-right:1px solid var(--line);}
   .hm-search{width:100%;padding:9px 13px;border-radius:20px;background:var(--card);border:1px solid var(--line);color:var(--txt);font-size:13px;outline:none;margin-bottom:6px;}
   .hm-search:focus{border-color:var(--line2);}
+  /* Bascule Équipe / WhatsApp */
+  .hm-modes{display:flex;gap:3px;background:var(--card2);border-radius:10px;padding:3px;margin-bottom:12px;}
+  .hm-mode{flex:1;background:none;border:none;color:var(--muted);font-size:12px;cursor:pointer;padding:7px 0;border-radius:8px;transition:background .12s,color .12s;}
+  .hm-mode:hover{color:var(--txt);}
+  .hm-mode.on{background:var(--panel);color:var(--txt);box-shadow:var(--neu);}
+  .wa-logout{margin-left:auto;background:none;border:none;color:var(--dim);cursor:pointer;font-size:12px;}
+  .wa-logout:hover{color:#e0868f;}
+  .wa-connect{display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;padding:24px 6px;}
+  .wa-logo{font-size:34px;}
+  .wa-qr{background:#fff;padding:10px;border-radius:14px;line-height:0;}
+  .wa-qr img{width:100%;max-width:230px;display:block;}
+  .wa-steps{font-size:12.5px;color:var(--muted);line-height:1.6;}
+  .wa-steps b{color:var(--txt);}
+  .wa-warn{font-size:11px;color:var(--dim);line-height:1.5;border-top:1px solid var(--line);padding-top:12px;}
+  .wa-spin{width:26px;height:26px;border:2.5px solid var(--line);border-top-color:var(--accent2);border-radius:50%;animation:s .8s linear infinite;}
   .hm-scroll{flex:1;overflow-y:auto;scrollbar-width:none;padding-bottom:30px;-webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 40px),transparent);mask-image:linear-gradient(to bottom,#000 calc(100% - 40px),transparent);}
   .hm-scroll::-webkit-scrollbar{display:none;}
   .hm-sec{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);margin:18px 2px 8px;display:flex;align-items:center;}
@@ -1961,8 +1976,9 @@
       <section class="page" id="page-hermes">
         <div class="hm-wrap">
           <aside class="hm-side">
+            <div class="hm-modes"><button class="hm-mode on" data-hmmode="team">Équipe</button><button class="hm-mode" data-hmmode="wa">WhatsApp</button></div>
             <input class="hm-search" id="hmSearch" placeholder="Rechercher…" autocomplete="off">
-            <div class="hm-scroll">
+            <div class="hm-scroll" id="hmTeamPane">
               <div class="hm-sec">Canaux</div>
               <div id="hmChannels"></div>
               <div class="hm-sec">Messages directs</div>
@@ -1974,6 +1990,7 @@
                 <div class="ev-actions" style="margin:0;"><button class="btn sec" id="hmGroupCreate" style="padding:6px 14px;font-size:12px;">Créer</button></div>
               </div>
             </div>
+            <div class="hm-scroll" id="hmWaPane" style="display:none;"></div>
           </aside>
           <div class="hm-chat">
             <div class="hm-head">

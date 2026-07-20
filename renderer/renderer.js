@@ -3415,7 +3415,7 @@ function renderFakeMsgs(conv) {
 }
 function openConv(id) {
   const c = hmConvs.find((x) => x.id === id); if (!c) return;
-  hmCur = c; c.unread = 0;
+  hmWaCur = null; hmCur = c; c.unread = 0;
   $("hmHeadAv").textContent = c.kind === "channel" ? "◎" : initialsOf(c.name);
   $("hmHeadName").textContent = c.name;
   $("hmHeadSub").textContent = c.kind === "channel" ? c.sub : c.kind === "group" ? c.members.join(" · ") : (c.online ? "en ligne" : "hors ligne");
@@ -3461,7 +3461,15 @@ function pushLocal(m) {
 }
 async function sendMsg() {
   const input = $("chatInput"), body = input.value.trim();
-  if (!body || !hmCur) return;
+  if (!body) return;
+  if (hmWaCur) {
+    input.value = "";
+    const r = await window.olympus.waSend(hmWaCur, body);
+    if (r.ok) { const rr = await window.olympus.waMessages(hmWaCur); paintWaMsgs(rr.messages || []); }
+    else input.value = body;
+    return;
+  }
+  if (!hmCur) return;
   input.value = "";
   if (hmCur.real) {
     const r = await window.olympus.chatSend(body);
@@ -3477,6 +3485,71 @@ document.querySelector(".hm-side").addEventListener("click", (e) => { const row 
 $("chatMessages").addEventListener("click", (e) => {
   const v = e.target.closest("[data-voice]");
   if (v) { v.classList.toggle("playing"); v.querySelector(".vplay").textContent = v.classList.contains("playing") ? "❚❚" : "▶"; }
+});
+
+// ══ Hermès : bascule Équipe / WhatsApp (WhatsApp perso via Baileys) ══
+let hmMode = "team";
+let hmWaCur = null; // jid de la conversation WhatsApp ouverte
+document.querySelectorAll(".hm-mode").forEach((b) => b.onclick = () => {
+  hmMode = b.dataset.hmmode;
+  document.querySelectorAll(".hm-mode").forEach((x) => x.classList.toggle("on", x === b));
+  $("hmTeamPane").style.display = hmMode === "team" ? "" : "none";
+  $("hmSearch").style.display = hmMode === "team" ? "" : "none";
+  $("hmWaPane").style.display = hmMode === "wa" ? "" : "none";
+  if (hmMode === "wa") renderWa();
+});
+async function renderWa() {
+  const box = $("hmWaPane"); if (!box) return;
+  const st = await window.olympus.waStatus();
+  if (st.state === "connected") {
+    const r = await window.olympus.waChats();
+    const chats = r.chats || [];
+    box.innerHTML = `<div class="hm-sec">WhatsApp · ${escapeHtml((st.me && st.me.name) || "connecté")} <button class="wa-logout" id="waLogout" title="Déconnecter WhatsApp">⏻</button></div>`
+      + (chats.length ? chats.map(waRow).join("") : `<div class="ga-note" style="margin:8px;">Aucune conversation encore. Elles apparaissent au fil des messages reçus/envoyés.</div>`);
+    $("waLogout").onclick = async () => { if (!confirm("Déconnecter WhatsApp d'Olympus ?")) return; await window.olympus.waLogout(); hmWaCur = null; renderWa(); };
+    box.querySelectorAll("[data-wa]").forEach((el) => el.onclick = () => openWaChat(el.dataset.wa, el.dataset.name));
+  } else if (st.state === "qr" && st.qr) {
+    box.innerHTML = `<div class="wa-connect">
+      <div class="wa-qr"><img src="${st.qr}" alt="QR WhatsApp"></div>
+      <div class="wa-steps"><b>Scanne ce QR code</b><br>Sur ton téléphone : WhatsApp → <b>Réglages</b> → <b>Appareils connectés</b> → <b>Connecter un appareil</b>.</div>
+    </div>`;
+  } else if (st.state === "connecting") {
+    box.innerHTML = `<div class="wa-connect"><div class="wa-spin"></div><div class="wa-steps">Connexion à WhatsApp…</div></div>`;
+  } else {
+    box.innerHTML = `<div class="wa-connect">
+      <div class="wa-logo">💬</div>
+      <div class="wa-steps"><b>Connecte ton WhatsApp</b><br>Retrouve tes conversations et réponds à tes contacts depuis Hermès.</div>
+      <button class="cal-btn primary" id="waConnectBtn">Connecter WhatsApp</button>
+      <div class="wa-warn">Connexion non officielle (comme WhatsApp Web) — tes messages restent entre ton téléphone et WhatsApp.</div>
+    </div>`;
+    $("waConnectBtn").onclick = async () => { const b = $("waConnectBtn"); b.disabled = true; b.textContent = "Ouverture…"; await window.olympus.waConnect(); renderWa(); };
+  }
+}
+function waRow(c) {
+  const un = c.unread ? `<span class="hm-unread">${c.unread}</span>` : "";
+  const t = c.ts ? new Date(c.ts * 1000).toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" }) : "";
+  const preview = (c.lastFromMe ? "Vous : " : "") + (c.lastText || "");
+  return `<div class="hm-conv${hmWaCur === c.id ? " active" : ""}" data-wa="${escapeHtml(c.id)}" data-name="${escapeHtml(c.name)}"><div class="hm-av">${c.isGroup ? "👥" : initialsOf(c.name)}</div><div class="hm-cinfo"><div class="hm-cname">${escapeHtml(c.name)}</div><div class="hm-clast">${escapeHtml(preview).slice(0, 64)}</div></div><div class="hm-cmeta"><span class="hm-ctime">${t}</span>${un}</div></div>`;
+}
+async function openWaChat(jid, name) {
+  hmWaCur = jid; hmCur = null;
+  $("hmHeadAv").textContent = jid.endsWith("@g.us") ? "👥" : initialsOf(name);
+  $("hmHeadName").textContent = name;
+  $("hmHeadSub").textContent = "WhatsApp";
+  $("chatMessages").innerHTML = `<div class="ga-note" style="margin:12px;">Chargement…</div>`;
+  const r = await window.olympus.waMessages(jid);
+  paintWaMsgs(r.messages || []);
+  renderWa();
+}
+function paintWaMsgs(msgs) {
+  const box = $("chatMessages");
+  box.innerHTML = msgs.map((m) => `<div class="bubble ${m.fromMe ? "me" : "them"}">${(!m.fromMe && m.author) ? `<div class="author">${escapeHtml(m.author)}</div>` : ""}<div>${escapeHtml(m.text)}</div><div class="time">${m.ts ? new Date(m.ts * 1000).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }) : ""}</div></div>`).join("") || `<div class="ga-note" style="margin:12px;">Pas encore de messages dans cette conversation.</div>`;
+  box.scrollTop = box.scrollHeight;
+}
+window.olympus.onWaEvent((d) => {
+  if (d.type === "status") { if (hmMode === "wa") renderWa(); }
+  else if (d.type === "chats") { if (hmMode === "wa") renderWa(); }
+  else if (d.type === "message" && d.jid === hmWaCur) { window.olympus.waMessages(hmWaCur).then((r) => paintWaMsgs(r.messages || [])); }
 });
 // Joindre un fichier / média
 $("chatAttach").onclick = () => {

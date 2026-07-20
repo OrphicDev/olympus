@@ -124,6 +124,14 @@ contextBridge.exposeInMainWorld("olympus", {
   pegasusPushInfo: (key) => ipcRenderer.invoke("pegasus:pushInfo", key),
   pegasusPush: (key) => ipcRenderer.invoke("pegasus:push", key),
   pegasusWorkOn: (key, prompt) => ipcRenderer.invoke("pegasus:workOn", key, prompt),
+  // Hermès — WhatsApp (Baileys)
+  waStatus: () => ipcRenderer.invoke("wa:status"),
+  waConnect: () => ipcRenderer.invoke("wa:connect"),
+  waLogout: () => ipcRenderer.invoke("wa:logout"),
+  waChats: () => ipcRenderer.invoke("wa:chats"),
+  waMessages: (jid) => ipcRenderer.invoke("wa:messages", jid),
+  waSend: (jid, text) => ipcRenderer.invoke("wa:send", jid, text),
+  onWaEvent: (cb) => ipcRenderer.on("wa:event", (_e, d) => cb(d)),
   // Éole — transfert de fichiers
   eoleStatus: () => ipcRenderer.invoke("eole:status"),
   eoleSetupSql: () => ipcRenderer.invoke("eole:setupSql"),

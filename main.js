@@ -1296,6 +1296,87 @@ ipcMain.handle("eole:delete", async (_e, id, objectPath) => {
     return { ok: true };
   } catch (e) { return { ok: false, error: e.message }; }
 });
+
+// ══════════ HERMÈS — WhatsApp perso (Baileys, WhatsApp Web multi-appareils) ══════════
+// Connexion par QR (comme WhatsApp Web). Auth persistée dans ~/.olympus/whatsapp.
+// Store en mémoire (chats/contacts/messages) car Baileys ne stocke rien lui-même.
+const WA_DIR = join(homedir(), ".olympus", "whatsapp");
+let waSock = null, waState = "disconnected", waQR = null, waMe = null;
+const waStore = { chats: new Map(), contacts: new Map(), messages: new Map() };
+function waPush(p) { try { win && win.webContents.send("wa:event", p); } catch {} }
+function waChatName(jid) {
+  if (!jid) return "";
+  const c = waStore.chats.get(jid); if (c && c.name) return c.name;
+  const ct = waStore.contacts.get(jid); if (ct && (ct.name || ct.notify)) return ct.name || ct.notify;
+  if (jid.endsWith("@g.us")) return "Groupe";
+  return "+" + jid.split("@")[0];
+}
+function waText(m) {
+  const x = m.message || {};
+  return x.conversation || x.extendedTextMessage?.text || x.imageMessage?.caption || x.videoMessage?.caption
+    || (x.imageMessage ? "📷 Photo" : x.videoMessage ? "🎥 Vidéo" : x.audioMessage ? "🎤 Message vocal" : x.documentMessage ? "📎 " + (x.documentMessage.fileName || "Document") : x.stickerMessage ? "🌟 Sticker" : x.locationMessage ? "📍 Position" : x.contactMessage ? "👤 Contact" : "");
+}
+function waStoreMsg(m) {
+  const jid = m.key && m.key.remoteJid; if (!jid || jid === "status@broadcast" || jid.endsWith("@broadcast")) return;
+  const arr = waStore.messages.get(jid) || [];
+  if (!arr.some((y) => y.key && y.key.id === m.key.id)) {
+    arr.push(m); arr.sort((a, b) => (+a.messageTimestamp || 0) - (+b.messageTimestamp || 0));
+    if (arr.length > 250) arr.splice(0, arr.length - 250);
+    waStore.messages.set(jid, arr);
+  }
+  const c = waStore.chats.get(jid) || { id: jid };
+  c.conversationTimestamp = Math.max(+c.conversationTimestamp || 0, +m.messageTimestamp || 0);
+  c.lastText = waText(m); c.lastFromMe = !!(m.key && m.key.fromMe);
+  if (!c.name) c.name = waChatName(jid);
+  waStore.chats.set(jid, c);
+}
+async function waConnect() {
+  if (waSock) return;
+  const baileys = await import("@whiskeysockets/baileys"); // Baileys 7 = ESM → import() dynamique
+  const makeWASocket = baileys.default || baileys.makeWASocket;
+  const { useMultiFileAuthState, DisconnectReason, Browsers } = baileys;
+  mkdirSync(WA_DIR, { recursive: true });
+  const { state, saveCreds } = await useMultiFileAuthState(WA_DIR);
+  waState = "connecting"; waPush({ type: "status", state: waState });
+  waSock = makeWASocket({ auth: state, browser: Browsers.macOS("Olympus"), markOnlineOnConnect: false, syncFullHistory: false });
+  waSock.ev.on("creds.update", saveCreds);
+  waSock.ev.on("connection.update", async (u) => {
+    const { connection, lastDisconnect, qr } = u;
+    if (qr) { waState = "qr"; try { const qm = await import("qrcode"); waQR = await (qm.default || qm).toDataURL(qr, { margin: 1, width: 264 }); } catch { waQR = null; } waPush({ type: "status", state: "qr", qr: waQR }); }
+    if (connection === "open") { waState = "connected"; waQR = null; waMe = { id: waSock.user?.id, name: waSock.user?.name || waSock.user?.verifiedName }; waPush({ type: "status", state: "connected", me: waMe }); }
+    if (connection === "close") {
+      const code = lastDisconnect?.error?.output?.statusCode;
+      waSock = null;
+      if (code === DisconnectReason.loggedOut) { waState = "disconnected"; waMe = null; try { rmSync(WA_DIR, { recursive: true, force: true }); } catch {} waStore.chats.clear(); waStore.messages.clear(); waStore.contacts.clear(); waPush({ type: "status", state: "disconnected" }); }
+      else { waState = "connecting"; waPush({ type: "status", state: "connecting" }); setTimeout(() => waConnect().catch(() => {}), 2500); }
+    }
+  });
+  waSock.ev.on("messaging-history.set", ({ chats, contacts, messages }) => {
+    (contacts || []).forEach((c) => waStore.contacts.set(c.id, { id: c.id, name: c.name, notify: c.notify }));
+    (chats || []).forEach((c) => { const e = waStore.chats.get(c.id) || { id: c.id }; e.name = c.name || e.name || waChatName(c.id); e.conversationTimestamp = +c.conversationTimestamp || e.conversationTimestamp || 0; e.unreadCount = c.unreadCount || 0; waStore.chats.set(c.id, e); });
+    (messages || []).forEach(waStoreMsg);
+    waPush({ type: "chats" });
+  });
+  waSock.ev.on("contacts.upsert", (cs) => { cs.forEach((c) => waStore.contacts.set(c.id, { id: c.id, name: c.name, notify: c.notify })); waPush({ type: "chats" }); });
+  waSock.ev.on("contacts.update", (cs) => { cs.forEach((c) => { const e = waStore.contacts.get(c.id) || { id: c.id }; if (c.name) e.name = c.name; if (c.notify) e.notify = c.notify; waStore.contacts.set(c.id, e); }); });
+  waSock.ev.on("chats.upsert", (cs) => { cs.forEach((c) => { const e = waStore.chats.get(c.id) || { id: c.id }; e.name = c.name || e.name || waChatName(c.id); e.conversationTimestamp = +c.conversationTimestamp || e.conversationTimestamp || 0; waStore.chats.set(c.id, e); }); waPush({ type: "chats" }); });
+  waSock.ev.on("messages.upsert", ({ messages }) => { (messages || []).forEach(waStoreMsg); const last = messages && messages[messages.length - 1]; waPush({ type: "chats" }); if (last?.key?.remoteJid) waPush({ type: "message", jid: last.key.remoteJid }); });
+}
+function waChatList() {
+  return [...waStore.chats.values()]
+    .filter((c) => c.id && !c.id.endsWith("@broadcast") && c.id !== "status@broadcast")
+    .map((c) => ({ id: c.id, name: c.name || waChatName(c.id), lastText: c.lastText || "", lastFromMe: !!c.lastFromMe, ts: +c.conversationTimestamp || 0, unread: c.unreadCount || 0, isGroup: c.id.endsWith("@g.us") }))
+    .sort((a, b) => b.ts - a.ts).slice(0, 100);
+}
+function waMsgList(jid) {
+  return (waStore.messages.get(jid) || []).map((m) => ({ id: m.key?.id, fromMe: !!m.key?.fromMe, text: waText(m), ts: +m.messageTimestamp || 0, author: m.pushName || "" })).filter((m) => m.text);
+}
+ipcMain.handle("wa:status", () => ({ ok: true, state: waState, qr: waQR, me: waMe, hasCreds: existsSync(join(WA_DIR, "creds.json")) }));
+ipcMain.handle("wa:connect", async () => { try { await waConnect(); return { ok: true }; } catch (e) { waState = "disconnected"; waSock = null; return { ok: false, error: e.message }; } });
+ipcMain.handle("wa:logout", async () => { try { if (waSock) { try { await waSock.logout(); } catch {} waSock = null; } waState = "disconnected"; waMe = null; waStore.chats.clear(); waStore.messages.clear(); waStore.contacts.clear(); try { rmSync(WA_DIR, { recursive: true, force: true }); } catch {} waPush({ type: "status", state: "disconnected" }); return { ok: true }; } catch (e) { return { ok: false, error: e.message }; } });
+ipcMain.handle("wa:chats", () => ({ ok: true, chats: waChatList() }));
+ipcMain.handle("wa:messages", (_e, jid) => ({ ok: true, messages: waMsgList(jid), name: waChatName(jid) }));
+ipcMain.handle("wa:send", async (_e, jid, text) => { try { if (!waSock) throw new Error("WhatsApp non connecté."); const sent = await waSock.sendMessage(jid, { text: String(text || "") }); if (sent) waStoreMsg(sent); return { ok: true }; } catch (e) { return { ok: false, error: e.message }; } });
 ipcMain.handle("pegasus:analyticsStatus", () => {
   const s = loadSettings();
   return { ok: true, creds: existsSync(PEG_GOOGLE_OAUTH), connected: !!s.googleOAuth?.refresh_token, email: s.googleOAuth?.email || null };
