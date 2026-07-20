@@ -1256,8 +1256,9 @@ function pgPipelineAdvancePrompt(s, pl, niveau) {
     `1. Commence par la première étape encore « À faire » (ignore celles déjà faites, passées, confiées à l'IA ou non applicables).`,
     `2. Pour chaque étape : explique en une phrase où on en est, puis pose TES questions UNE À LA FOIS (pas de mur de questions). Attends la réponse, reformule, et écris le résultat dans le bon fichier (arborescence.json / moodboard.json / pipeline.json selon l'étape).`,
     `3. À chaque étape, propose toujours explicitement trois sorties au dev : la remplir avec toi, la PASSER (« on passe cette étape »), ou te LAISSER DÉCIDER (tu choisis en suivant la doctrine orphic-web-design). Quand une étape est traitée, mets à jour son statut dans pipeline.json → etapes.<id>.statut (fait | passee | ia).`,
-    `4. Enchaîne étape par étape jusqu'au bout, ou arrête-toi quand le dev le demande. À la fin, récapitule ce qui est rempli, passé, ou laissé à l'IA, et rappelle qu'il peut lancer « ⚡ Générer le site » quand il veut.`,
-    `Respecte la doctrine du skill orphic-web-design (règle-mère, pas de registre par défaut, offre N1-N4, zones protégées). Ne construis pas le site ici : cette conversation SERT À REMPLIR le pipeline, la génération est une étape à part.`,
+    `4. Enchaîne étape par étape jusqu'au bout, ou arrête-toi quand le dev le demande.`,
+    `5. À LA FIN, récapitule ce qui est rempli / passé / laissé à l'IA, puis propose explicitement DEUX issues : (a) LANCER LA CRÉATION DU SITE maintenant — il clique « 🚀 Lancer la création du site » (ou « ⚡ Générer le site ») dans Olympus, ou tu peux construire directement ici si tout le contexte est prêt et qu'il le souhaite ; (b) ENREGISTRER LE PROJET POUR PLUS TARD — tout est déjà sauvegardé dans les fichiers, il reprendra le pipeline où il l'a laissé. Laisse-le choisir, ne force rien.`,
+    `Respecte la doctrine du skill orphic-web-design (règle-mère, pas de registre par défaut, offre N1-N4, zones protégées). Ne construis pas le site tant qu'il n'a pas choisi l'issue (a) : cette conversation SERT À REMPLIR le pipeline, la génération est une étape à part.`,
   ].join("\n");
 }
 async function pgPipelineRender(s) {
@@ -1362,6 +1363,20 @@ async function pgPipelineRender(s) {
         </div>
       </div>`;
     }).join("")}
+    </div>
+    <div class="pl-end">
+      <div class="pl-end-t">Et ensuite ?</div>
+      <div class="wk-choices">
+        <button class="wk-choice" id="plEndGen">
+          <div class="wk-t">🚀 Lancer la création du site</div>
+          <div class="wk-d">Génère le site en local depuis le wireframe et le moodboard (tu choisiras génération automatique ou manuelle).</div>
+        </button>
+        <button class="wk-choice" id="plEndSave">
+          <div class="wk-t">💾 Enregistrer et reprendre plus tard</div>
+          <div class="wk-d">Tout est déjà sauvegardé. Ferme quand tu veux et reprends le pipeline exactement où tu l'as laissé.</div>
+        </button>
+      </div>
+      ${pl.savedAt ? `<div class="pl-saved">✓ Projet enregistré le ${new Date(pl.savedAt).toLocaleString("fr-FR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })} — tu peux reprendre à tout moment.</div>` : ""}
     </div>`;
 
   const gen = async () => {
@@ -1376,6 +1391,13 @@ async function pgPipelineRender(s) {
     pgWireWorkModal(s, vs[0]);
   };
   $("plGen").onclick = gen;
+  $("plEndGen").onclick = gen;
+  $("plEndSave").onclick = () => {
+    pl.savedAt = Date.now(); pgPlSave(s.key);
+    const msg = $("pgWorkMsg");
+    if (msg) { msg.className = "msg ok"; msg.textContent = "Projet enregistré — tout est sauvegardé, tu peux fermer et reprendre le pipeline quand tu veux."; }
+    pgPipelineRender(s);
+  };
   $("plReset").onclick = () => { pl.mode = null; pgPlSave(s.key); pgPipelineRender(s); };
   $("plAdvance").onclick = async (ev) => {
     const btn = ev.currentTarget; btn.disabled = true;
