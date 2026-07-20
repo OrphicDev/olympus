@@ -2443,15 +2443,31 @@ function pgAudienceConfigForm(s, cfg) {
 async function pgAudienceRender(s) {
   const box = $("pgAudience"); if (!box) return;
   const st = await window.olympus.pegasusAnalyticsStatus();
-  if (!st.sa) {
+  // Étape agence : identifiants OAuth absents
+  if (!st.creds) {
     box.innerHTML = `<div class="aud-cfg">
-      <p class="pg-mnote">Pour voir les <b>visites, la provenance et les requêtes Google</b>, Pegasus se connecte à Google Analytics 4 et Search Console via un <b>compte de service</b> (configuré une seule fois pour toute l'agence).</p>
+      <p class="pg-mnote">Pour voir les <b>visites, la provenance et les requêtes Google</b>, Pegasus se connecte à Google Analytics 4 et Search Console avec le <b>compte Google de l'agence</b> (une seule connexion pour tous les clients).</p>
       <div class="pg-sub">À faire une fois (Sacha)</div>
-      <div class="pg-alert"><span>1</span> Créer un projet Google Cloud, activer <b>Google Analytics Data API</b> et <b>Search Console API</b>.</div>
-      <div class="pg-alert"><span>2</span> Créer un <b>compte de service</b>, générer une clé JSON, la déposer dans <code>~/.pegasus/google-sa.json</code>.</div>
-      <div class="pg-alert"><span>3</span> Dans chaque propriété GA4 et Search Console du client, ajouter l'email du compte de service (<code>…@…iam.gserviceaccount.com</code>) en <b>lecture</b>.</div>
-      <div class="pg-alert"><span>4</span> Revenir ici : chaque site se connectera avec son ID de propriété.</div>
+      <div class="pg-alert"><span>1</span> Projet Google Cloud : activer <b>Google Analytics Data API</b> + <b>Search Console API</b> <span style="color:var(--ok)">✓ fait</span></div>
+      <div class="pg-alert"><span>2</span> Créer un <b>ID client OAuth</b> de type « Application de bureau », télécharger son JSON.</div>
+      <div class="pg-alert"><span>3</span> Déposer ce fichier en <code>~/.pegasus/google-oauth.json</code>.</div>
+      <div class="pg-alert"><span>4</span> Revenir ici et cliquer « Se connecter avec Google ».</div>
     </div>`;
+    return;
+  }
+  // Étape agence : identifiants présents mais pas encore connecté
+  if (!st.connected) {
+    box.innerHTML = `<div class="aud-cfg">
+      <p class="pg-mnote">Identifiants Google en place. Connecte le compte Google de l'agence (celui qui a accès aux Analytics des clients) — une autorisation dans le navigateur, une seule fois.</p>
+      <button class="cal-btn primary" id="audConnect">Se connecter avec Google</button>
+      <div class="msg" id="audMsg" style="margin-top:10px;"></div>
+    </div>`;
+    $("audConnect").onclick = async () => {
+      const m = $("audMsg"); m.className = "msg"; m.textContent = "Ouverture du navigateur — autorise l'accès puis reviens ici…";
+      const r = await window.olympus.pegasusGoogleConnect();
+      if (r.ok) pgAudienceRender(s);
+      else { m.className = "msg err"; m.textContent = r.error || "Échec de la connexion."; }
+    };
     return;
   }
   const cr = await window.olympus.pegasusAnalyticsConfigGet(s.key);

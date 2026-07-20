@@ -1133,36 +1133,84 @@ ipcMain.handle("pegasus:metricsAppend", async (_e, key, kind, point) => {
 });
 
 // ── Audience (Google Analytics 4 + Search Console) via COMPTE DE SERVICE ──
-// La clé de service (JSON) est posée UNE fois dans ~/.pegasus/google-sa.json et son
-// email est ajouté en lecture sur les propriétés GA4/Search Console des clients.
-// Par site : analytics.json { ga4Property, scUrl }.
-const PEG_GOOGLE_SA = join(homedir(), ".pegasus", "google-sa.json");
-function pegGoogleSA() {
-  if (!existsSync(PEG_GOOGLE_SA)) throw new Error("Compte de service Google absent (~/.pegasus/google-sa.json).");
-  const sa = JSON.parse(readFileSync(PEG_GOOGLE_SA, "utf8"));
-  if (!sa.client_email || !sa.private_key) throw new Error("Clé de service Google invalide (client_email / private_key manquants).");
-  return sa;
+// Connexion Google par OAUTH (compte agence) : identifiants « client OAuth » posés
+// UNE fois dans ~/.pegasus/google-oauth.json ; le dev autorise dans le navigateur
+// (boucle locale) ; le refresh_token est gardé dans les réglages. Par site :
+// analytics.json { ga4Property, scUrl }. Le compte Google connecté doit avoir accès
+// aux propriétés GA4 / Search Console des clients.
+const http = require("node:http");
+const PEG_GOOGLE_OAUTH = join(homedir(), ".pegasus", "google-oauth.json");
+const GOOGLE_SCOPES = "openid email https://www.googleapis.com/auth/analytics.readonly https://www.googleapis.com/auth/webmasters.readonly";
+function pegOAuthCreds() {
+  if (!existsSync(PEG_GOOGLE_OAUTH)) throw new Error("Identifiants OAuth Google absents (~/.pegasus/google-oauth.json).");
+  const j = JSON.parse(readFileSync(PEG_GOOGLE_OAUTH, "utf8"));
+  const c = j.installed || j.web || j;
+  if (!c.client_id || !c.client_secret) throw new Error("Fichier OAuth invalide (client_id / client_secret manquants).");
+  return c;
 }
-const _gb64 = (s) => Buffer.from(s).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-const _gTok = {};
-async function pegGoogleToken(scope) {
-  const now = Math.floor(Date.now() / 1000);
-  if (_gTok[scope] && _gTok[scope].exp - 60 > now) return _gTok[scope].token;
-  const sa = pegGoogleSA();
-  const head = _gb64(JSON.stringify({ alg: "RS256", typ: "JWT" }));
-  const claim = _gb64(JSON.stringify({ iss: sa.client_email, scope, aud: "https://oauth2.googleapis.com/token", iat: now, exp: now + 3600 }));
-  const sig = createSign("RSA-SHA256").update(`${head}.${claim}`).sign(sa.private_key).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-  const r = await fetch("https://oauth2.googleapis.com/token", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion: `${head}.${claim}.${sig}` }) });
+// Ouvre le navigateur sur l'écran de consentement Google + attend le retour sur une boucle locale
+function pegGoogleAuthCode(clientId) {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer((req, res) => {
+      const u = new URL(req.url, "http://127.0.0.1");
+      const code = u.searchParams.get("code"), err = u.searchParams.get("error");
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(`<!doctype html><meta charset=utf-8><body style="font-family:system-ui;text-align:center;padding:60px;background:#111;color:#eee"><h2 style="color:#8fd6a6">${err ? "Autorisation refusée" : "Connexion Google réussie ✓"}</h2><p>Tu peux fermer cet onglet et revenir à Olympus.</p></body>`);
+      server.close();
+      if (err) return reject(new Error("Autorisation refusée : " + err));
+      if (!code) return reject(new Error("Aucun code reçu."));
+      resolve({ code, redirect: server._redir });
+    });
+    server.listen(0, "127.0.0.1", () => {
+      const redirect = `http://127.0.0.1:${server.address().port}`;
+      server._redir = redirect;
+      const url = "https://accounts.google.com/o/oauth2/v2/auth?" + new URLSearchParams({
+        client_id: clientId, redirect_uri: redirect, response_type: "code",
+        scope: GOOGLE_SCOPES, access_type: "offline", prompt: "consent",
+      });
+      shell.openExternal(url);
+    });
+    setTimeout(() => { try { server.close(); } catch {} reject(new Error("Délai dépassé — autorisation non terminée dans le navigateur.")); }, 180000);
+  });
+}
+let _gAccess = null;
+async function pegGoogleAccessToken() {
+  if (_gAccess && _gAccess.exp - 60000 > Date.now()) return _gAccess.token;
+  const cr = pegOAuthCreds();
+  const rt = loadSettings().googleOAuth?.refresh_token;
+  if (!rt) throw new Error("Non connecté à Google.");
+  const r = await fetch("https://oauth2.googleapis.com/token", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ client_id: cr.client_id, client_secret: cr.client_secret, refresh_token: rt, grant_type: "refresh_token" }) });
   const j = await r.json();
-  if (!j.access_token) throw new Error("Auth Google refusée : " + (j.error_description || j.error || "vérifie l'accès du compte de service"));
-  _gTok[scope] = { token: j.access_token, exp: now + (j.expires_in || 3600) };
+  if (!j.access_token) throw new Error("Reconnexion Google échouée : " + (j.error_description || j.error || "reconnecte-toi"));
+  _gAccess = { token: j.access_token, exp: Date.now() + (j.expires_in || 3600) * 1000 };
   return j.access_token;
 }
 async function pegAnalyticsCfg(key) {
   const p = join(await pegSiteDir(key), "analytics.json");
   return { path: p, cfg: existsSync(p) ? JSON.parse(readFileSync(p, "utf8")) : {} };
 }
-ipcMain.handle("pegasus:analyticsStatus", () => ({ ok: true, sa: existsSync(PEG_GOOGLE_SA) }));
+ipcMain.handle("pegasus:analyticsStatus", () => {
+  const s = loadSettings();
+  return { ok: true, creds: existsSync(PEG_GOOGLE_OAUTH), connected: !!s.googleOAuth?.refresh_token, email: s.googleOAuth?.email || null };
+});
+ipcMain.handle("pegasus:googleConnect", async () => {
+  try {
+    const cr = pegOAuthCreds();
+    const { code, redirect } = await pegGoogleAuthCode(cr.client_id);
+    const r = await fetch("https://oauth2.googleapis.com/token", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ client_id: cr.client_id, client_secret: cr.client_secret, code, redirect_uri: redirect, grant_type: "authorization_code" }) });
+    const j = await r.json();
+    if (!j.refresh_token) throw new Error("Pas de refresh_token reçu : " + (j.error_description || j.error || "réessaie"));
+    let email = null;
+    try { const ui = await (await fetch("https://www.googleapis.com/oauth2/v3/userinfo", { headers: { Authorization: `Bearer ${j.access_token}` } })).json(); email = ui.email || null; } catch {}
+    const s = loadSettings(); s.googleOAuth = { refresh_token: j.refresh_token, email }; saveSettings(s);
+    _gAccess = { token: j.access_token, exp: Date.now() + (j.expires_in || 3600) * 1000 };
+    return { ok: true, email };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+ipcMain.handle("pegasus:googleDisconnect", () => {
+  const s = loadSettings(); delete s.googleOAuth; saveSettings(s); _gAccess = null;
+  return { ok: true };
+});
 ipcMain.handle("pegasus:analyticsConfigGet", async (_e, key) => {
   try { const { cfg } = await pegAnalyticsCfg(key); return { ok: true, config: cfg }; }
   catch (e) { return { ok: false, error: e.message }; }
@@ -1178,8 +1226,8 @@ ipcMain.handle("pegasus:analyticsFetch", async (_e, key, days) => {
     days = Math.max(1, Math.min(365, days || 30));
     if (!cfg.ga4Property && !cfg.scUrl) return { ok: false, error: "non-configuré" };
     const out = { ga4: !!cfg.ga4Property, sc: !!cfg.scUrl, days };
+    const tok = await pegGoogleAccessToken();
     if (cfg.ga4Property) {
-      const tok = await pegGoogleToken("https://www.googleapis.com/auth/analytics.readonly");
       const dr = [{ startDate: `${days}daysAgo`, endDate: "today" }];
       const body = { requests: [
         { dimensions: [{ name: "date" }], metrics: [{ name: "sessions" }, { name: "totalUsers" }], dateRanges: dr, orderBys: [{ dimension: { dimensionName: "date" } }] },
@@ -1199,7 +1247,6 @@ ipcMain.handle("pegasus:analyticsFetch", async (_e, key, days) => {
       out.totalUsers = out.visits.reduce((n, v) => n + v.users, 0);
     }
     if (cfg.scUrl) {
-      const tok = await pegGoogleToken("https://www.googleapis.com/auth/webmasters.readonly");
       const iso = (d) => d.toISOString().slice(0, 10);
       const q = async (dims) => (await fetch(`https://searchconsole.googleapis.com/webmasters/v3/sites/${encodeURIComponent(cfg.scUrl)}/searchAnalytics/query`, { method: "POST", headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" }, body: JSON.stringify({ startDate: iso(new Date(Date.now() - days * 86400000)), endDate: iso(new Date()), dimensions: dims, rowLimit: 10 }) })).json();
       const totals = await q([]);
