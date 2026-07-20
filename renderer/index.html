@@ -1203,6 +1203,8 @@
   .rp-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;}
   .rp-card{text-align:left;cursor:pointer;background:var(--bg2);border:1px solid var(--line);border-radius:13px;padding:13px 15px;transition:border-color .14s,transform .1s;}
   .rp-card:hover{border-color:var(--accent2);transform:translateY(-1px);}
+  .rp-card.latest{border-color:color-mix(in srgb,var(--accent2) 55%,var(--line));box-shadow:0 0 0 1px color-mix(in srgb,var(--accent2) 30%,transparent);}
+  .rp-card-tag{font-size:8.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--accent2);border:1px solid color-mix(in srgb,var(--accent2) 45%,transparent);border-radius:20px;padding:1px 7px;vertical-align:middle;margin-left:5px;font-weight:500;}
   .rp-card-d{font-size:13px;font-weight:600;color:var(--txt);text-transform:capitalize;margin-bottom:9px;}
   .rp-card-chips{display:flex;flex-wrap:wrap;gap:6px;}
   .rp-chip{display:inline-flex;flex-direction:column;align-items:center;gap:1px;background:var(--bg1);border:1px solid var(--line);border-radius:9px;padding:4px 8px;font-size:9px;letter-spacing:.04em;text-transform:uppercase;color:var(--dim);min-width:44px;}

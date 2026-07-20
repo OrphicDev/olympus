@@ -2562,55 +2562,28 @@ function pgReportPdfHTML(s, data, days, aud, perLabel) {
 }
 async function pgRapportRender(s) {
   const box = $("pgRapport"); if (!box) return;
-  const m = (await pgLoadMetrics(s.key)) || pgMetrics[s.key] || { seo: [], perf: [], secu: [] };
-  const days = pgRapportPeriod;
-  const data = pgReportData(m, days);
-  let aud = null;
-  try { const ar = await window.olympus.pegasusAudiencePegasus(s.key, days || 365); if (ar.ok) aud = ar.data; } catch {}
-  const empty = !data.seo.length && !data.perf.length && !data.secu.length && !(aud && aud.total);
   box.innerHTML = `
-    <p class="pg-mnote">Rapports de <b>${escapeHtml(s.label)}</b>. Un rapport complet (SEO, performance, sécurité, audience) est généré <b>automatiquement chaque jour à 18 h</b> et archivé. Clique une carte pour le détail et l'export PDF.</p>
+    <p class="pg-mnote">Rapports de <b>${escapeHtml(s.label)}</b> — un bilan complet (SEO, performance, sécurité, audience) est généré <b>automatiquement chaque jour à 18 h</b> et archivé. L'audience se suit aussi en direct dans l'onglet Audience.</p>
     <div class="pg-sub" style="margin-top:2px;">Rapports quotidiens</div>
     <div id="pgRapCards"><div class="rb-empty">Lecture des rapports…</div></div>
-    <div class="pg-sub" style="margin-top:28px;">État en direct</div>
-    <div class="rp-head">
-      <div class="rp-periods">${[[7, "7 j"], [30, "30 j"], [90, "90 j"], [0, "Tout"]].map(([d, l]) => `<button class="rp-per${days === d ? " on" : ""}" data-per="${d}">${l}</button>`).join("")}</div>
-      <button class="btn sec" id="rpClaude" title="Ouvre une session Claude Code sur les métriques pour une analyse rédigée">✨ Analyse par Claude</button>
-      <button class="cal-btn primary" id="rpPdf">⤓ Exporter en PDF</button>
-    </div>
-    ${empty ? `<div class="rb-empty">Aucune donnée en direct sur cette période. Lance les analyses SEO, Performance et Sécurité (elles s'enregistrent automatiquement) — et l'audience se remplit au fil des visites.</div>` : pgReportBody(s, data, days, aud)}`;
-  pgRapportCards(s);
-  box.querySelectorAll(".rp-per").forEach((b) => b.onclick = () => { pgRapportPeriod = +b.dataset.per; pgRapportRender(s); });
-  const pdf = $("rpPdf"); if (pdf) pdf.onclick = async () => {
-    if (empty) { alert("Rien à exporter : lance d'abord les analyses."); return; }
-    pdf.disabled = true; pdf.textContent = "Génération…";
-    const r = await window.olympus.pegasusExportPdf(pgReportPdfHTML(s, data, days, aud), `rapport-${pgSlugish(s.label)}-${new Date().toISOString().slice(0, 10)}.pdf`);
-    pdf.disabled = false; pdf.textContent = "⤓ Exporter en PDF";
-    const msg = $("pgWorkMsg");
-    if (r.ok && msg) { msg.className = "msg ok"; msg.textContent = "PDF exporté : " + r.path; }
-    else if (!r.ok && r.error !== "Export annulé.") alert("Échec de l'export : " + (r.error || ""));
-  };
-  const clb = $("rpClaude"); if (clb) clb.onclick = async () => {
-    const prompt = `Rédige une analyse du site « ${s.label} » à partir de son historique de métriques (fichier metrics.json de ce dossier : séries seo/perf/secu datées). Période : ${days ? `${days} derniers jours` : "tout l'historique"}. Donne un état des lieux par domaine (SEO, performance, sécurité), les tendances (amélioration ou dégradation), les points prioritaires et des recommandations concrètes et chiffrées. Écris en français, ton professionnel, et enregistre le résultat dans metrics-analyse.md.`;
-    const r = await window.olympus.pegasusPipelineDiscuss(s.key, prompt);
-    const msg = $("pgWorkMsg");
-    if (r.ok && msg) { msg.className = "msg ok"; msg.textContent = "Session Claude ouverte — l'analyse rédigée arrivera dans metrics-analyse.md."; }
-    else if (!r.ok) alert("Échec : " + (r.error || ""));
-  };
+    <div id="pgRapMain"></div>`;
+  const r = await window.olympus.pegasusReportsList(s.key);
+  pgRapCardsRender(s, r);
+  pgRapLatestRender(s, r);
 }
 
 // Cartes des rapports quotidiens (générés côté site à 18 h Paris, stockés dans Supabase)
-async function pgRapportCards(s) {
+function pgRapCardsRender(s, r) {
   const box = $("pgRapCards"); if (!box) return;
-  const r = await window.olympus.pegasusReportsList(s.key);
   if (!r.ok && r.missing_table) {
-    const setup = await window.olympus.pegasusReportsSetup();
-    box.innerHTML = `<div class="pg-setup">
-      <p><b>Les rapports quotidiens ne sont pas encore activés.</b><br>Une table Supabase doit être créée une seule fois. Colle le SQL <kbd>reports.sql</kbd> dans le SQL Editor du Supabase Pegasus — ensuite chaque site pousse son rapport tout seul à 18 h.</p>
-      <div class="act">${setup.sql ? '<button class="cal-btn primary" id="rpSqlCopy">Copier le SQL</button>' : ""}${setup.editor ? `<button class="btn sec pg-open" data-url="${escapeHtml(setup.editor)}" style="padding:8px 16px;font-size:12.5px;">Ouvrir le SQL Editor ↗</button>` : ""}</div>
-      <div class="msg" id="rpSqlMsg"></div></div>`;
-    const cp = $("rpSqlCopy"); if (cp) cp.onclick = async () => { await navigator.clipboard.writeText(setup.sql); const m = $("rpSqlMsg"); m.className = "msg ok"; m.textContent = "SQL copié — colle-le dans le SQL Editor, exécute, puis reviens."; };
-    box.querySelectorAll(".pg-open").forEach((b) => b.onclick = () => window.olympus.openExternal(b.dataset.url));
+    window.olympus.pegasusReportsSetup().then((setup) => {
+      box.innerHTML = `<div class="pg-setup">
+        <p><b>Les rapports quotidiens ne sont pas encore activés.</b><br>Une table Supabase doit être créée une seule fois. Colle le SQL <kbd>reports.sql</kbd> dans le SQL Editor du Supabase Pegasus — ensuite chaque site pousse son rapport tout seul à 18 h.</p>
+        <div class="act">${setup.sql ? '<button class="cal-btn primary" id="rpSqlCopy">Copier le SQL</button>' : ""}${setup.editor ? `<button class="btn sec pg-open" data-url="${escapeHtml(setup.editor)}" style="padding:8px 16px;font-size:12.5px;">Ouvrir le SQL Editor ↗</button>` : ""}</div>
+        <div class="msg" id="rpSqlMsg"></div></div>`;
+      const cp = $("rpSqlCopy"); if (cp) cp.onclick = async () => { await navigator.clipboard.writeText(setup.sql); const m = $("rpSqlMsg"); m.className = "msg ok"; m.textContent = "SQL copié — colle-le dans le SQL Editor, exécute, puis reviens."; };
+      box.querySelectorAll(".pg-open").forEach((b) => b.onclick = () => window.olympus.openExternal(b.dataset.url));
+    });
     return;
   }
   if (!r.ok) { box.innerHTML = `<div class="rb-empty">${escapeHtml(r.error || "Indisponible.")}</div>`; return; }
@@ -2629,8 +2602,8 @@ async function pgRapportCards(s) {
     const dt = new Date(rep.day + "T12:00:00");
     const date = isNaN(dt) ? rep.day : dt.toLocaleDateString("fr-FR", { weekday: "short", day: "2-digit", month: "short" });
     const vis = rep.audience && rep.audience.total;
-    return `<button class="rp-card" data-i="${i}">
-        <div class="rp-card-d">${escapeHtml(date)}</div>
+    return `<button class="rp-card${i === 0 ? " latest" : ""}" data-i="${i}">
+        <div class="rp-card-d">${escapeHtml(date)}${i === 0 ? ' <span class="rp-card-tag">dernier</span>' : ""}</div>
         <div class="rp-card-chips">
           ${chip("SEO", rep.seo && rep.seo.score)}
           ${chip("Perf", rep.perf && rep.perf.score)}
@@ -2642,6 +2615,34 @@ async function pgRapportCards(s) {
   box.querySelectorAll(".rp-card").forEach((b) => b.onclick = () => pgReportCardModal(s, reports[+b.dataset.i]));
   pgWireRpGen(s);
 }
+// État affiché par défaut = le DERNIER rapport (plus d'« état en direct » sauf à la demande)
+function pgRapLatestRender(s, r) {
+  const box = $("pgRapMain"); if (!box) return;
+  if (!r.ok || !(r.reports && r.reports.length)) { box.innerHTML = ""; return; }
+  const rep = r.reports[0];
+  const data = { seo: rep.seo ? [rep.seo] : [], perf: rep.perf ? [rep.perf] : [], secu: rep.secu ? [rep.secu] : [] };
+  const aud = rep.audience || null;
+  const dt = new Date(rep.day + "T12:00:00");
+  const dLong = isNaN(dt) ? rep.day : dt.toLocaleDateString("fr-FR", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
+  box.innerHTML = `
+    <div class="pg-sub" style="margin-top:28px;">Dernier rapport <span style="text-transform:none;letter-spacing:0;color:var(--dim);">· ${escapeHtml(dLong)}</span></div>
+    ${pgReportBody(s, data, 1, aud, "rapport du " + dLong)}
+    <div class="pg-actrow" style="margin-top:14px;">
+      <button class="cal-btn primary" id="rpLatestPdf">⤓ Exporter en PDF</button>
+      <button class="btn sec" id="rpLiveBtn" title="Relance une analyse SEO / performance / sécurité en temps réel">↻ Analyser en direct maintenant</button>
+      <span class="msg" id="rpLatestMsg"></span>
+    </div>
+    <div id="pgRapLive"></div>`;
+  $("rpLatestPdf").onclick = async (e) => {
+    const b = e.currentTarget; b.disabled = true; b.textContent = "Génération…";
+    const rr = await window.olympus.pegasusExportPdf(pgReportPdfHTML(s, data, 1, aud, "rapport du " + dLong), `rapport-${pgSlugish(s.label)}-${rep.day}.pdf`);
+    b.disabled = false; b.textContent = "⤓ Exporter en PDF";
+    const msg = $("rpLatestMsg");
+    if (rr.ok && msg) { msg.className = "msg ok"; msg.textContent = "PDF exporté."; }
+    else if (!rr.ok && rr.error !== "Export annulé.") alert("Échec de l'export : " + (rr.error || ""));
+  };
+  $("rpLiveBtn").onclick = () => pgRapportLive(s);
+}
 function pgWireRpGen(s) {
   const g = $("rpGenNow"); if (!g) return;
   g.onclick = async () => {
@@ -2652,7 +2653,41 @@ function pgWireRpGen(s) {
     const d = r.data;
     if (d && d.ok === false) { m.className = "msg err"; m.textContent = d.error || "Échec côté site."; return; }
     m.className = "msg ok"; m.textContent = d && d.skipped ? "Déjà généré aujourd'hui." : "Rapport du jour généré.";
-    pgRapportCards(s);
+    pgRapportRender(s);
+  };
+}
+// État en direct — À LA DEMANDE seulement (bouton). Métriques temps réel + audience live.
+async function pgRapportLive(s) {
+  const box = $("pgRapLive"); if (!box) return;
+  box.innerHTML = `<div class="rb-empty">Analyse en direct (SEO, performance, sécurité)…</div>`;
+  const m = (await pgLoadMetrics(s.key)) || pgMetrics[s.key] || { seo: [], perf: [], secu: [] };
+  const days = pgRapportPeriod;
+  const data = pgReportData(m, days);
+  let aud = null;
+  try { const ar = await window.olympus.pegasusAudiencePegasus(s.key, days || 365); if (ar.ok) aud = ar.data; } catch {}
+  const empty = !data.seo.length && !data.perf.length && !data.secu.length && !(aud && aud.total);
+  box.innerHTML = `
+    <div class="pg-sub" style="margin-top:28px;">État en direct</div>
+    <div class="rp-head">
+      <div class="rp-periods">${[[7, "7 j"], [30, "30 j"], [90, "90 j"], [0, "Tout"]].map(([d, l]) => `<button class="rp-per${days === d ? " on" : ""}" data-per="${d}">${l}</button>`).join("")}</div>
+      <button class="btn sec" id="rpClaude" title="Ouvre une session Claude Code sur les métriques pour une analyse rédigée">✨ Analyse par Claude</button>
+      <button class="cal-btn primary" id="rpPdf">⤓ Exporter en PDF</button>
+    </div>
+    ${empty ? `<div class="rb-empty">Aucune donnée en direct sur cette période. Lance les analyses SEO, Performance et Sécurité depuis leurs onglets — elles s'enregistrent automatiquement.</div>` : pgReportBody(s, data, days, aud)}`;
+  box.querySelectorAll(".rp-per").forEach((b) => b.onclick = () => { pgRapportPeriod = +b.dataset.per; pgRapportLive(s); });
+  const pdf = $("rpPdf"); if (pdf) pdf.onclick = async () => {
+    if (empty) { alert("Rien à exporter : lance d'abord les analyses."); return; }
+    pdf.disabled = true; pdf.textContent = "Génération…";
+    const r = await window.olympus.pegasusExportPdf(pgReportPdfHTML(s, data, days, aud), `rapport-direct-${pgSlugish(s.label)}-${new Date().toISOString().slice(0, 10)}.pdf`);
+    pdf.disabled = false; pdf.textContent = "⤓ Exporter en PDF";
+    if (!r.ok && r.error !== "Export annulé.") alert("Échec de l'export : " + (r.error || ""));
+  };
+  const clb = $("rpClaude"); if (clb) clb.onclick = async () => {
+    const prompt = `Rédige une analyse du site « ${s.label} » à partir de son historique de métriques (fichier metrics.json de ce dossier : séries seo/perf/secu datées). Période : ${days ? `${days} derniers jours` : "tout l'historique"}. Donne un état des lieux par domaine (SEO, performance, sécurité), les tendances (amélioration ou dégradation), les points prioritaires et des recommandations concrètes et chiffrées. Écris en français, ton professionnel, et enregistre le résultat dans metrics-analyse.md.`;
+    const r = await window.olympus.pegasusPipelineDiscuss(s.key, prompt);
+    const msg = $("pgWorkMsg");
+    if (r.ok && msg) { msg.className = "msg ok"; msg.textContent = "Session Claude ouverte — l'analyse rédigée arrivera dans metrics-analyse.md."; }
+    else if (!r.ok) alert("Échec : " + (r.error || ""));
   };
 }
 // Détail d'un rapport quotidien (réutilise le corps du rapport + export PDF de ce jour)
