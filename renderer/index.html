@@ -877,9 +877,14 @@
   .pg-bk .t{font-size:13px;color:var(--txt);}
   .pg-bk .meta{font-size:11.5px;color:var(--dim);margin-top:2px;}
   .pg-bk button{padding:5px 13px;font-size:12px;flex-shrink:0;}
-  /* Onglets du site dans la colonne (sous le site sélectionné) */
+  /* Onglets + actions du site dans la colonne (sous le site sélectionné) */
   .pg-sitetabs{padding-left:11px;border-left:1px solid var(--line);margin:2px 0 6px 6px;}
   .pg-sitetabs .pg-tabfold .fic{color:var(--dim);}
+  .pg-sitetabs .pg-subh{margin-top:10px;}
+  .pg-actfold .fic{color:var(--dim);width:16px;text-align:center;}
+  .pg-actfold.work .lname,.pg-actfold.work .fic{color:var(--accent);font-weight:650;}
+  .pg-actfold.work .lname{animation:textGlow 3.2s ease-in-out infinite;}
+  .pg-actfold.work:hover .lname{animation-duration:1.3s;}
   .pg-tabcontent{animation:fadeUp .3s both;}
   .pg-kpis{display:flex;gap:44px;flex-wrap:wrap;margin:18px 0 4px;}
   .pg-kpi .n{font-size:26px;font-weight:200;letter-spacing:-.02em;text-shadow:0 0 16px var(--accent2);}

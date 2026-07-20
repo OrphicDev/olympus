@@ -247,7 +247,13 @@ function pgRenderSide() {
       if (pgSel === s.key) {
         row += `<div class="pg-sitetabs">` + PG_TABS.map((t) =>
           `<div class="ir-folder pg-tabfold ${pgSiteTab === t.id ? "active" : ""}" data-tab="${t.id}"><span class="fic">·</span><span class="lname">${t.label}</span></div>`
-        ).join("") + `</div>`;
+        ).join("") + `
+          <div class="pg-subh">actions</div>
+          <div class="ir-folder pg-actfold work" data-act="work"><span class="fic">▶</span><span class="lname">Travailler sur le site</span></div>
+          <div class="ir-folder pg-actfold ${pgSecAction === "copy" ? "active" : ""}" data-sec="copy"><span class="fic">↓</span><span class="lname">Télécharger la copie</span></div>
+          <div class="ir-folder pg-actfold ${pgSecAction === "push" ? "active" : ""}" data-sec="push"><span class="fic">↑</span><span class="lname">Pousser en ligne</span></div>
+          <div class="ir-folder pg-actfold ${pgSecAction === "rollback" ? "active" : ""}" data-sec="rollback"><span class="fic">⟲</span><span class="lname">Revenir en arrière</span></div>
+        </div>`;
       }
       return row;
     }).join("");
@@ -257,8 +263,28 @@ function pgRenderSide() {
   box.innerHTML = html;
   box.querySelectorAll(".pg-sitefold").forEach((el) => { el.onclick = () => { if (pgView !== "parc") pgSetView("parc"); pgSelect(el.dataset.key); }; });
   box.querySelectorAll(".pg-tabfold").forEach((el) => { el.onclick = () => { pgSiteTab = el.dataset.tab; pgRenderSide(); pgRenderDetail(); }; });
+  box.querySelectorAll(".pg-actfold[data-sec]").forEach((el) => {
+    el.onclick = () => { pgSecAction = pgSecAction === el.dataset.sec ? null : el.dataset.sec; pgRenderSide(); pgRenderDetail(); };
+  });
+  const wf = box.querySelector('.pg-actfold[data-act="work"]');
+  if (wf) wf.onclick = () => pgWorkOn(wf);
   box.querySelectorAll(".pg-projfold").forEach((el) => { el.onclick = () => { if (pgView !== "parc") pgSetView("parc"); pgSelectProject(el.dataset.pid); }; });
   pgSideGhosts();
+}
+
+// ▶ Travailler sur le site : prépare le local, lance, ouvre Claude Code (feedback dans le stage)
+async function pgWorkOn(rowEl) {
+  const s = pgSites.find((x) => x.key === pgSel);
+  if (!s) return;
+  const m = $("pgWorkMsg");
+  rowEl.style.opacity = ".55"; rowEl.style.pointerEvents = "none";
+  if (m) { m.className = "msg"; m.textContent = "Préparation du local + ouverture de Claude Code…"; }
+  const r = await window.olympus.pegasusWorkOn(s.key);
+  rowEl.style.opacity = ""; rowEl.style.pointerEvents = "";
+  if (!m) return;
+  if (!r.ok) { m.className = "msg err"; m.textContent = r.error || "Échec."; return; }
+  m.className = "msg ok";
+  m.textContent = (r.copied ? "Copie créée. " : "") + (r.mode === "wordpress" ? "WordPress lancé en local (wp-now) + Claude Code ouvert." : r.mode === "static" ? "Site ouvert dans le navigateur + Claude Code ouvert." : "Dossier prêt + Claude Code ouvert.");
 }
 
 function pgSelectProject(pid) {
@@ -377,13 +403,7 @@ function pgRenderDetail() {
     <button class="btn sec pg-open" data-url="${escapeHtml(s.base_url)}" style="padding:6px 14px;font-size:12px;">Ouvrir ↗</button>
     <button class="btn sec pg-open" data-url="${escapeHtml(s.base_url)}/wp-admin" style="padding:6px 14px;font-size:12px;">wp-admin</button>
   </div>`;
-  html += `<button class="pg-workbtn" id="pgWorkBtn"><span class="ic">▶</span><span>Travailler sur le site<small>Lance le site en local et ouvre une session Claude Code</small></span></button>
-    <div class="msg" id="pgWorkMsg" style="margin:2px 0 6px;"></div>
-    <div class="pg-gbtns">
-      <button class="pg-bigbtn ${pgSecAction === "copy" ? "on" : ""}" data-sec="copy"><span class="ic">↓</span><span>Télécharger la copie<small>en local</small></span></button>
-      <button class="pg-bigbtn primary ${pgSecAction === "push" ? "on" : ""}" data-sec="push"><span class="ic">↑</span><span>Pousser en ligne<small>déployer</small></span></button>
-      <button class="pg-bigbtn ${pgSecAction === "rollback" ? "on" : ""}" data-sec="rollback"><span class="ic">⟲</span><span>Revenir en arrière<small>restaurer</small></span></button>
-    </div>
+  html += `<div class="msg" id="pgWorkMsg" style="margin:2px 0 6px;"></div>
     <div id="pgSecPanel"></div>`;
   html += `<div class="pg-tabcontent">${pgTabHTML(pgSiteTab, s)}</div>`;
 
@@ -391,18 +411,6 @@ function pgRenderDetail() {
   box.querySelectorAll(".pg-open").forEach((b) => { b.onclick = () => window.olympus.openExternal(b.dataset.url); });
   const sb = box.querySelector("#pgSeoBtn"); if (sb) sb.onclick = () => pgRunSeo(s.key);
   const pb = box.querySelector("#pgPerfBtn"); if (pb) pb.onclick = () => pgRunPerf(s.key);
-  box.querySelectorAll(".pg-gbtns [data-sec]").forEach((b) => {
-    b.onclick = () => { pgSecAction = pgSecAction === b.dataset.sec ? null : b.dataset.sec; pgRenderDetail(); };
-  });
-  const wb = box.querySelector("#pgWorkBtn");
-  if (wb) wb.onclick = async () => {
-    const m = $("pgWorkMsg"); wb.disabled = true; m.className = "msg"; m.textContent = "Préparation du local + ouverture de Claude Code…";
-    const r = await window.olympus.pegasusWorkOn(s.key);
-    wb.disabled = false;
-    if (!r.ok) { m.className = "msg err"; m.textContent = r.error || "Échec."; return; }
-    m.className = "msg ok";
-    m.textContent = (r.copied ? "Copie créée. " : "") + (r.mode === "wordpress" ? "WordPress lancé en local (wp-now) + Claude Code ouvert." : r.mode === "static" ? "Site ouvert dans le navigateur + Claude Code ouvert." : "Dossier prêt + Claude Code ouvert.");
-  };
   pgRenderSecPanel(s);
   // Le nombre de pages se compte une seule fois par site (pas à chaque rafraîchissement)
   const insOk = pgInspect[s.key] && pgInspect[s.key].ok;
