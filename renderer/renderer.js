@@ -2468,8 +2468,8 @@ function pgReportAnalysis(data, aud) {
   }
   return blocs;
 }
-function pgReportBody(s, data, days, aud) {
-  const per = days ? `${days} derniers jours` : "tout l'historique";
+function pgReportBody(s, data, days, aud, perLabel) {
+  const per = perLabel || (days ? `${days} derniers jours` : "tout l'historique");
   const dom = (label, arr, key, color) => {
     if (!arr.length) return "";
     const l = arr[arr.length - 1];
@@ -2500,8 +2500,8 @@ function pgReportBody(s, data, days, aud) {
     <div class="pg-sub">Analyse</div>
     ${blocs.map((b) => `<div class="rp-anz"><div class="rp-anz-t">${b.titre}</div>${b.lignes.map((x) => `<div class="rp-anz-l">${x}</div>`).join("")}</div>`).join("") || '<div class="rb-empty">—</div>'}`;
 }
-function pgReportPdfHTML(s, data, days, aud) {
-  const per = days ? `${days} derniers jours` : "tout l'historique";
+function pgReportPdfHTML(s, data, days, aud, perLabel) {
+  const per = perLabel || (days ? `${days} derniers jours` : "tout l'historique");
   const C = { acc: "#7a1b28", ok: "#2e7d32", warn: "#b7791f", err: "#c62828", blue: "#3a6ea5" };
   const dom = (label, arr, color) => {
     if (!arr.length) return "";
@@ -2569,13 +2569,17 @@ async function pgRapportRender(s) {
   try { const ar = await window.olympus.pegasusAudiencePegasus(s.key, days || 365); if (ar.ok) aud = ar.data; } catch {}
   const empty = !data.seo.length && !data.perf.length && !data.secu.length && !(aud && aud.total);
   box.innerHTML = `
-    <p class="pg-mnote">Vue d'ensemble de <b>${escapeHtml(s.label)}</b> dans le temps — chaque analyse SEO / Performance / Sécurité alimente l'historique. Choisis une période, lis l'analyse, exporte en PDF.</p>
+    <p class="pg-mnote">Rapports de <b>${escapeHtml(s.label)}</b>. Un rapport complet (SEO, performance, sécurité, audience) est généré <b>automatiquement chaque jour à 18 h</b> et archivé. Clique une carte pour le détail et l'export PDF.</p>
+    <div class="pg-sub" style="margin-top:2px;">Rapports quotidiens</div>
+    <div id="pgRapCards"><div class="rb-empty">Lecture des rapports…</div></div>
+    <div class="pg-sub" style="margin-top:28px;">État en direct</div>
     <div class="rp-head">
       <div class="rp-periods">${[[7, "7 j"], [30, "30 j"], [90, "90 j"], [0, "Tout"]].map(([d, l]) => `<button class="rp-per${days === d ? " on" : ""}" data-per="${d}">${l}</button>`).join("")}</div>
       <button class="btn sec" id="rpClaude" title="Ouvre une session Claude Code sur les métriques pour une analyse rédigée">✨ Analyse par Claude</button>
       <button class="cal-btn primary" id="rpPdf">⤓ Exporter en PDF</button>
     </div>
-    ${empty ? `<div class="rb-empty">Aucune donnée sur cette période. Lance les analyses SEO, Performance et Sécurité (elles s'enregistrent automatiquement) — et l'audience se remplit au fil des visites. Reviens ensuite ici.</div>` : pgReportBody(s, data, days, aud)}`;
+    ${empty ? `<div class="rb-empty">Aucune donnée en direct sur cette période. Lance les analyses SEO, Performance et Sécurité (elles s'enregistrent automatiquement) — et l'audience se remplit au fil des visites.</div>` : pgReportBody(s, data, days, aud)}`;
+  pgRapportCards(s);
   box.querySelectorAll(".rp-per").forEach((b) => b.onclick = () => { pgRapportPeriod = +b.dataset.per; pgRapportRender(s); });
   const pdf = $("rpPdf"); if (pdf) pdf.onclick = async () => {
     if (empty) { alert("Rien à exporter : lance d'abord les analyses."); return; }
@@ -2592,6 +2596,86 @@ async function pgRapportRender(s) {
     const msg = $("pgWorkMsg");
     if (r.ok && msg) { msg.className = "msg ok"; msg.textContent = "Session Claude ouverte — l'analyse rédigée arrivera dans metrics-analyse.md."; }
     else if (!r.ok) alert("Échec : " + (r.error || ""));
+  };
+}
+
+// Cartes des rapports quotidiens (générés côté site à 18 h Paris, stockés dans Supabase)
+async function pgRapportCards(s) {
+  const box = $("pgRapCards"); if (!box) return;
+  const r = await window.olympus.pegasusReportsList(s.key);
+  if (!r.ok && r.missing_table) {
+    const setup = await window.olympus.pegasusReportsSetup();
+    box.innerHTML = `<div class="pg-setup">
+      <p><b>Les rapports quotidiens ne sont pas encore activés.</b><br>Une table Supabase doit être créée une seule fois. Colle le SQL <kbd>reports.sql</kbd> dans le SQL Editor du Supabase Pegasus — ensuite chaque site pousse son rapport tout seul à 18 h.</p>
+      <div class="act">${setup.sql ? '<button class="cal-btn primary" id="rpSqlCopy">Copier le SQL</button>' : ""}${setup.editor ? `<button class="btn sec pg-open" data-url="${escapeHtml(setup.editor)}" style="padding:8px 16px;font-size:12.5px;">Ouvrir le SQL Editor ↗</button>` : ""}</div>
+      <div class="msg" id="rpSqlMsg"></div></div>`;
+    const cp = $("rpSqlCopy"); if (cp) cp.onclick = async () => { await navigator.clipboard.writeText(setup.sql); const m = $("rpSqlMsg"); m.className = "msg ok"; m.textContent = "SQL copié — colle-le dans le SQL Editor, exécute, puis reviens."; };
+    box.querySelectorAll(".pg-open").forEach((b) => b.onclick = () => window.olympus.openExternal(b.dataset.url));
+    return;
+  }
+  if (!r.ok) { box.innerHTML = `<div class="rb-empty">${escapeHtml(r.error || "Indisponible.")}</div>`; return; }
+  const reports = r.reports || [];
+  const genRow = `<div class="pg-actrow" style="margin-bottom:12px;"><button class="btn sec" id="rpGenNow" title="Génère le rapport d'aujourd'hui immédiatement">⚡ Générer maintenant</button><span class="msg" id="rpGenMsg"></span></div>`;
+  if (!reports.length) {
+    box.innerHTML = `<div class="rb-empty" style="margin-bottom:12px;">Aucun rapport encore. Ils se génèrent automatiquement chaque jour à 18 h (heure française). Tu peux aussi lancer le premier maintenant.</div>${genRow}`;
+    pgWireRpGen(s); return;
+  }
+  const chip = (label, score) => {
+    if (score == null) return `<span class="rp-chip dim"><b>—</b>${label}</span>`;
+    const cls = score >= 80 ? "ok" : score >= 50 ? "warn" : "err";
+    return `<span class="rp-chip ${cls}"><b>${score}</b>${label}</span>`;
+  };
+  box.innerHTML = genRow + `<div class="rp-cards">${reports.map((rep, i) => {
+    const dt = new Date(rep.day + "T12:00:00");
+    const date = isNaN(dt) ? rep.day : dt.toLocaleDateString("fr-FR", { weekday: "short", day: "2-digit", month: "short" });
+    const vis = rep.audience && rep.audience.total;
+    return `<button class="rp-card" data-i="${i}">
+        <div class="rp-card-d">${escapeHtml(date)}</div>
+        <div class="rp-card-chips">
+          ${chip("SEO", rep.seo && rep.seo.score)}
+          ${chip("Perf", rep.perf && rep.perf.score)}
+          ${chip("Sécu", rep.secu && rep.secu.score)}
+          <span class="rp-chip vis"><b>${vis != null ? pgFmtN(vis) : "—"}</b>Visites</span>
+        </div>
+      </button>`;
+  }).join("")}</div>`;
+  box.querySelectorAll(".rp-card").forEach((b) => b.onclick = () => pgReportCardModal(s, reports[+b.dataset.i]));
+  pgWireRpGen(s);
+}
+function pgWireRpGen(s) {
+  const g = $("rpGenNow"); if (!g) return;
+  g.onclick = async () => {
+    const m = $("rpGenMsg"); g.disabled = true; m.className = "msg"; m.textContent = "Génération (SEO + performance + sécurité + audience)… ~20 s.";
+    const r = await window.olympus.pegasusReportRunNow(s.key);
+    g.disabled = false;
+    if (!r.ok) { m.className = "msg err"; m.textContent = r.error || "Échec."; return; }
+    const d = r.data;
+    if (d && d.ok === false) { m.className = "msg err"; m.textContent = d.error || "Échec côté site."; return; }
+    m.className = "msg ok"; m.textContent = d && d.skipped ? "Déjà généré aujourd'hui." : "Rapport du jour généré.";
+    pgRapportCards(s);
+  };
+}
+// Détail d'un rapport quotidien (réutilise le corps du rapport + export PDF de ce jour)
+function pgReportCardModal(s, rep) {
+  const data = { seo: rep.seo ? [rep.seo] : [], perf: rep.perf ? [rep.perf] : [], secu: rep.secu ? [rep.secu] : [] };
+  const aud = rep.audience || null;
+  const dt = new Date(rep.day + "T12:00:00");
+  const dLong = isNaN(dt) ? rep.day : dt.toLocaleDateString("fr-FR", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
+  const ov = document.createElement("div"); ov.className = "modal-overlay show";
+  ov.innerHTML = `<div class="modal-panel" style="width:780px;max-width:94vw;">
+      <div class="modal-head"><h2>Rapport du ${escapeHtml(dLong)}</h2><button class="modal-x" data-x aria-label="Fermer">✕</button></div>
+      <div class="modal-body" style="max-height:74vh;overflow:auto;">${pgReportBody(s, data, 1, aud, "instantané du " + dLong)}</div>
+      <div class="modal-foot"><button class="cal-btn primary" data-pdf>⤓ Exporter ce rapport en PDF</button></div>
+    </div>`;
+  document.body.appendChild(ov);
+  const close = () => ov.remove();
+  ov.querySelector("[data-x]").onclick = close;
+  ov.onclick = (e) => { if (e.target === ov) close(); };
+  ov.querySelector("[data-pdf]").onclick = async (e) => {
+    const b = e.currentTarget; b.disabled = true; b.textContent = "Génération…";
+    const r = await window.olympus.pegasusExportPdf(pgReportPdfHTML(s, data, 1, aud, "instantané du " + dLong), `rapport-${pgSlugish(s.label)}-${rep.day}.pdf`);
+    b.disabled = false; b.textContent = "⤓ Exporter ce rapport en PDF";
+    if (r.ok) close(); else if (r.error !== "Export annulé.") alert("Échec : " + (r.error || ""));
   };
 }
 

@@ -275,6 +275,35 @@ ipcMain.handle("pegasus:backupsSetup", async () => {
   return { ok: true, editor, sql };
 });
 
+// ── Rapports quotidiens : lus depuis Supabase (le plugin de chaque client les y pousse à 18 h Paris)
+ipcMain.handle("pegasus:reportsList", async (_e, key) => {
+  try {
+    const s = (await pegSites())[key];
+    if (!s) throw new Error("Site inconnu.");
+    const url = s.base_url.replace(/\/$/, "") + "/";
+    const p = new URLSearchParams();
+    p.set("select", "id,site_url,day,seo,perf,secu,audience,created_at");
+    p.set("site_url", `eq.${url}`);
+    p.set("order", "day.desc,created_at.desc");
+    p.set("limit", "120");
+    return { ok: true, reports: await pegSupa(`/reports?${p.toString()}`) };
+  } catch (e) { return { ok: false, error: e.message, missing_table: pegTblMissing(e) }; }
+});
+// SQL d'installation de la table reports + lien SQL Editor (cas table absente)
+ipcMain.handle("pegasus:reportsSetup", async () => {
+  const d = pegTeam();
+  let editor = null;
+  try { editor = `https://supabase.com/dashboard/project/${new URL(d.supabase_url).hostname.split(".")[0]}/sql/new`; } catch {}
+  let sql = null;
+  try { sql = readFileSync(join(homedir(), "Projet de développement", "Orphic-Dev", "pegasus", "supabase", "reports.sql"), "utf8"); } catch {}
+  return { ok: true, editor, sql };
+});
+// Générer le rapport du jour tout de suite (bouton « générer maintenant » / test)
+ipcMain.handle("pegasus:reportRunNow", async (_e, key) => {
+  try { return { ok: true, data: await pegCall(key, "POST", "/reports/run", 60000) }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
+
 // ── Déploiement : pousser le thème local vers le site en ligne (avec sauvegardes avant/après)
 // Trouve le thème custom déployable dans le dossier local du site.
 function pegFindTheme(dir) {
