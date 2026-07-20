@@ -124,6 +124,13 @@ contextBridge.exposeInMainWorld("olympus", {
   pegasusPushInfo: (key) => ipcRenderer.invoke("pegasus:pushInfo", key),
   pegasusPush: (key) => ipcRenderer.invoke("pegasus:push", key),
   pegasusWorkOn: (key, prompt) => ipcRenderer.invoke("pegasus:workOn", key, prompt),
+  // Éole — transfert de fichiers
+  eoleStatus: () => ipcRenderer.invoke("eole:status"),
+  eoleSetupSql: () => ipcRenderer.invoke("eole:setupSql"),
+  eolePick: () => ipcRenderer.invoke("eole:pick"),
+  eoleSend: (payload) => ipcRenderer.invoke("eole:send", payload),
+  eoleList: () => ipcRenderer.invoke("eole:list"),
+  eoleDelete: (id, objectPath) => ipcRenderer.invoke("eole:delete", id, objectPath),
   // Chronos — upload moodboard / références
   chronosUpload: (folder) => ipcRenderer.invoke("chronos:upload", folder),
   // Divers

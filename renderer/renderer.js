@@ -5028,6 +5028,106 @@ $("atFolderCreate").onclick = () => {
 };
 document.querySelector('.nav-item[data-page="atlas"]').addEventListener("click", renderAtlas);
 
+// ══════════ ÉOLE — transfert de fichiers (WeTransfer interne) ══════════
+let eolePicked = null; // { files:[{path,name,size}], totalSize }
+const eoleFmtSize = (b) => { b = +b || 0; if (b >= 1e9) return (b / 1e9).toFixed(1) + " Go"; if (b >= 1e6) return (b / 1e6).toFixed(1) + " Mo"; if (b >= 1e3) return (b / 1e3).toFixed(0) + " Ko"; return b + " o"; };
+const eoleDaysLeft = (iso) => Math.max(0, Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000));
+async function renderEole() {
+  const box = $("eoleBody"); if (!box) return;
+  box.innerHTML = `<div class="ga-note">Lecture des transferts…</div>`;
+  const list = await window.olympus.eoleList();
+  if (!list.ok && list.missing_table) {
+    const setup = await window.olympus.eoleSetupSql();
+    box.innerHTML = `<div class="pg-setup">
+      <p><b>Éole n'est pas encore activé.</b><br>Une table + un espace de stockage doivent être créés une fois dans le Supabase d'Olympus. Colle le SQL <kbd>eole.sql</kbd> dans le SQL Editor, exécute, puis reviens.</p>
+      <div class="act">${setup.sql ? '<button class="cal-btn primary" id="eoleSqlCopy">Copier le SQL</button>' : ""}${setup.editor ? `<button class="btn sec pg-open" data-url="${escapeHtml(setup.editor)}" style="padding:8px 16px;font-size:12.5px;">Ouvrir le SQL Editor ↗</button>` : ""}</div>
+      <div class="msg" id="eoleSqlMsg"></div></div>`;
+    const cp = $("eoleSqlCopy"); if (cp) cp.onclick = async () => { await navigator.clipboard.writeText(setup.sql); const m = $("eoleSqlMsg"); m.className = "msg ok"; m.textContent = "SQL copié — colle-le dans le SQL Editor, exécute, puis reviens."; };
+    box.querySelectorAll(".pg-open").forEach((b) => b.onclick = () => window.olympus.openExternal(b.dataset.url));
+    return;
+  }
+  if (!list.ok) { box.innerHTML = `<div class="ga-note">${escapeHtml(list.error || "Indisponible.")}</div>`; return; }
+  const transfers = list.transfers || [];
+  box.innerHTML = `
+    <div class="eole-new">
+      <button class="eole-drop" id="eolePick">
+        <div class="eole-drop-i">⤒</div>
+        <div class="eole-drop-t">Choisir des fichiers à envoyer</div>
+        <div class="eole-drop-s">Ils seront zippés et stockés 1 mois</div>
+      </button>
+      <div class="eole-form">
+        <div id="eoleFiles"></div>
+        <input class="mood-in" id="eoleTitle" placeholder="Titre (optionnel) — ex : Livraison shoot Riviera">
+        <textarea class="mood-in mood-ta" id="eoleNote" placeholder="Message au destinataire (optionnel)"></textarea>
+        <div class="pg-actrow"><button class="cal-btn primary" id="eoleSend" disabled>Créer le lien</button><span class="msg" id="eoleMsg"></span></div>
+        <div id="eoleResult"></div>
+      </div>
+    </div>
+    <div class="pg-sub">Transferts actifs${transfers.length ? " · " + transfers.length : ""}</div>
+    <div id="eoleList"></div>`;
+  $("eolePick").onclick = eoleDoPick;
+  $("eoleSend").onclick = eoleDoSend;
+  eoleRenderPicked();
+  eoleFillList(transfers);
+}
+function eoleRow(t) {
+  const n = (t.files || []).length;
+  return `<div class="eole-item">
+    <div class="eole-item-main">
+      <div class="eole-item-t">${escapeHtml(t.title || "Sans titre")}</div>
+      <div class="eole-item-s">${n} fichier${n > 1 ? "s" : ""} · ${eoleFmtSize(t.size_total)} · expire dans ${eoleDaysLeft(t.expires_at)} j${t.created_by ? " · " + escapeHtml(t.created_by) : ""}</div>
+    </div>
+    <button class="btn sec eole-copy" data-url="${escapeHtml(t.signed_url || "")}">Copier le lien</button>
+    <button class="ga-ic eole-open" data-url="${escapeHtml(t.signed_url || "")}" title="Ouvrir">↓</button>
+    <button class="ga-ic eole-del" data-id="${t.id}" data-obj="${escapeHtml(t.object_path || "")}" title="Supprimer">✕</button>
+  </div>`;
+}
+function eoleFillList(transfers) {
+  const box = $("eoleList"); if (!box) return;
+  box.innerHTML = transfers.length ? transfers.map(eoleRow).join("") : '<div class="ga-note">Aucun transfert actif. Crée-en un ci-dessus.</div>';
+  box.querySelectorAll(".eole-copy").forEach((b) => b.onclick = () => eoleCopy(b));
+  box.querySelectorAll(".eole-open").forEach((b) => b.onclick = () => window.olympus.openExternal(b.dataset.url));
+  box.querySelectorAll(".eole-del").forEach((b) => b.onclick = () => eoleDel(b.dataset.id, b.dataset.obj));
+}
+async function eoleRefreshList() { const r = await window.olympus.eoleList(); if (r.ok) eoleFillList(r.transfers || []); }
+function eoleRenderPicked() {
+  const box = $("eoleFiles"), send = $("eoleSend"); if (!box) return;
+  if (!eolePicked || !eolePicked.files.length) { box.innerHTML = ""; if (send) send.disabled = true; return; }
+  box.innerHTML = `<div class="eole-chips">${eolePicked.files.map((f, i) => `<span class="eole-chip">${escapeHtml(f.name)} <small>${eoleFmtSize(f.size)}</small><button data-rm="${i}">✕</button></span>`).join("")}<span class="eole-total">${eolePicked.files.length} fichier(s) · ${eoleFmtSize(eolePicked.totalSize)}</span></div>`;
+  box.querySelectorAll("[data-rm]").forEach((b) => b.onclick = () => { eolePicked.files.splice(+b.dataset.rm, 1); eolePicked.totalSize = eolePicked.files.reduce((n, f) => n + f.size, 0); eoleRenderPicked(); });
+  if (send) send.disabled = false;
+}
+async function eoleDoPick() {
+  const r = await window.olympus.eolePick();
+  if (!r.ok) return;
+  const merged = [...(eolePicked?.files || [])];
+  for (const f of r.files) if (!merged.some((x) => x.path === f.path)) merged.push(f);
+  eolePicked = { files: merged, totalSize: merged.reduce((n, f) => n + f.size, 0) };
+  eoleRenderPicked();
+}
+async function eoleDoSend() {
+  if (!eolePicked?.files.length) return;
+  const btn = $("eoleSend"), msg = $("eoleMsg");
+  btn.disabled = true; btn.textContent = "Envoi…"; msg.className = "msg"; msg.textContent = "Compression + envoi… (selon la taille)";
+  const r = await window.olympus.eoleSend({ paths: eolePicked.files.map((f) => f.path), title: $("eoleTitle").value.trim(), note: $("eoleNote").value.trim(), days: 30 });
+  btn.disabled = false; btn.textContent = "Créer le lien";
+  if (!r.ok) { msg.className = "msg err"; msg.textContent = r.error || "Échec."; return; }
+  msg.className = "msg ok"; msg.textContent = "Lien créé — valable 1 mois.";
+  const url = r.transfer.signed_url;
+  $("eoleResult").innerHTML = `<div class="eole-link"><input class="mood-in" id="eoleLinkIn" readonly value="${escapeHtml(url)}"><button class="cal-btn primary" id="eoleLinkCopy">Copier</button></div>`;
+  $("eoleLinkCopy").onclick = async () => { await navigator.clipboard.writeText(url); const m = $("eoleMsg"); m.className = "msg ok"; m.textContent = "Lien copié dans le presse-papier."; };
+  $("eoleLinkIn").onclick = (e) => e.target.select();
+  eolePicked = null; $("eoleTitle").value = ""; $("eoleNote").value = "";
+  eoleRenderPicked(); eoleRefreshList();
+}
+async function eoleCopy(b) { await navigator.clipboard.writeText(b.dataset.url); const t = b.textContent; b.textContent = "Copié ✓"; setTimeout(() => b.textContent = t, 1400); }
+async function eoleDel(id, obj) {
+  if (!confirm("Supprimer ce transfert ? Le lien ne fonctionnera plus.")) return;
+  await window.olympus.eoleDelete(id, obj);
+  eoleRefreshList();
+}
+document.querySelector('.nav-item[data-page="eole"]').addEventListener("click", renderEole);
+
 // ══════════ APOLLON (galerie des shoots — démo) ══════════
 const AP_TINT = { warm: ["#6b5642", "#241d16"], gold: ["#7a6a4a", "#28231b"], sage: ["#5c665a", "#1f231f"], slate: ["#4e5a68", "#1b2026"], mauve: ["#665667", "#211c24"], steel: ["#5a5e66", "#1f2124"] };
 function apBg(tint, seed) {

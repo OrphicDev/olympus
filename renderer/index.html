@@ -1197,6 +1197,26 @@
   .ga-hm-h{width:34px;flex-shrink:0;font-size:10px;color:var(--dim);text-align:right;padding-right:6px;}
   .ga-hm-d{flex:1;text-align:center;font-size:10px;letter-spacing:.04em;text-transform:uppercase;color:var(--dim);}
   .ga-hm-c{flex:1;height:11px;border-radius:2px;cursor:default;}
+  /* Éole — transfert de fichiers */
+  .eole-new{display:grid;grid-template-columns:280px 1fr;gap:18px;align-items:start;border:1px solid var(--line);border-radius:16px;background:var(--bg2);padding:18px;margin-bottom:22px;}
+  .eole-drop{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;text-align:center;min-height:150px;border:2px dashed var(--line2);border-radius:13px;background:var(--bg1);cursor:pointer;color:var(--muted);transition:border-color .14s,color .14s,background .14s;}
+  .eole-drop:hover{border-color:var(--accent2);color:var(--txt);background:color-mix(in srgb,var(--accent2) 6%,var(--bg1));}
+  .eole-drop-i{font-size:30px;line-height:1;}
+  .eole-drop-t{font-size:13.5px;font-weight:600;color:var(--txt);}
+  .eole-drop-s{font-size:11.5px;color:var(--dim);}
+  .eole-form{display:flex;flex-direction:column;gap:10px;min-width:0;}
+  .eole-chips{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:2px;}
+  .eole-chip{display:inline-flex;align-items:center;gap:6px;background:var(--card2);border:1px solid var(--line);border-radius:20px;padding:4px 6px 4px 11px;font-size:12px;color:var(--txt);}
+  .eole-chip small{color:var(--dim);}
+  .eole-chip button{background:none;border:none;color:var(--dim);cursor:pointer;font-size:11px;padding:0 2px;}
+  .eole-chip button:hover{color:#e0868f;}
+  .eole-total{align-self:center;font-size:11.5px;color:var(--dim);}
+  .eole-link{display:flex;gap:8px;margin-top:6px;}
+  .eole-link .mood-in{flex:1;font-family:ui-monospace,Menlo,monospace;font-size:11.5px;}
+  .eole-item{display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--bg2);margin-bottom:8px;}
+  .eole-item-main{flex:1;min-width:0;}
+  .eole-item-t{font-size:13.5px;font-weight:600;color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .eole-item-s{font-size:11.5px;color:var(--dim);margin-top:2px;}
   @media (max-width:820px){.ga-breaks{grid-template-columns:1fr;}}
   .rp-domain{margin-bottom:6px;}
   .rp-dhead{display:flex;align-items:baseline;justify-content:space-between;margin-top:14px;}
@@ -1686,6 +1706,7 @@
       <div class="nav-item" data-page="iris"><div class="ic">✉️</div><span class="lbl">Iris<small>email · CRM</small></span></div>
       <div class="nav-item" data-page="argos"><div class="ic">👁️</div><span class="lbl">Argos<small>analytics</small></span></div>
       <div class="nav-item" data-page="atlas"><div class="ic">🗂️</div><span class="lbl">Atlas<small>drive</small></span></div>
+      <div class="nav-item" data-page="eole"><div class="ic">🌬️</div><span class="lbl">Éole<small>transfert</small></span></div>
       <div class="nav-item" data-page="apollon"><div class="ic">🖼️</div><span class="lbl">Apollon<small>galerie</small></span></div>
       <div class="nav-item" data-page="ploutos"><div class="ic">🧾</div><span class="lbl">Ploutos<small>devis</small></span></div>
       <div class="nav-item" data-page="mnemosyne"><div class="ic">📝</div><span class="lbl">Mnémosyne<small>notes</small></span></div>
@@ -2247,6 +2268,12 @@
           <span id="atUsageTxt">—</span>
           <div class="at-usage"><i id="atUsageBar"></i></div>
         </div>
+      </section>
+
+      <!-- ═══ ÉOLE (transfert de fichiers) ═══ -->
+      <section class="page" id="page-eole">
+        <div class="page-head"><h1>Éole</h1><p>Envoie des fichiers — zippés, stockés <b>1 mois</b>, un lien sécurisé à partager. Le destinataire n'a besoin d'aucun compte.</p></div>
+        <div id="eoleBody"><div class="ga-note">Chargement…</div></div>
       </section>
 
       <!-- ═══ TITAN (dev — super admin) ═══ -->

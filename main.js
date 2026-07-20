@@ -1,7 +1,7 @@
 "use strict";
 const { app, BrowserWindow, ipcMain, shell, dialog } = require("electron");
-const { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync, readdirSync, rmSync } = require("node:fs");
-const { join } = require("node:path");
+const { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync, readdirSync, rmSync, statSync } = require("node:fs");
+const { join, basename } = require("node:path");
 const { homedir, tmpdir } = require("node:os");
 const { execFile } = require("node:child_process");
 const { randomUUID, privateDecrypt, constants: cryptoConstants, createSign } = require("node:crypto");
@@ -1226,6 +1226,75 @@ ipcMain.handle("pegasus:audiencePegasus", async (_e, key, days) => {
 ipcMain.handle("pegasus:audienceReset", async (_e, key) => {
   try { return { ok: true, data: await pegCall(key, "POST", "/audience/reset", 20000) }; }
   catch (e) { return { ok: false, error: e.message }; }
+});
+
+// ══════════ ÉOLE — transfert de fichiers (WeTransfer interne, Supabase Olympus) ══════════
+// Fichiers zippés → Storage privé du projet Olympus → URL signée (1 mois). Auth = session
+// connectée (authedFetch), zéro nouveau projet / service key. Le destinataire n'a besoin
+// que du lien signé (aucune authentification).
+const EOLE_BUCKET = "transfers";
+ipcMain.handle("eole:status", () => ({ ok: true, signedIn: !!loadSession()?.access_token }));
+ipcMain.handle("eole:setupSql", () => {
+  let editor = null; try { editor = `https://supabase.com/dashboard/project/${new URL(AUTH_BASE).hostname.split(".")[0]}/sql/new`; } catch {}
+  let sql = null; try { sql = readFileSync(join(__dirname, "config", "eole.sql"), "utf8"); } catch {}
+  return { ok: true, sql, editor };
+});
+ipcMain.handle("eole:pick", async () => {
+  const r = await dialog.showOpenDialog(win, { title: "Fichiers à envoyer", buttonLabel: "Choisir", properties: ["openFile", "multiSelections"] });
+  if (r.canceled || !r.filePaths.length) return { ok: false, canceled: true };
+  const files = r.filePaths.map((p) => ({ path: p, name: basename(p), size: statSync(p).size }));
+  return { ok: true, files, totalSize: files.reduce((n, f) => n + f.size, 0) };
+});
+ipcMain.handle("eole:send", async (_e, payload) => {
+  let tmp = null;
+  try {
+    const { paths, title, note, days } = payload || {};
+    if (!paths || !paths.length) throw new Error("Aucun fichier sélectionné.");
+    const s = loadSession();
+    if (!s?.access_token) throw new Error("Connecte-toi pour envoyer des fichiers.");
+    const id = randomUUID();
+    const objectPath = `${id}.zip`;
+    // 1. Zip à plat des fichiers choisis
+    tmp = join(tmpdir(), `eole-${id}.zip`);
+    await new Promise((res, rej) => execFile("/usr/bin/zip", ["-j", "-q", tmp, ...paths], { maxBuffer: 16 * 1024 * 1024 }, (e) => e ? rej(new Error("Compression : " + e.message)) : res()));
+    const bytes = readFileSync(tmp);
+    // 2. Upload dans le Storage privé
+    const up = await authedFetch(`/storage/v1/object/${EOLE_BUCKET}/${objectPath}`, { method: "POST", headers: { "Content-Type": "application/zip", "x-upsert": "true" }, body: bytes });
+    if (!up.ok) throw new Error("Upload : " + (await up.text()).slice(0, 200));
+    // 3. URL signée (jusqu'à 1 mois)
+    const ttl = Math.min(366, Math.max(1, days || 30)) * 86400;
+    const sg = await authedFetch(`/storage/v1/object/sign/${EOLE_BUCKET}/${objectPath}`, { method: "POST", body: JSON.stringify({ expiresIn: ttl }) });
+    const sj = await sg.json().catch(() => ({}));
+    const rel = sj.signedURL || sj.signedUrl;
+    if (!sg.ok || !rel) throw new Error("Lien : " + JSON.stringify(sj).slice(0, 150));
+    const signed = AUTH_BASE + "/storage/v1" + rel;
+    // 4. Ligne de transfert
+    const files = paths.map((p) => ({ name: basename(p), size: statSync(p).size }));
+    const row = { id, title: title || null, note: note || null, files, object_path: objectPath, size_total: bytes.length, signed_url: signed, created_by: s.user?.name || s.user?.email || null, expires_at: new Date(Date.now() + ttl * 1000).toISOString() };
+    const ins = await authedFetch(`/rest/v1/transfers`, { method: "POST", headers: { Prefer: "return=representation" }, body: JSON.stringify(row) });
+    if (!ins.ok) throw new Error("Enregistrement : " + (await ins.text()).slice(0, 200));
+    return { ok: true, transfer: (await ins.json())[0] };
+  } catch (e) { return { ok: false, error: e.message }; }
+  finally { if (tmp) try { rmSync(tmp, { force: true }); } catch {} }
+});
+ipcMain.handle("eole:list", async () => {
+  try {
+    const r = await authedFetch(`/rest/v1/transfers?select=*&order=created_at.desc&limit=100`);
+    if (!r.ok) { const t = await r.text(); return { ok: false, error: t.slice(0, 200), missing_table: /relation|PGRST205|does not exist|not find the table/i.test(t) }; }
+    const rows = await r.json();
+    const now = Date.now();
+    for (const x of rows.filter((x) => new Date(x.expires_at).getTime() < now)) {
+      try { await authedFetch(`/storage/v1/object/${EOLE_BUCKET}/${x.object_path}`, { method: "DELETE" }); await authedFetch(`/rest/v1/transfers?id=eq.${x.id}`, { method: "DELETE" }); } catch {}
+    }
+    return { ok: true, transfers: rows.filter((x) => new Date(x.expires_at).getTime() >= now) };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+ipcMain.handle("eole:delete", async (_e, id, objectPath) => {
+  try {
+    if (objectPath) await authedFetch(`/storage/v1/object/${EOLE_BUCKET}/${objectPath}`, { method: "DELETE" });
+    await authedFetch(`/rest/v1/transfers?id=eq.${id}`, { method: "DELETE" });
+    return { ok: true };
+  } catch (e) { return { ok: false, error: e.message }; }
 });
 ipcMain.handle("pegasus:analyticsStatus", () => {
   const s = loadSettings();
