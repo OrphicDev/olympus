@@ -1261,6 +1261,42 @@ function pgPipelineAdvancePrompt(s, pl, niveau) {
     `Respecte la doctrine du skill orphic-web-design (règle-mère, pas de registre par défaut, offre N1-N4, zones protégées). Ne construis pas le site tant qu'il n'a pas choisi l'issue (a) : cette conversation SERT À REMPLIR le pipeline, la génération est une étape à part.`,
   ].join("\n");
 }
+// Colonne « Projets enregistrés » de la vue pipeline : snapshots retrouvables
+// (créés par « 💾 Enregistrer et reprendre plus tard »).
+async function pgPrjRenderCol(s) {
+  const box = $("plVersions"); if (!box) return;
+  const r = await window.olympus.pegasusPrjList(s.key);
+  const vs = ((r.ok && r.versions) || []).slice().sort((a, b) => (a.ts < b.ts ? 1 : -1));
+  const fmt = (ts) => { try { return new Date(ts).toLocaleString("fr-FR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }); } catch { return ts; } };
+  box.innerHTML = `
+    <div class="abv-h">Projets enregistrés</div>
+    ${vs.length ? vs.map((v) => `
+      <div class="abv-item" data-id="${v.id}">
+        <div class="abv-top"><span class="abv-name" data-f="vname" title="Double-clic pour renommer">${escapeHtml(v.label || "Sans nom")}</span></div>
+        <div class="abv-date">${fmt(v.ts)}</div>
+        <div class="abv-acts">
+          <button class="abv-work" data-act="resume" title="Recharger ce projet dans le pipeline">Reprendre ce projet</button>
+          <button class="abv-b" data-act="del" title="Supprimer">✕</button>
+        </div>
+      </div>`).join("") : '<div class="abv-empty">Aucun projet enregistré. Utilise « 💾 Enregistrer et reprendre plus tard » en bas du pipeline pour retrouver ton travail ici.</div>'}`;
+
+  box.querySelectorAll(".abv-item").forEach((el) => {
+    const id = el.dataset.id;
+    const nameEl = el.querySelector('[data-f="vname"]');
+    pgAbEditable(nameEl, async (v) => { await window.olympus.pegasusPrjRename(s.key, id, v || "Sans nom"); });
+    el.querySelector('[data-act="resume"]').onclick = async () => {
+      if (!confirm("Reprendre ce projet ? L'état actuel du pipeline sera remplacé.")) return;
+      const lr = await window.olympus.pegasusPrjLoad(s.key, id);
+      if (lr.ok) { pgPlCache[s.key] = lr.pipeline; pgPlSave(s.key); pgPipelineRender(s); }
+      else alert("Échec : " + (lr.error || ""));
+    };
+    el.querySelector('[data-act="del"]').onclick = async () => {
+      if (!confirm("Supprimer ce projet enregistré ?")) return;
+      await window.olympus.pegasusPrjDelete(s.key, id);
+      pgPrjRenderCol(s);
+    };
+  });
+}
 async function pgPipelineRender(s) {
   const box = $("pgPipeline"); if (!box) return;
   if (!pgPlCache[s.key]) {
@@ -1331,6 +1367,8 @@ async function pgPipelineRender(s) {
   const stBadge = (st) => `<span class="pl-badge ${st}">${PL_STATUTS[st] || st}</span>`;
 
   box.innerHTML = `
+    <div class="pl-layout">
+    <div class="pl-main">
     <div class="pl-head">
       <div class="pl-progress"><div class="pl-bar" style="width:${Math.round((remplies / PL_ETAPES.length) * 100)}%"></div></div>
       <span class="pl-count">${remplies}/${PL_ETAPES.length} étapes remplies · mode ${pl.mode === "nouveau" ? "nouveau site" : "refonte"}</span>
@@ -1382,7 +1420,12 @@ async function pgPipelineRender(s) {
         </button>
       </div>
       ${pl.savedAt ? `<div class="pl-saved">✓ Projet enregistré le ${new Date(pl.savedAt).toLocaleString("fr-FR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })} — tu peux reprendre à tout moment.</div>` : ""}
+    </div>
+    </div>
+    <div class="ab-versions" id="plVersions"><div class="rb-empty">Projets…</div></div>
     </div>`;
+
+  pgPrjRenderCol(s);
 
   const gen = async () => {
     const manquantes = PL_ETAPES.filter((e) => {
@@ -1397,10 +1440,15 @@ async function pgPipelineRender(s) {
   };
   $("plGen").onclick = gen;
   $("plEndGen").onclick = gen;
-  $("plEndSave").onclick = () => {
+  $("plEndSave").onclick = async (ev) => {
+    const btn = ev.currentTarget; btn.disabled = true;
     pl.savedAt = Date.now(); pgPlSave(s.key);
+    // Snapshot retrouvable dans la colonne de droite
+    const label = "Projet du " + new Date().toLocaleDateString("fr-FR", { day: "2-digit", month: "short" }) + ` · ${remplies}/${PL_ETAPES.length}`;
+    await window.olympus.pegasusPrjSave(s.key, pl, label);
+    btn.disabled = false;
     const msg = $("pgWorkMsg");
-    if (msg) { msg.className = "msg ok"; msg.textContent = "Projet enregistré — tout est sauvegardé, tu peux fermer et reprendre le pipeline quand tu veux."; }
+    if (msg) { msg.className = "msg ok"; msg.textContent = "Projet enregistré — retrouve-le dans la colonne de droite, tu peux fermer et reprendre quand tu veux."; }
     pgPipelineRender(s);
   };
   $("plReset").onclick = () => { pl.mode = null; pgPlSave(s.key); pgPipelineRender(s); };

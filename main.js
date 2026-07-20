@@ -1435,6 +1435,7 @@ function pegVerRegister(prefix, sub, field) {
 }
 pegVerRegister("wire", "wireframes", "arbo");
 pegVerRegister("mb", "moodboards", "moodboard");
+pegVerRegister("prj", "pipelines", "pipeline"); // projets enregistrés (snapshots du pipeline)
 
 // ── Scan de la charte graphique du site réel : couleurs (variables CSS du thème),
 // typographies et logo, extraits du HTML rendu + feuilles de style du domaine ──
