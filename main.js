@@ -1101,6 +1101,64 @@ ipcMain.handle("pegasus:siteContent", async (_e, key) => {
   try { return { ok: true, content: await pegCall(key, "GET", "/content") }; }
   catch (e) { return { ok: false, error: e.message }; }
 });
+// Scan du site EN LIGNE : pages + liens réels entre elles → arborescence auto-connectée.
+// Chaque lien interne trouvé dans une page devient une section (dot coloré) câblée vers sa cible.
+const AB_PALETTE = ["#e8c268", "#8fd6a6", "#7fb2e8", "#e0868f", "#c9a2e8", "#8fd6cf"];
+ipcMain.handle("pegasus:arboScan", async (_e, key, homeWp) => {
+  try {
+    const content = await pegCall(key, "GET", "/content");
+    const items = (Array.isArray(content) ? content : []);
+    if (!items.length) throw new Error("Aucune page renvoyée par le site.");
+    const abs = (href, base) => { try { return new URL(href, base); } catch { return null; } };
+    const norm = (u) => (u.pathname.replace(/\/+$/, "") || "/");
+    const byPath = new Map();
+    // Les permaliens « ?p=42 » (brouillons) ont un pathname "/" trompeur → exclus du matching
+    for (const c of items) { const u = abs(c.url); if (u && !(norm(u) === "/" && u.search)) byPath.set(norm(u), c); }
+    const mkId = () => "n" + Math.random().toString(36).slice(2, 8);
+    const pages = items.map((c) => {
+      const u = abs(c.url);
+      return { id: mkId(), wp_id: c.id, titre: String(c.title || c.slug || "Sans titre"), url: c.url, home: u ? (norm(u) === "/" && !u.search) : false, sections: [] };
+    });
+    const idByWp = new Map(pages.map((p) => [p.wp_id, p.id]));
+    let ci = 0;
+    const scanInto = async (url, page, selfWpId) => {
+      let html = "";
+      try {
+        const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 15000);
+        const r = await fetch(url, { headers: { "User-Agent": "Olympus-Pegasus/1.0" }, signal: ctl.signal });
+        clearTimeout(t);
+        if (r.ok) html = await r.text();
+      } catch {}
+      if (!html || !page) return;
+      const base = abs(url);
+      const seen = new Set(page.sections.map((x) => x.cible));
+      const re = /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+      let m;
+      while ((m = re.exec(html))) {
+        const u = abs(m[1].split("#")[0], url);
+        if (!u || !base || u.hostname.replace(/^www\./, "") !== base.hostname.replace(/^www\./, "")) continue;
+        const target = byPath.get(norm(u));
+        if (!target || target.id === selfWpId || seen.has(idByWp.get(target.id))) continue;
+        seen.add(idByWp.get(target.id));
+        let label = m[2].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+        if (!label || label.length > 42) label = String(target.title || "Lien");
+        page.sections.push({ id: mkId(), titre: label, cible: idByWp.get(target.id), color: AB_PALETTE[ci++ % AB_PALETTE.length] });
+      }
+    };
+    for (const c of items.filter((x) => x.status === "publish").slice(0, 20)) {
+      await scanInto(c.url, pages.find((p) => p.wp_id === c.id), c.id);
+    }
+    // La vraie page d'accueil (racine du site) : si le node accueil n'a rien capté
+    // (page en brouillon, front-page.php…), on scanne l'URL racine directement.
+    const sites2 = await pegSites();
+    const homePage = (homeWp && pages.find((p) => p.wp_id === homeWp)) || pages.find((p) => p.home);
+    if (homePage && !homePage.sections.length && sites2[key]) {
+      homePage.home = true;
+      await scanInto(sites2[key].base_url + "/", homePage, homePage.wp_id);
+    }
+    return { ok: true, arbo: { pages } };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
 // Arborescence du site : stockée dans le dossier du site (~/Pegasus/<site>/arborescence.json)
 async function pegArboPath(key) {
   const sites = await pegSites(); const s = sites[key];

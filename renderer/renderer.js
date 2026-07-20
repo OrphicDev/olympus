@@ -438,6 +438,7 @@ function pgArboSave(key) {
   pgArboSaveT = setTimeout(() => window.olympus.pegasusArboSave(key, pgArboCache[key]), 400);
 }
 const pgArboId = () => "n" + Math.random().toString(36).slice(2, 8);
+const AB_COLORS = ["#e8c268", "#8fd6a6", "#7fb2e8", "#e0868f", "#c9a2e8", "#8fd6cf"];
 let pgAbLink = null;                          // {p, s} : section en cours de câblage
 
 // Position auto pour les nodes sans coordonnées : accueil à gauche, grille ensuite
@@ -454,6 +455,40 @@ function pgAbLayout(pages) {
   return changed;
 }
 
+// Fusionne un scan du site avec l'arborescence existante : positions/accueil/pages
+// manuelles conservés, sections remplacées par les liens réellement détectés.
+function pgAbMerge(cur, scanned) {
+  if (!cur) return scanned;
+  const byWp = new Map(cur.pages.filter((p) => p.wp_id).map((p) => [p.wp_id, p]));
+  const idMap = new Map();
+  for (const np of scanned.pages) { const old = np.wp_id && byWp.get(np.wp_id); idMap.set(np.id, old ? old.id : np.id); }
+  const hadHome = cur.pages.some((p) => p.home);
+  for (const np of scanned.pages) {
+    const old = np.wp_id && byWp.get(np.wp_id);
+    np.id = idMap.get(np.id);
+    if (old) {
+      if (old.x != null) { np.x = old.x; np.y = old.y; }
+      if (hadHome) np.home = !!old.home;
+      if (old.titre && old.titre !== np.titre && !old.wp_id) np.titre = old.titre;
+    }
+    for (const sc of np.sections) sc.cible = idMap.get(sc.cible) || "";
+  }
+  const manual = cur.pages.filter((p) => !p.wp_id);
+  return { pages: [...scanned.pages, ...manual] };
+}
+
+// Titre éditable au DOUBLE-clic (le simple clic sert au drag)
+function pgAbEditable(el, commit) {
+  el.ondblclick = (e) => {
+    e.stopPropagation();
+    el.contentEditable = "true"; el.focus();
+    const r = document.createRange(); r.selectNodeContents(el);
+    const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+  };
+  el.onblur = () => { el.contentEditable = "false"; commit(el.textContent.trim()); };
+  el.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); el.blur(); } };
+}
+
 async function pgArboRender(s) {
   const box = $("pgArbo"); if (!box) return;
   if (!pgArboCache[s.key]) {
@@ -463,26 +498,22 @@ async function pgArboRender(s) {
   }
   const arbo = pgArboCache[s.key];
 
-  // Pas encore d'arborescence → la générer depuis le site, ou partir de zéro
+  // Pas encore d'arborescence → scan auto du site (pages + liens réels), ou zéro
   if (!arbo) {
     box.innerHTML = `<div class="ab-empty">
-        <p class="pg-mnote">Aucune arborescence pour ce site. Génère-la depuis les pages réelles du site en ligne, ou construis-la de zéro.</p>
+        <p class="pg-mnote">Aucune arborescence pour ce site. Comme il est connecté à Pegasus, je peux la générer <b>déjà câblée</b> : pages réelles + liens réels entre elles.</p>
         <div class="pg-actrow">
-          <button class="cal-btn primary" id="abGen">Générer depuis le site</button>
+          <button class="cal-btn primary" id="abGen">Scanner le site (pages + connexions)</button>
           <button class="btn sec" id="abBlank">Partir de zéro</button>
           <span class="msg" id="abMsg"></span>
         </div>
       </div>`;
     box.querySelector("#abGen").onclick = async (e) => {
       const m = box.querySelector("#abMsg"); e.currentTarget.disabled = true;
-      m.className = "msg"; m.textContent = "Lecture des pages du site…";
-      const r = await window.olympus.pegasusSiteContent(s.key);
+      m.className = "msg"; m.textContent = "Scan du site : pages, liens, connexions… (quelques secondes)";
+      const r = await window.olympus.pegasusArboScan(s.key, null);
       if (!r.ok) { m.className = "msg err"; m.textContent = r.error || "Échec."; e.target.disabled = false; return; }
-      const items = (Array.isArray(r.content) ? r.content : r.content?.items || []).filter((c) => !c.type || c.type === "page");
-      pgArboCache[s.key] = { pages: items.map((c) => ({
-        id: pgArboId(), wp_id: c.id, titre: String(c.title || "Sans titre"),
-        home: /accueil|home/i.test(String(c.title || "")), sections: [],
-      })) };
+      pgArboCache[s.key] = r.arbo;
       pgArboSave(s.key); pgArboRender(s);
     };
     box.querySelector("#abBlank").onclick = () => {
@@ -493,14 +524,21 @@ async function pgArboRender(s) {
   }
 
   const pages = arbo.pages || [];
-  if (pgAbLayout(pages)) pgArboSave(s.key);
+  let dirty = pgAbLayout(pages);
+  // Couleur pour toute section qui n'en a pas encore (dot devant le nom)
+  let ci = 0;
+  for (const p of pages) for (const sec of p.sections) {
+    if (!sec.color) { sec.color = AB_COLORS[ci % AB_COLORS.length]; dirty = true; }
+    ci++;
+  }
+  if (dirty) pgArboSave(s.key);
   pgAbLink = null;
-  const HINT = `Glisse les nodes · clique le <b>port</b> d'une section puis sa page de destination · clic droit sur un port pour détacher`;
+  const HINT = `Glisse une carte pour la déplacer · double-clique un nom pour le renommer · clique un <b>port</b> puis une page pour tracer une connexion · clic droit sur un port pour détacher`;
 
   box.innerHTML = `
     <div class="pg-actrow" style="margin-bottom:12px;">
       <button class="cal-btn" id="abAddPage">＋ Page</button>
-      <button class="btn sec" id="abResync">⟳ Resynchroniser</button>
+      <button class="btn sec" id="abRescan" title="Repart des pages et liens réels du site (positions conservées)">⟳ Rescanner le site</button>
       <span class="ab-hint" id="abHint">${HINT}</span>
     </div>
     <div class="ab-canvas" id="abCanvas">
@@ -510,17 +548,19 @@ async function pgArboRender(s) {
           <div class="ab-node${p.home ? " home" : ""}" data-p="${p.id}" style="left:${p.x}px;top:${p.y}px;">
             <span class="inport"></span>
             <div class="ab-phead">
-              <input class="ab-in" data-f="titre" value="${escapeHtml(p.titre)}" spellcheck="false">
+              <div class="ab-title" data-f="titre" title="Double-clic pour renommer">${escapeHtml(p.titre)}</div>
               ${p.home ? '<span class="ab-badge">accueil</span>' : `<button class="ab-mini" data-act="home" title="Définir comme accueil">⌂</button>`}
+              <button class="ab-mini" data-act="rename" title="Renommer">✎</button>
               <button class="ab-mini" data-act="addsec" title="Ajouter une section">＋</button>
               <button class="ab-mini" data-act="delpage" title="Supprimer la page">✕</button>
             </div>
             ${p.wp_id ? `<div style="margin-top:4px;"><span class="ab-badge dim">WP #${p.wp_id}</span></div>` : ""}
             ${p.sections.length ? `<div class="ab-secs">${p.sections.map((sec) => `
               <div class="ab-sec" data-s="${sec.id}">
-                <input class="ab-in" data-f="sec-titre" value="${escapeHtml(sec.titre)}" spellcheck="false">
+                <span class="ab-secdot" style="background:${sec.color};box-shadow:0 0 6px ${sec.color}55;"></span>
+                <div class="ab-title sec" data-f="sec-titre" title="Double-clic pour renommer">${escapeHtml(sec.titre)}</div>
                 <button class="ab-mini" data-act="delsec" title="Supprimer la section">✕</button>
-                <span class="ab-port${sec.cible ? " linked" : ""}" data-port title="${sec.cible ? "⇢ " + escapeHtml((pages.find((x) => x.id === sec.cible) || {}).titre || "?") + " — clic droit pour détacher" : "Clique, puis choisis la page de destination"}"></span>
+                <span class="ab-port${sec.cible ? " linked" : ""}" data-port ${sec.cible ? `style="background:${sec.color};border-color:transparent;box-shadow:0 0 7px ${sec.color}88;"` : ""} title="${sec.cible ? "⇢ " + escapeHtml((pages.find((x) => x.id === sec.cible) || {}).titre || "?") + " — clic droit pour détacher" : "Clique, puis choisis la page de destination"}"></span>
               </div>`).join("")}</div>` : ""}
           </div>`).join("")}
       </div>
@@ -530,7 +570,9 @@ async function pgArboRender(s) {
   const find = (pid) => pages.find((x) => x.id === pid);
   const hintReset = () => { $("abHint").innerHTML = HINT; };
 
-  // Câbles : du port de chaque section vers le port d'entrée de sa page cible
+  // Câbles : du port de chaque section vers l'entrée de sa page cible (couleur = celle de la section).
+  // Au survol d'un node, seuls SES câbles (départs + arrivées) restent vifs — les autres s'estompent.
+  let abHot = null;
   function drawWires() {
     const sr = stage.getBoundingClientRect();
     const paths = [];
@@ -543,7 +585,8 @@ async function pgArboRender(s) {
       const x1 = a.left - sr.left + a.width / 2, y1 = a.top - sr.top + a.height / 2;
       const x2 = b.left - sr.left + b.width / 2, y2 = b.top - sr.top + b.height / 2;
       const dx = Math.max(50, Math.abs(x2 - x1) * 0.45);
-      paths.push(`<path d="M ${x1.toFixed(1)} ${y1.toFixed(1)} C ${(x1 + dx).toFixed(1)} ${y1.toFixed(1)}, ${(x2 - dx).toFixed(1)} ${y2.toFixed(1)}, ${x2.toFixed(1)} ${y2.toFixed(1)}"/>`);
+      const hot = !abHot || p.id === abHot || sec.cible === abHot;
+      paths.push(`<path style="stroke:${sec.color || "var(--line2)"};opacity:${hot ? (abHot ? ".95" : ".7") : ".07"};" d="M ${x1.toFixed(1)} ${y1.toFixed(1)} C ${(x1 + dx).toFixed(1)} ${y1.toFixed(1)}, ${(x2 - dx).toFixed(1)} ${y2.toFixed(1)}, ${x2.toFixed(1)} ${y2.toFixed(1)}"/>`);
     }
     svgW.innerHTML = paths.join("");
   }
@@ -554,18 +597,12 @@ async function pgArboRender(s) {
     pages.push({ id: pgArboId(), titre: "Nouvelle page", sections: [], x: 70 + canvas.scrollLeft, y: 70 + canvas.scrollTop });
     pgArboSave(s.key); pgArboRender(s);
   };
-  box.querySelector("#abResync").onclick = async (e) => {
+  box.querySelector("#abRescan").onclick = async (e) => {
     e.currentTarget.disabled = true;
-    const r = await window.olympus.pegasusSiteContent(s.key);
-    if (r.ok) {
-      const items = (Array.isArray(r.content) ? r.content : r.content?.items || []).filter((c) => !c.type || c.type === "page");
-      for (const c of items) {
-        if (!pages.some((p) => p.wp_id === c.id || p.titre === String(c.title))) {
-          pages.push({ id: pgArboId(), wp_id: c.id, titre: String(c.title || "Sans titre"), sections: [] });
-        }
-      }
-      pgArboSave(s.key);
-    }
+    $("abHint").innerHTML = "Scan du site en cours… (pages + connexions réelles)";
+    const homeWp = (pages.find((x) => x.home) || {}).wp_id || null;
+    const r = await window.olympus.pegasusArboScan(s.key, homeWp);
+    if (r.ok) { pgArboCache[s.key] = pgAbMerge(pgArboCache[s.key], r.arbo); pgArboSave(s.key); }
     pgArboRender(s);
   };
 
@@ -581,15 +618,18 @@ async function pgArboRender(s) {
     window.addEventListener("pointerup", up);
   });
 
-  // Nodes : drag, câblage, édition
+  // Nodes : drag depuis N'IMPORTE OÙ sur la carte, câblage, édition
   stage.querySelectorAll(".ab-node").forEach((ne) => {
     const p = find(ne.dataset.p);
-    // Drag par l'en-tête
-    ne.querySelector(".ab-phead").addEventListener("pointerdown", (e) => {
-      if (e.target.closest("input,button")) return;
+    ne.addEventListener("mouseenter", () => { abHot = p.id; drawWires(); });
+    ne.addEventListener("mouseleave", () => { abHot = null; drawWires(); });
+    ne.addEventListener("pointerdown", (e) => {
+      if (e.target.closest('button,.ab-port,[contenteditable="true"]')) return;
       e.preventDefault();
       const sx = e.clientX, sy = e.clientY, ox = p.x, oy = p.y;
+      let moved = false;
       const move = (ev) => {
+        moved = true;
         p.x = Math.max(0, ox + ev.clientX - sx);
         p.y = Math.max(0, oy + ev.clientY - sy);
         ne.style.left = p.x + "px"; ne.style.top = p.y + "px";
@@ -597,7 +637,7 @@ async function pgArboRender(s) {
       };
       const up = () => {
         window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up);
-        p.x = Math.round(p.x); p.y = Math.round(p.y); pgArboSave(s.key);
+        if (moved) { p.x = Math.round(p.x); p.y = Math.round(p.y); pgArboSave(s.key); }
       };
       window.addEventListener("pointermove", move);
       window.addEventListener("pointerup", up);
@@ -611,11 +651,13 @@ async function pgArboRender(s) {
       pgAbLink = null;
       pgArboRender(s);
     });
-    ne.querySelector('[data-f="titre"]').onchange = (e) => { p.titre = e.target.value.trim() || "Sans titre"; pgArboSave(s.key); };
+    const titleEl = ne.querySelector('[data-f="titre"]');
+    pgAbEditable(titleEl, (v) => { p.titre = v || "Sans titre"; titleEl.textContent = p.titre; pgArboSave(s.key); });
     ne.querySelectorAll(".ab-phead [data-act]").forEach((b) => {
       b.onclick = (e) => {
         e.stopPropagation();
-        if (b.dataset.act === "addsec") p.sections.push({ id: pgArboId(), titre: "Nouvelle section", cible: "" });
+        if (b.dataset.act === "rename") { titleEl.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })); return; }
+        if (b.dataset.act === "addsec") p.sections.push({ id: pgArboId(), titre: "Nouvelle section", cible: "", color: AB_COLORS[p.sections.length % AB_COLORS.length] });
         if (b.dataset.act === "home") pages.forEach((x) => { x.home = x.id === p.id; });
         if (b.dataset.act === "delpage") {
           arbo.pages = pages.filter((x) => x.id !== p.id);
@@ -627,7 +669,8 @@ async function pgArboRender(s) {
     });
     ne.querySelectorAll(".ab-sec").forEach((se) => {
       const sec = p.sections.find((x) => x.id === se.dataset.s);
-      se.querySelector('[data-f="sec-titre"]').onchange = (e) => { sec.titre = e.target.value.trim() || "Section"; pgArboSave(s.key); };
+      const secTitle = se.querySelector('[data-f="sec-titre"]');
+      pgAbEditable(secTitle, (v) => { sec.titre = v || "Section"; secTitle.textContent = sec.titre; pgArboSave(s.key); });
       se.querySelector('[data-act="delsec"]').onclick = (e) => {
         e.stopPropagation();
         p.sections = p.sections.filter((x) => x.id !== sec.id);

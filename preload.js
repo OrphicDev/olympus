@@ -65,6 +65,7 @@ contextBridge.exposeInMainWorld("olympus", {
   pegasusSiteSeo: (key, limit) => ipcRenderer.invoke("pegasus:siteSeo", key, limit),
   pegasusSiteContent: (key) => ipcRenderer.invoke("pegasus:siteContent", key),
   pegasusArboGet: (key) => ipcRenderer.invoke("pegasus:arboGet", key),
+  pegasusArboScan: (key, homeWp) => ipcRenderer.invoke("pegasus:arboScan", key, homeWp),
   pegasusArboSave: (key, arbo) => ipcRenderer.invoke("pegasus:arboSave", key, arbo),
   pegasusSitePerf: (key, strategy) => ipcRenderer.invoke("pegasus:sitePerf", key, strategy),
   pegasusRefs: (filters) => ipcRenderer.invoke("pegasus:refs", filters),

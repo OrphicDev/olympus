@@ -849,10 +849,13 @@
   .ab-node.linktarget{border-color:var(--txt);cursor:crosshair;}
   .ab-node .inport{position:absolute;left:-5px;top:22px;width:9px;height:9px;border-radius:50%;background:var(--card2);border:1px solid var(--line2);}
   .ab-node.home .inport{background:var(--accent2);border-color:transparent;box-shadow:0 0 8px color-mix(in srgb,var(--accent2) 60%,transparent);}
-  .ab-phead{display:flex;align-items:center;gap:8px;cursor:grab;}
-  .ab-phead:active{cursor:grabbing;}
-  .ab-in{background:transparent;border:none;outline:none;color:var(--txt);font-size:13px;font-weight:600;flex:1;min-width:40px;padding:3px 5px;border-radius:7px;transition:background .12s;}
-  .ab-in:hover,.ab-in:focus{background:var(--card2);}
+  .ab-node{cursor:grab;}
+  .ab-node:active{cursor:grabbing;}
+  .ab-phead{display:flex;align-items:center;gap:7px;}
+  .ab-title{color:var(--txt);font-size:13px;font-weight:600;flex:1;min-width:40px;padding:3px 5px;border-radius:7px;transition:background .12s;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;outline:none;}
+  .ab-title[contenteditable="true"]{background:var(--card2);cursor:text;white-space:normal;}
+  .ab-title.sec{font-weight:450;font-size:12px;color:var(--muted);}
+  .ab-title.sec[contenteditable="true"]{color:var(--txt);}
   .ab-badge{font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--txt);background:var(--card2);border-radius:10px;padding:2px 7px;flex-shrink:0;}
   .ab-badge.dim{color:var(--dim);background:transparent;border:1px solid var(--line);}
   .ab-mini{background:none;border:none;color:var(--dim);font-size:11px;cursor:pointer;padding:3px 6px;border-radius:7px;flex-shrink:0;opacity:0;transition:opacity .12s,color .12s,background .12s;}
@@ -860,8 +863,6 @@
   .ab-mini:hover{color:var(--txt);background:var(--card2);}
   .ab-secs{display:flex;flex-direction:column;gap:1px;margin-top:8px;border-top:1px solid var(--line);padding-top:7px;}
   .ab-sec{position:relative;display:flex;align-items:center;gap:7px;padding:2px 0;}
-  .ab-sec .ab-in{font-weight:450;font-size:12px;color:var(--muted);}
-  .ab-sec .ab-in:focus{color:var(--txt);}
   .ab-port{position:absolute;right:-18px;top:50%;transform:translateY(-50%);width:9px;height:9px;border-radius:50%;background:var(--card2);border:1px solid var(--line2);cursor:crosshair;transition:box-shadow .15s,background .15s;}
   .ab-port:hover{background:var(--txt);}
   .ab-port.linked{background:var(--ok);border-color:transparent;box-shadow:0 0 7px color-mix(in srgb,var(--ok) 55%,transparent);}
