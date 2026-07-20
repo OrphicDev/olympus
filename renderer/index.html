@@ -175,8 +175,8 @@
   /* Agenda du jour découpé en heures */
   .ag-allday{display:flex;flex-direction:column;gap:5px;padding-bottom:12px;margin-bottom:2px;border-bottom:1px solid var(--line);}
   .ag-allday-l{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin-bottom:3px;}
-  .ag-hours{display:flex;flex-direction:column;}
-  .ag-hour{display:flex;gap:9px;align-items:flex-start;border-top:1px solid var(--line);min-height:30px;padding:5px 0;}
+  .ag-hours{flex:1;display:flex;flex-direction:column;}
+  .ag-hour{flex:1;display:flex;gap:9px;align-items:flex-start;border-top:1px solid var(--line);min-height:26px;padding:5px 0;}
   .ag-hour:first-child{border-top:none;}
   .ag-hlabel{width:22px;flex-shrink:0;font-size:11px;color:var(--dim);font-variant-numeric:tabular-nums;padding-top:1px;}
   .ag-hslot{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px;}
@@ -1504,7 +1504,8 @@
   #hub.with-rail #rbWheel{display:flex;}
   #rbBlank{display:none;position:absolute;top:0;bottom:0;right:268px;width:224px;z-index:7;background:linear-gradient(var(--panel),var(--panel)),var(--bg2);padding:44px 22px 24px;overflow-y:auto;flex-direction:column;gap:12px;-webkit-app-region:no-drag;}
   #hub.with-rail #rbBlank{display:flex;}
-  #rbBlank .agenda-head{text-align:left;margin:4px 0 2px;}
+  #rbBlank .agenda-head{text-align:left;margin:4px 0 2px;flex-shrink:0;}
+  #agendaDay{flex:1;display:flex;flex-direction:column;min-height:0;}
   .rb-sec{-webkit-app-region:no-drag;animation:fadeUp .4s ease;}
   .rb-sec h4{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin-bottom:12px;}
   .rb-title{color:var(--txt);font-weight:550;font-size:14px;}

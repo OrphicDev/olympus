@@ -3675,11 +3675,7 @@ function agendaHoursHtml(events) {
   const timed = events.filter((e) => e.time).sort((a, b) => a.time.localeCompare(b.time));
   if (!allday.length && !timed.length) return '<div class="rb-empty">Rien de prévu ce jour-là.</div>';
   const hourOf = (e) => parseInt(e.time.slice(0, 2), 10);
-  let startH = 8, endH = 20;
-  if (timed.length) {
-    startH = Math.max(0, Math.min(8, ...timed.map(hourOf)));
-    endH = Math.min(24, Math.max(20, ...timed.map(hourOf).map((h) => h + 1)));
-  }
+  const startH = 0, endH = 24; // minuit → minuit
   const byHour = {};
   timed.forEach((e) => { (byHour[hourOf(e)] = byHour[hourOf(e)] || []).push(e); });
   let html = "";
