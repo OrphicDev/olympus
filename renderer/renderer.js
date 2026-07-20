@@ -477,7 +477,9 @@ function pgRenderDetail() {
   const sb = box.querySelector("#pgSeoBtn"); if (sb) sb.onclick = () => pgRunSeo(s.key);
   const pb = box.querySelector("#pgPerfBtn"); if (pb) pb.onclick = () => pgRunPerf(s.key);
   const scb = box.querySelector("#pgSecuBtn"); if (scb) scb.onclick = () => pgLoadDiag(s.key);
-  // La Sécurité s'analyse à l'ouverture de l'onglet (diagnostic à distance)
+  // Chaque vue s'analyse toute seule à la 1re ouverture (puis en cache — bouton « Relancer » pour rafraîchir)
+  if (pgSiteTab === "seo" && pgSeo[s.key] === undefined) pgRunSeo(s.key);
+  if (pgSiteTab === "perf" && pgPerf[s.key] === undefined) pgRunPerf(s.key);
   if (pgSiteTab === "secu" && pgDiag[s.key] === undefined) pgLoadDiag(s.key);
   // Historique des métriques pour les sparklines des tableaux de bord
   if (["seo", "perf", "secu", "rapport"].includes(pgSiteTab) && !pgMetrics[s.key]) pgLoadMetrics(s.key).then((m) => { if (m && pgSel === s.key) pgRenderDetail(); });
