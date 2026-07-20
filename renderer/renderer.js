@@ -323,7 +323,12 @@ function pgRenderSide() {
   }
   box.innerHTML = html;
   box.querySelectorAll(".pg-sitefold").forEach((el) => { el.onclick = () => { if (pgView !== "parc") pgSetView("parc"); pgSelect(el.dataset.key); }; });
-  box.querySelectorAll(".pg-tabfold").forEach((el) => { el.onclick = () => { pgSiteTab = el.dataset.tab; pgRenderSide(); pgRenderDetail(); }; });
+  box.querySelectorAll(".pg-tabfold").forEach((el) => { el.onclick = () => {
+    pgSiteTab = el.dataset.tab;
+    // Audience = suivi « en direct » : on rafraîchit à chaque ouverture de l'onglet (pas de cache figé)
+    if (el.dataset.tab === "audience") Object.keys(pgAudCache).forEach((k) => k.startsWith(pgSel + ":") && delete pgAudCache[k]);
+    pgRenderSide(); pgRenderDetail();
+  }; });
   box.querySelectorAll(".pg-actfold[data-sec]").forEach((el) => {
     el.onclick = () => { pgSecAction = pgSecAction === el.dataset.sec ? null : el.dataset.sec; pgRenderSide(); pgRenderDetail(); };
   });
