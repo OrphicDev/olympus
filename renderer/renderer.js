@@ -1276,15 +1276,17 @@ async function pgRefLibPicker(opts) {
     if (!rows.length) { listBox.innerHTML = `<div class="rb-empty">Aucune référence ${curF !== "tous" ? "de ce type " : ""}dans la bibliothèque${curQ ? " pour cette recherche" : ""}. On en ajoute depuis l'onglet Bibliothèque.</div>`; return; }
     listBox.innerHTML = `<div class="rlp-grid">${rows.map((x, i) => {
       let host = x.url || "";
-      if (x.url) { try { const u = new URL(/^https?:\/\//i.test(x.url) ? x.url : "https://" + x.url); host = u.host.replace(/^www\./, "") + (x._t === "page" ? (u.pathname || "").replace(/\/+$/, "") : ""); } catch {} }
-      return `<button class="rlp-card" data-i="${i}">
-          <div class="rlp-top"><span class="rlp-badge rlp-${x._t}">${badge[x._t]}</span>${x.niveau ? `<span class="rlp-niv">${escapeHtml(x.niveau)}</span>` : ""}${x.statut === "valide" ? '<span class="rlp-ok" title="Validée">✓</span>' : ""}</div>
+      const full = /^https?:\/\//i.test(x.url) ? x.url : "https://" + x.url;
+      if (x.url) { try { const u = new URL(full); host = u.host.replace(/^www\./, "") + (x._t === "page" ? (u.pathname || "").replace(/\/+$/, "") : ""); } catch {} }
+      return `<div class="rlp-card" data-i="${i}" role="button" tabindex="0" title="Choisir cette référence">
+          <div class="rlp-top"><span class="rlp-badge rlp-${x._t}">${badge[x._t]}</span>${x.niveau ? `<span class="rlp-niv">${escapeHtml(x.niveau)}</span>` : ""}${x.statut === "valide" ? '<span class="rlp-ok" title="Validée">✓</span>' : ""}<button class="rlp-open" data-open="${escapeHtml(full)}" title="Voir dans le navigateur">↗</button></div>
           <div class="rlp-title">${escapeHtml(x.titre || "—")}</div>
           <div class="rlp-host">${escapeHtml(host)}</div>
           ${x.technique ? `<div class="rlp-tech">${escapeHtml(x.technique)}</div>` : ""}
-        </button>`;
+        </div>`;
     }).join("")}</div>`;
-    listBox.querySelectorAll(".rlp-card").forEach((b) => b.onclick = () => { if (onPick) onPick(rows[+b.dataset.i]); close(); });
+    listBox.querySelectorAll(".rlp-open").forEach((b) => b.onclick = (e) => { e.stopPropagation(); window.olympus.openExternal(b.dataset.open); });
+    listBox.querySelectorAll(".rlp-card").forEach((c) => c.onclick = () => { if (onPick) onPick(rows[+c.dataset.i]); close(); });
   };
   ov.querySelectorAll(".rlp-tab").forEach((t) => t.onclick = () => { curF = t.dataset.f; ov.querySelectorAll(".rlp-tab").forEach((x) => x.classList.toggle("on", x === t)); render(); });
   const qEl = ov.querySelector(".rlp-q"); qEl.oninput = () => { curQ = qEl.value.trim(); render(); };
