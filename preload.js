@@ -74,7 +74,7 @@ contextBridge.exposeInMainWorld("olympus", {
   pegasusWireLoad: (key, id) => ipcRenderer.invoke("pegasus:wireLoad", key, id),
   pegasusWireRename: (key, id, label) => ipcRenderer.invoke("pegasus:wireRename", key, id, label),
   pegasusWireDelete: (key, id) => ipcRenderer.invoke("pegasus:wireDelete", key, id),
-  pegasusWirePush: (key, id) => ipcRenderer.invoke("pegasus:wirePush", key, id),
+  pegasusWireWork: (key, id, mode) => ipcRenderer.invoke("pegasus:wireWork", key, id, mode),
   pegasusSitePerf: (key, strategy) => ipcRenderer.invoke("pegasus:sitePerf", key, strategy),
   pegasusRefs: (filters) => ipcRenderer.invoke("pegasus:refs", filters),
   pegasusRefAdd: (row) => ipcRenderer.invoke("pegasus:refAdd", row),

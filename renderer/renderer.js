@@ -1007,38 +1007,77 @@ async function pgWireRenderCol(s) {
         </div>
         <div class="abv-date">${fmt(v.ts)}</div>
         ${man.deployed === v.id ? '<div class="abv-live">● version en ligne</div>' : ""}
+        <button class="abv-work" data-act="work" title="Ouvre la version locale et travaille d'après ce wireframe">Travailler sur le site depuis ce wireframe</button>
         <div class="abv-acts">
-          <button class="abv-b" data-act="load" title="Charger cette version dans l'éditeur">Charger</button>
-          <button class="abv-b primary" data-act="push" title="Construire cette version en local (pages + boutons, d'après le moodboard)">Pousser</button>
+          <button class="abv-open" data-act="load" title="Ouvrir cette version dans l'éditeur">Ouvrir dans l'éditeur ↗</button>
           ${man.deployed === v.id ? '<button class="abv-b" data-act="del" disabled title="La version en ligne ne peut pas être supprimée" style="opacity:.35;cursor:default;">✕</button>' : '<button class="abv-b" data-act="del" title="Supprimer">✕</button>'}
         </div>
       </div>`).join("") : '<div class="abv-empty">Aucune version. Clique « Enregistrer une version » pour figer l\'état actuel du wireframe.</div>'}`;
 
   box.querySelectorAll(".abv-item").forEach((el) => {
     const id = el.dataset.id;
+    const version = man.versions.find((x) => x.id === id) || { id, label: "" };
     const nameEl = el.querySelector('[data-f="vname"]');
     pgAbEditable(nameEl, async (v) => { await window.olympus.pegasusWireRename(s.key, id, v || "Sans nom"); delete pgWireCache[s.key]; });
     el.querySelector('[data-act="load"]').onclick = async () => {
-      if (!confirm("Charger cette version dans l'éditeur ? L'état actuel sera remplacé (enregistre-le d'abord si besoin).")) return;
+      if (!confirm("Ouvrir cette version dans l'éditeur ? L'état actuel sera remplacé (enregistre-le d'abord si besoin).")) return;
       const lr = await window.olympus.pegasusWireLoad(s.key, id);
       if (lr.ok) { lr.arbo.versionId = id; pgArboCache[s.key] = lr.arbo; pgArboSave(s.key); pgArboRender(s); }
       else alert("Échec : " + (lr.error || ""));
     };
-    el.querySelector('[data-act="push"]').onclick = async (e) => {
-      if (!confirm("Pousser cette version ?\n\nPegasus va générer le brief de construction (pages + boutons) d'après le moodboard, créer la version en local et ouvrir une session Claude Code pour la bâtir. Le site en ligne n'est pas modifié.")) return;
-      e.currentTarget.disabled = true; e.currentTarget.textContent = "…";
-      const pr = await window.olympus.pegasusWirePush(s.key, id);
-      delete pgWireCache[s.key]; await pgWireRenderCol(s);
-      const msg = $("pgWorkMsg");
-      if (pr.ok) { if (msg) { msg.className = "msg ok"; msg.textContent = "Brief généré (" + pr.briefPath + ") — session Claude Code ouverte pour construire la version."; } }
-      else alert("Échec du push : " + (pr.error || ""));
-    };
+    el.querySelector('[data-act="work"]').onclick = () => pgWireWorkModal(s, version);
     const delBtn = el.querySelector('[data-act="del"]');
     if (delBtn && !delBtn.disabled) delBtn.onclick = async () => {
       if (!confirm("Supprimer cette version ?")) return;
       await window.olympus.pegasusWireDelete(s.key, id);
       delete pgWireCache[s.key]; await pgWireRenderCol(s);
     };
+  });
+}
+
+// Modale « Travailler sur le site depuis ce wireframe » : ouvre la version locale et,
+// au choix, laisse Claude générer automatiquement les pages/sections/boutons/liens
+// depuis le wireframe ciblé, ou laisse l'utilisateur construire à la main.
+function pgWireWorkModal(s, v) {
+  const ov = document.createElement("div");
+  ov.className = "modal-overlay show";
+  ov.innerHTML = `
+    <div class="modal-panel" style="width:600px;">
+      <div class="modal-head"><h2>Travailler depuis « ${escapeHtml(v.label || "Sans nom")} »</h2><button class="modal-x" data-x aria-label="Fermer">✕</button></div>
+      <div class="modal-body">
+        <p class="pg-mnote" style="margin-top:0;">La version locale du site va s'ouvrir. Comment veux-tu créer les pages, sections, boutons et connexions de ce wireframe ?</p>
+        <div class="wk-choices">
+          <button class="wk-choice" data-mode="auto">
+            <div class="wk-t">✨ Génération automatique</div>
+            <div class="wk-d">Claude crée et adapte les pages, sections, boutons et liens d'après le wireframe et le moodboard. Une session Claude Code démarre avec les instructions.</div>
+          </button>
+          <button class="wk-choice" data-mode="manual">
+            <div class="wk-t">✋ Manuellement</div>
+            <div class="wk-d">La version locale s'ouvre et une session Claude Code prête, sans instructions — tu construis toi-même.</div>
+          </button>
+        </div>
+        <div class="msg" id="wkMsg" style="margin-top:14px;"></div>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  const close = () => ov.remove();
+  ov.querySelector("[data-x]").onclick = close;
+  ov.onclick = (e) => { if (e.target === ov) close(); };
+  ov.querySelectorAll(".wk-choice").forEach((b) => b.onclick = async () => {
+    const mode = b.dataset.mode;
+    ov.querySelectorAll(".wk-choice").forEach((x) => x.disabled = true);
+    const msg = ov.querySelector("#wkMsg"); msg.className = "msg"; msg.textContent = "Ouverture de la version locale…";
+    const r = await window.olympus.pegasusWireWork(s.key, v.id, mode);
+    if (r.ok) {
+      msg.className = "msg ok";
+      msg.textContent = mode === "auto"
+        ? "Version locale ouverte + session Claude Code lancée avec les instructions du wireframe."
+        : "Version locale ouverte + session Claude Code prête.";
+      setTimeout(close, 2000);
+    } else {
+      msg.className = "msg err"; msg.textContent = r.error || "Échec.";
+      ov.querySelectorAll(".wk-choice").forEach((x) => x.disabled = false);
+    }
   });
 }
 

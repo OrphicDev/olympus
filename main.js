@@ -1436,30 +1436,50 @@ function pegBuildBrief(arbo, mb, siteLabel) {
   if (artFooter) md += `### Footer\n${(artFooter.sections || []).map((sc) => `- ${sc.titre}${sc.cible ? ` → ${nameOf(sc.cible)}` : ""}`).join("\n") || "- (vide)"}\n\n`;
   return md;
 }
-ipcMain.handle("pegasus:wirePush", async (_e, key, id) => {
+// « Travailler sur le site depuis ce wireframe » : ouvre la version locale (copie si
+// besoin + lance le local) et une session Claude Code. mode "auto" = génère le brief
+// depuis la version ciblée + moodboard et lance le prompt de construction ; mode
+// "manual" = session vierge, l'humain construit. Ne touche PAS au site en ligne.
+ipcMain.handle("pegasus:wireWork", async (_e, key, id, mode) => {
   try {
     const sites = await pegSites(); const s = sites[key];
     if (!s) throw new Error("Site inconnu.");
-    const dir = await pegSiteDir(key);
-    const wdir = join(dir, "wireframes");
-    const vf = join(wdir, String(id).replace(/[^\w]/g, "") + ".json");
-    if (!existsSync(vf)) throw new Error("Version introuvable.");
-    const arbo = JSON.parse(readFileSync(vf, "utf8"));
-    const mbf = join(dir, "moodboard.json");
-    const mb = existsSync(mbf) ? JSON.parse(readFileSync(mbf, "utf8")) : null;
-    const brief = pegBuildBrief(arbo, mb, s.label || s.host || key);
-    const bdir = join(wdir, "build-" + id);
-    mkdirSync(bdir, { recursive: true });
-    const briefPath = join(bdir, "BRIEF.md");
-    writeFileSync(briefPath, brief);
-    writeFileSync(join(bdir, "wireframe.json"), JSON.stringify(arbo, null, 2));
-    // Marque cette version comme la version à mettre en ligne
-    const man = pegWireManifest(wdir);
-    man.deployed = id;
-    writeFileSync(join(wdir, "manifest.json"), JSON.stringify(man, null, 2));
-    // Ouvre une session Claude Code prête à construire, avec le brief en argument
-    await pegTerminal(`cd '${dir}' && claude 'Construis ce site en local en suivant le brief : ${briefPath.replace(/'/g, "'\\''")}'`);
-    return { ok: true, briefPath, dir: bdir, deployed: id };
+    const slug = pegSlug(s.host || key);
+    const dir = join(PEG_WORKSPACE, slug);
+    // 1. Copie locale du site si elle n'existe pas encore (marqueur : site.json ou wordpress/)
+    let copied = false;
+    if (!existsSync(join(dir, "site.json")) && !existsSync(join(dir, "wordpress"))) {
+      const snap = await pegSnapshot(key);
+      mkdirSync(dir, { recursive: true });
+      pegWriteSnapshot(dir, snap);
+      copied = true;
+    }
+    // 2. Lancer la version locale + ouvrir le navigateur
+    const hasWP = existsSync(join(dir, "wordpress"));
+    const indexFile = existsSync(join(dir, "index.html")) ? "index.html" : existsSync(join(dir, "home.html")) ? "home.html" : null;
+    let launched = "vide";
+    if (hasWP) { await pegTerminal(`cd '${dir}' && npx @wp-now/wp-now start --path wordpress`); launched = "wordpress"; }
+    else if (indexFile) { await shell.openExternal("file://" + join(dir, indexFile)); launched = "static"; }
+    // 3. Session Claude Code
+    if (mode === "auto") {
+      const wdir = join(dir, "wireframes");
+      const vf = join(wdir, String(id).replace(/[^\w]/g, "") + ".json");
+      if (!existsSync(vf)) throw new Error("Version introuvable.");
+      const arbo = JSON.parse(readFileSync(vf, "utf8"));
+      const mbf = join(dir, "moodboard.json");
+      const mb = existsSync(mbf) ? JSON.parse(readFileSync(mbf, "utf8")) : null;
+      const brief = pegBuildBrief(arbo, mb, s.label || s.host || key);
+      const bdir = join(wdir, "build-" + id);
+      mkdirSync(bdir, { recursive: true });
+      const briefPath = join(bdir, "BRIEF.md");
+      writeFileSync(briefPath, brief);
+      writeFileSync(join(bdir, "wireframe.json"), JSON.stringify(arbo, null, 2));
+      const prompt = `Mets à jour ce site en local pour qu'il corresponde au wireframe décrit dans ${briefPath}. Crée ou adapte les pages, sections, boutons et connexions entre pages, en respectant la charte du moodboard indiquée dans le brief.`;
+      await pegTerminal(`cd '${dir}' && claude ${JSON.stringify(prompt)}`);
+      return { ok: true, mode, dir, briefPath, launched, copied };
+    }
+    await pegTerminal(`cd '${dir}' && claude`);
+    return { ok: true, mode, dir, launched, copied };
   } catch (e) { return { ok: false, error: e.message }; }
 });
 ipcMain.handle("pegasus:siteSeo", async (_e, key, limit) => {
