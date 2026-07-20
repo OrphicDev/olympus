@@ -262,6 +262,53 @@ const pgGaHead = (title, s, btnId) => `<div class="ga-head">
 // Tableau clé/valeur simple (statuts, métriques détaillées).
 const pgKV = (rows) => `<div class="ga-kv">${rows.map((r) => `<div class="ga-kv-r"><span>${escapeHtml(r[0])}</span><b>${r[2] ? r[1] : escapeHtml(r[1])}</b></div>`).join("")}</div>`;
 const pgDayLabel = (ds) => { try { return new Date(ds + "T12:00:00").toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" }); } catch { return ds; } };
+const PG_PALETTE = ["var(--accent2)", "#f6b26b", "#e0868f", "#7fb2e8", "#8fd6a6", "#c9a2e8", "#e8c268", "#9aa0a6"];
+// Donut (anneau) + légende — répartition d'un total.
+function pgDonut(rows, opts = {}) {
+  rows = (rows || []).filter((r) => (+r.value || 0) > 0);
+  if (!rows.length) return `<div class="ga-chart-empty">Aucune donnée.</div>`;
+  const total = rows.reduce((n, r) => n + (+r.value || 0), 0) || 1;
+  const C = 2 * Math.PI * 52;
+  let off = 0;
+  const segs = rows.map((row, i) => {
+    const frac = (+row.value || 0) / total;
+    const seg = `<circle cx="70" cy="70" r="52" fill="none" stroke="${PG_PALETTE[i % PG_PALETTE.length]}" stroke-width="18" stroke-dasharray="${(frac * C).toFixed(2)} ${(C - frac * C).toFixed(2)}" stroke-dashoffset="${(-off * C).toFixed(2)}" transform="rotate(-90 70 70)"/>`;
+    off += frac; return seg;
+  }).join("");
+  const legend = rows.map((row, i) => `<div class="ga-leg-r"><span class="ga-leg-d" style="background:${PG_PALETTE[i % PG_PALETTE.length]}"></span><span class="ga-leg-l">${row.icon ? row.icon + " " : ""}${escapeHtml(row.label || "—")}</span><span class="ga-leg-v">${pgFmtN(+row.value || 0)}</span></div>`).join("");
+  return `<div class="ga-donut"><svg viewBox="0 0 140 140" class="ga-donut-svg">${segs}<text x="70" y="66" text-anchor="middle" class="ga-donut-c">${pgFmtN(total)}</text><text x="70" y="83" text-anchor="middle" class="ga-donut-s">${escapeHtml(opts.centerLabel || "total")}</text></svg><div class="ga-leg">${legend}</div></div>`;
+}
+// Entonnoir — barres décroissantes centrées + taux de passage.
+function pgFunnel(stages) {
+  stages = (stages || []).filter(Boolean);
+  const max = Math.max(1, ...stages.map((s) => +s.value || 0));
+  return `<div class="ga-funnel">${stages.map((s, i) => {
+    const v = +s.value || 0, w = Math.max(8, (v / max) * 100);
+    const prev = i > 0 ? (+stages[i - 1].value || 0) : null;
+    const conv = prev != null && prev > 0 ? Math.round(v / prev * 100) : null;
+    return `<div class="ga-fn-row"><div class="ga-fn-bar" style="width:${w.toFixed(0)}%"><b>${pgFmtN(v)}</b></div><div class="ga-fn-lbl">${escapeHtml(s.label)}${conv != null ? ` <span class="ga-fn-conv">${conv} %</span>` : ""}</div></div>`;
+  }).join("")}</div>`;
+}
+// Heatmap heure (0-23) × jour de la semaine (lun-dim).
+function pgHeatmap(cells, opts = {}) {
+  const days = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
+  const grid = {}; let max = 0;
+  (cells || []).forEach((c) => { grid[c.wd + "-" + c.hr] = c.c; if (c.c > max) max = c.c; });
+  if (!max) return `<div class="ga-chart-empty">Pas encore assez de données pour la répartition horaire — elle se remplit au fil du trafic.</div>`;
+  const color = opts.color || "var(--accent2)";
+  const head = `<div class="ga-hm-row"><span class="ga-hm-h"></span>${days.map((d) => `<span class="ga-hm-d">${d}</span>`).join("")}</div>`;
+  let rows = "";
+  for (let hr = 0; hr < 24; hr++) {
+    let cs = "";
+    for (let wd = 0; wd < 7; wd++) {
+      const c = grid[wd + "-" + hr] || 0;
+      const op = c ? (0.14 + 0.86 * (c / max)).toFixed(2) : "1";
+      cs += `<span class="ga-hm-c" title="${days[wd]} ${String(hr).padStart(2, "0")}h — ${c} visite(s)" style="background:${c ? color : "var(--card2)"};opacity:${op}"></span>`;
+    }
+    rows += `<div class="ga-hm-row"><span class="ga-hm-h">${hr % 6 === 0 ? String(hr).padStart(2, "0") + "h" : ""}</span>${cs}</div>`;
+  }
+  return `<div class="ga-hm">${head}${rows}</div>`;
+}
 
 // Tendance entre le 1er et le dernier point d'une série (goodDown = une baisse est bonne)
 function pgTrend(vals, goodDown) {
@@ -2885,12 +2932,20 @@ async function pgAudienceRender(s) {
         ${pgScore("Part mobile", mobilePct + " %", "", (mobile?.value || 0) + " visite(s)")}
       </div>`;
       html += pgPanel("Visites par jour", pgAreaChart((d.byDay || []).map((x) => ({ label: pgDayLabel(x.date), value: x.hits }))));
+      // Entonnoir de visite + donut de provenance
+      const contact = (d.pages || []).find((p) => /contact|devis|quote|rendez|reservation|booking|estimate|contatti/i.test(p.label || ""));
+      const funnel = [{ label: "Visites", value: d.total }, { label: "Visiteurs uniques", value: d.uniques }];
+      if (contact) funnel.push({ label: `Ont vu « ${contact.label} »`, value: contact.value });
       html += `<div class="ga-breaks">`;
-      if (d.sources?.length) html += pgPanel("Provenance", pgBreak(d.sources.map((x) => ({ label: x.label, value: x.value })), { total: d.total }));
+      html += pgPanel("Entonnoir de visite", pgFunnel(funnel));
+      if (d.sources?.length) html += pgPanel("Provenance", pgDonut(d.sources.map((x) => ({ label: x.label, value: x.value })), { centerLabel: "visites" }));
+      html += `</div>`;
+      html += `<div class="ga-breaks">`;
       if (d.pages?.length) html += pgPanel("Pages les plus vues", pgBreak(d.pages.map((x) => ({ label: x.label, value: x.value })), { color: "var(--ok)" }));
       if (d.countries?.length) html += pgPanel("Pays", pgBreak(d.countries.map((x) => ({ label: x.label, value: x.value, icon: pgFlag(x.label) })), { total: d.total, color: "#7fb2e8" }));
       if (d.devices?.length) html += pgPanel("Appareils", pgBreak(d.devices.map((x) => ({ label: x.label === "mobile" ? "Mobile" : "Ordinateur", value: x.value, icon: x.label === "mobile" ? "📱" : "💻" })), { total: d.total, color: "#c9a2e8" }));
       html += `</div>`;
+      html += pgPanel("Répartition horaire des visites", pgHeatmap(d.heatmap || []), "heure locale du serveur");
     }
   }
   html += `<div class="ga-subhead">Mots-clés Google <span>· Search Console — optionnel</span></div><div id="audGoogle"><div class="ga-note">…</div></div>`;
