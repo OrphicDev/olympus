@@ -52,6 +52,9 @@ contextBridge.exposeInMainWorld("olympus", {
   // Contrôle par Claude Code (MCP)
   claudeStatus: () => ipcRenderer.invoke("claude:status"),
   claudeInstall: () => ipcRenderer.invoke("claude:install"),
+  // Medusa (MCP Pegasus)
+  medusaStatus: () => ipcRenderer.invoke("medusa:status"),
+  medusaInstall: () => ipcRenderer.invoke("medusa:install"),
   // Pegasus — clients connectés
   pegasusClients: () => ipcRenderer.invoke("pegasus:clients"),
   // Pegasus — le parc + la bibliothèque Orphic

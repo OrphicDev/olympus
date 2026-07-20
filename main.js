@@ -907,6 +907,54 @@ ipcMain.handle("crm:contacts", async () => {
 });
 
 // ══════════ CONTRÔLE PAR CLAUDE CODE (serveur MCP one-clic) ══════════
+// ══════════ MEDUSA — MCP de contrôle de Pegasus, installé avec Olympus ══════════
+// À chaque lancement : copie du serveur (auto-update) + enregistrement dans
+// Claude Code s'il ne l'est pas déjà. Silencieux — l'état est consultable aux Réglages.
+const medusaDest = () => join(homedir(), ".olympus", "medusa-mcp.mjs");
+let medusaState = { file: false, registered: false, error: null };
+// Enregistre Medusa dans ~/.claude.json (portée user) — ce que fait `claude mcp add -s user`,
+// mais sans dépendre de la CLI (absente du PATH quand Claude Code est utilisé en app desktop).
+function medusaRegisterDirect() {
+  const cfgPath = join(homedir(), ".claude.json");
+  let raw = null;
+  try { raw = readFileSync(cfgPath, "utf8"); } catch {}
+  let cfg;
+  try { cfg = raw ? JSON.parse(raw) : {}; }
+  catch (e) { throw new Error("~/.claude.json illisible — enregistrement annulé (" + e.message + ")"); }
+  const want = { command: "node", args: [medusaDest()] };
+  const cur = cfg.mcpServers && cfg.mcpServers.medusa;
+  if (cur && cur.command === want.command && Array.isArray(cur.args) && cur.args[0] === want.args[0]) return; // déjà enregistré
+  if (raw) { try { writeFileSync(cfgPath + ".medusa-bak", raw); } catch {} } // filet avant toute écriture
+  cfg.mcpServers = { ...(cfg.mcpServers || {}), medusa: want };
+  writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+}
+async function medusaEnsure() {
+  try {
+    mkdirSync(join(homedir(), ".olympus"), { recursive: true });
+    writeFileSync(medusaDest(), readFileSync(join(__dirname, "medusa-mcp", "server.mjs"), "utf8"));
+    medusaState.file = true;
+  } catch (e) { medusaState.error = "Écriture impossible : " + e.message; return medusaState; }
+  if (await has("claude")) {
+    // Voie CLI si disponible
+    try { await shRun("claude mcp get medusa"); medusaState.registered = true; }
+    catch {
+      try { await shRun(`claude mcp add -s user medusa -- node '${medusaDest()}'`); medusaState.registered = true; }
+      catch (e) { medusaState.error = "Enregistrement échoué : " + e.message; }
+    }
+  } else {
+    // App desktop : écriture directe de la config user
+    try { medusaRegisterDirect(); medusaState.registered = true; }
+    catch (e) { medusaState.error = e.message; }
+  }
+  if (medusaState.registered) medusaState.error = null;
+  return medusaState;
+}
+ipcMain.handle("medusa:status", () => ({ ...medusaState, installed: medusaState.file && medusaState.registered }));
+ipcMain.handle("medusa:install", async () => {
+  const st = await medusaEnsure();
+  return { ok: st.file && st.registered, ...st };
+});
+
 function mcpDest() { return join(homedir(), ".olympus", "mcp-server.mjs"); }
 ipcMain.handle("claude:status", () => ({ installed: existsSync(mcpDest()) }));
 ipcMain.handle("claude:install", async () => {
@@ -1140,6 +1188,7 @@ ipcMain.handle("chronos:upload", async (_e, folder) => {
 app.whenReady().then(() => {
   if (existsSync(KEY_FILE)) pegEnsureWorkspace(); // ~/Pegasus/ dès que Pegasus est installé
   createWindow();
+  medusaEnsure(); // Medusa (MCP Pegasus pour Claude) s'installe/se met à jour avec Olympus
 });
 app.on("window-all-closed", () => app.quit());
 app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });

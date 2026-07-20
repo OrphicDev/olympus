@@ -23,7 +23,8 @@
       "preload.js",
       "app-config.json",
       "renderer/**",
-      "olympus-mcp/**"
+      "olympus-mcp/**",
+      "medusa-mcp/**"
     ],
     "mac": {
       "category": "public.app-category.developer-tools",

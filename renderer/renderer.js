@@ -2857,6 +2857,25 @@ $("claudeInstallBtn").onclick = async () => {
   refreshClaude();
 };
 
+// ══════════ MEDUSA (MCP Pegasus — installé automatiquement avec Olympus) ══════════
+async function refreshMedusa() {
+  const s = await window.olympus.medusaStatus();
+  const st = $("medusaSt"), meta = $("medusaMeta");
+  if (!st) return;
+  if (s.installed) { st.className = "st ok"; st.textContent = "✓"; meta.textContent = "installé et enregistré dans Claude Code — outils medusa_* disponibles"; }
+  else { st.className = "st miss"; st.textContent = "!"; meta.textContent = s.error || "installation en cours…"; }
+}
+$("medusaRetryBtn").onclick = async () => {
+  const btn = $("medusaRetryBtn"), msg = $("medusaMsg");
+  btn.disabled = true; msg.className = "msg"; msg.textContent = "Installation…";
+  const r = await window.olympus.medusaInstall();
+  btn.disabled = false;
+  if (r.ok) { msg.className = "msg ok"; msg.textContent = "✅ Medusa installé. Redémarre Claude Code, puis demande par ex. « liste le parc Pegasus »."; }
+  else { msg.className = "msg err"; msg.textContent = r.error || "Échec."; }
+  refreshMedusa();
+};
+setTimeout(refreshMedusa, 2500); // laisse l'installation auto du démarrage se faire
+
 // ══════════ AUTH ══════════
 let pendingUser = null;
 
