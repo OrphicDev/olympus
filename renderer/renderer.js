@@ -769,15 +769,16 @@ async function pgArboRender(s) {
   };
   box.querySelector("#abSaveVer").onclick = async (e) => {
     const btn = e.currentTarget; btn.disabled = true;
-    const cur = pgWireCache[s.key] && pgWireCache[s.key].versions ? pgWireCache[s.key].versions.length : 0;
-    const first = cur === 0;
-    const label = "Version " + (cur + 1);
-    const r = await window.olympus.pegasusWireSave(s.key, pgArboCache[s.key], label, first);
+    // Numérote les brouillons de wireframe (« Version N »), indépendamment du socle « Site en ligne ».
+    const existing = (pgWireCache[s.key] && pgWireCache[s.key].versions) || [];
+    const n = existing.filter((v) => /^Version \d+$/.test(v.label || "")).length + 1;
+    const label = "Version " + n;
+    const r = await window.olympus.pegasusWireSave(s.key, pgArboCache[s.key], label, false);
     delete pgWireCache[s.key];
     await pgWireRenderCol(s);
     btn.disabled = false;
     const msg = $("pgWorkMsg");
-    if (r.ok && msg) { msg.className = "msg ok"; msg.textContent = label + " enregistrée" + (first ? " (marquée comme version en ligne)" : "") + "."; }
+    if (r.ok && msg) { msg.className = "msg ok"; msg.textContent = label + " enregistrée."; }
     if (!r.ok) alert("Échec de l'enregistrement : " + (r.error || ""));
   };
   box.querySelector("#abRescan").onclick = async (e) => {
@@ -932,9 +933,19 @@ async function pgArboRender(s) {
 // Point 3 : la dernière version est en haut. Point 4 : la version « en ligne »
 // (celle du site réel, pas forcément la dernière) est marquée. Point 5 : « Pousser ».
 const pgWireCache = {};
+let pgWireBaselining = false;
 async function pgWireRenderCol(s) {
   const box = $("abVersions"); if (!box) return;
-  const r = await window.olympus.pegasusWireList(s.key);
+  let r = await window.olympus.pegasusWireList(s.key);
+  // La version actuelle du site est TOUJOURS présente dans la colonne : si aucune
+  // version n'existe encore, on fige l'état scanné comme socle « Site en ligne »
+  // (marqué en ligne). Il reste ensuite en permanence et n'est pas supprimable.
+  if (r.ok && (!r.versions || r.versions.length === 0) && pgArboCache[s.key] && !pgWireBaselining) {
+    pgWireBaselining = true;
+    await window.olympus.pegasusWireSave(s.key, pgArboCache[s.key], "Site en ligne", true);
+    pgWireBaselining = false;
+    r = await window.olympus.pegasusWireList(s.key);
+  }
   const man = pgWireCache[s.key] = r.ok ? { versions: r.versions || [], deployed: r.deployed || null } : { versions: [], deployed: null };
   const vs = [...man.versions].sort((a, b) => (a.ts < b.ts ? 1 : -1)); // plus récent en haut
   const fmt = (ts) => { try { return new Date(ts).toLocaleString("fr-FR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }); } catch { return ts; } };
@@ -951,7 +962,7 @@ async function pgWireRenderCol(s) {
         <div class="abv-acts">
           <button class="abv-b" data-act="load" title="Charger cette version dans l'éditeur">Charger</button>
           <button class="abv-b primary" data-act="push" title="Construire cette version en local (pages + boutons, d'après le moodboard)">Pousser</button>
-          <button class="abv-b" data-act="del" title="Supprimer">✕</button>
+          ${man.deployed === v.id ? '<button class="abv-b" data-act="del" disabled title="La version en ligne ne peut pas être supprimée" style="opacity:.35;cursor:default;">✕</button>' : '<button class="abv-b" data-act="del" title="Supprimer">✕</button>'}
         </div>
       </div>`).join("") : '<div class="abv-empty">Aucune version. Clique « Enregistrer une version » pour figer l\'état actuel du wireframe.</div>'}`;
 
@@ -974,7 +985,8 @@ async function pgWireRenderCol(s) {
       if (pr.ok) { if (msg) { msg.className = "msg ok"; msg.textContent = "Brief généré (" + pr.briefPath + ") — session Claude Code ouverte pour construire la version."; } }
       else alert("Échec du push : " + (pr.error || ""));
     };
-    el.querySelector('[data-act="del"]').onclick = async () => {
+    const delBtn = el.querySelector('[data-act="del"]');
+    if (delBtn && !delBtn.disabled) delBtn.onclick = async () => {
       if (!confirm("Supprimer cette version ?")) return;
       await window.olympus.pegasusWireDelete(s.key, id);
       delete pgWireCache[s.key]; await pgWireRenderCol(s);
