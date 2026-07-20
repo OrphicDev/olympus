@@ -124,6 +124,11 @@ contextBridge.exposeInMainWorld("olympus", {
   pegasusPushInfo: (key) => ipcRenderer.invoke("pegasus:pushInfo", key),
   pegasusPush: (key) => ipcRenderer.invoke("pegasus:push", key),
   pegasusWorkOn: (key, prompt) => ipcRenderer.invoke("pegasus:workOn", key, prompt),
+  // Chronos — calendrier iCloud (CalDAV)
+  appleStatus: () => ipcRenderer.invoke("apple:status"),
+  appleConnect: (email, appPassword) => ipcRenderer.invoke("apple:connect", email, appPassword),
+  appleSetSync: (url) => ipcRenderer.invoke("apple:setSync", url),
+  appleDisconnect: () => ipcRenderer.invoke("apple:disconnect"),
   // Hermès — WhatsApp (Baileys)
   waStatus: () => ipcRenderer.invoke("wa:status"),
   waConnect: () => ipcRenderer.invoke("wa:connect"),

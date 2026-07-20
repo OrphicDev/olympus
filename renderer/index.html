@@ -2354,6 +2354,19 @@
             <div class="msg" id="gmMsg"></div>
           </div>
           <div class="conn-row">
+            <div class="conn-ic">📅</div>
+            <div style="flex:1"><div class="nm">Calendrier Apple (iCloud) <span class="conn-dot off" id="connAppleDot"></span></div><div class="meta" id="connAppleStatus">non connecté</div></div>
+            <button class="btn sec" id="connAppleBtn">Connecter</button>
+          </div>
+          <div class="code-box" id="appleForm" style="display:none;max-width:480px;">
+            <p class="desc" style="margin-bottom:12px;">Chronos se synchronise (deux sens) avec ton iCloud via un <b>mot de passe d'application</b> Apple. <span class="link" data-ext="https://account.apple.com/account/manage">Générer un mot de passe →</span> (Connexion et sécurité → Mots de passe d'app).</p>
+            <div class="auth-field"><label>Identifiant Apple (email)</label><input class="auth-input" id="apEmail" type="email" placeholder="toi@icloud.com" autocomplete="off"></div>
+            <div class="auth-field"><label>Mot de passe d'application</label><input class="auth-input" id="apPass" type="password" placeholder="xxxx-xxxx-xxxx-xxxx" autocomplete="off"></div>
+            <div class="ev-actions"><button class="btn" id="apConnectBtn">Valider</button><button class="btn sec" id="apDisconnect" style="display:none;margin-left:auto;">Déconnecter</button></div>
+            <div class="msg" id="apMsg"></div>
+            <div id="apCals" style="margin-top:12px;"></div>
+          </div>
+          <div class="conn-row">
             <div class="conn-ic">🗂️</div>
             <div style="flex:1"><div class="nm">Google Drive <span class="conn-dot off"></span></div><div class="meta">bientôt — OAuth (Atlas)</div></div>
             <button class="btn sec" disabled>Connecter</button>

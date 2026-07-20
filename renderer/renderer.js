@@ -4772,7 +4772,36 @@ async function refreshConnections() {
   const dot = $("connGmailDot"), status = $("connGmailStatus"), btn = $("connGmailBtn"), dc = $("gmDisconnect");
   if (st.connected) { dot.className = "conn-dot on"; status.textContent = "connecté · " + st.email; btn.textContent = "Gérer"; if (dc) dc.style.display = ""; }
   else { dot.className = "conn-dot off"; status.textContent = "non connecté"; btn.textContent = "Connecter"; if (dc) dc.style.display = "none"; }
+  // Calendrier Apple (iCloud)
+  const ast = await window.olympus.appleStatus();
+  const adot = $("connAppleDot"), ast2 = $("connAppleStatus"), abtn = $("connAppleBtn"), adc = $("apDisconnect");
+  if (adot) {
+    if (ast.connected) { adot.className = "conn-dot on"; ast2.textContent = "connecté · " + ast.email + (ast.calendars?.length ? ` · ${ast.calendars.length} calendrier(s)` : ""); abtn.textContent = "Gérer"; if (adc) adc.style.display = ""; renderAppleCals(ast); }
+    else { adot.className = "conn-dot off"; ast2.textContent = "non connecté"; abtn.textContent = "Connecter"; if (adc) adc.style.display = "none"; }
+  }
 }
+function renderAppleCals(ast) {
+  const box = $("apCals"); if (!box) return;
+  if (!ast.connected || !(ast.calendars && ast.calendars.length)) { box.innerHTML = ""; return; }
+  box.innerHTML = `<div class="mq-label">Calendrier où Chronos écrit les nouveaux événements</div>
+    <select class="mood-in" id="apSyncSel">${ast.calendars.map((c) => `<option value="${escapeHtml(c.url)}"${ast.sync === c.url ? " selected" : ""}>${escapeHtml(c.name)}</option>`).join("")}</select>
+    <div class="desc" style="margin-top:8px;">Calendriers lus dans Chronos : ${ast.calendars.map((c) => escapeHtml(c.name)).join(" · ")}</div>`;
+  $("apSyncSel").onchange = () => window.olympus.appleSetSync($("apSyncSel").value);
+}
+$("connAppleBtn").onclick = async () => {
+  const f = $("appleForm"); const show = f.style.display === "none"; f.style.display = show ? "" : "none";
+  if (show) { const ast = await window.olympus.appleStatus(); if (ast.email) $("apEmail").value = ast.email; renderAppleCals(ast); }
+};
+$("apConnectBtn").onclick = async () => {
+  const email = $("apEmail").value.trim(), pass = $("apPass").value.trim(), msg = $("apMsg"), btn = $("apConnectBtn");
+  if (!email || !pass) { msg.className = "msg err"; msg.textContent = "Identifiant Apple et mot de passe d'application requis."; return; }
+  btn.disabled = true; msg.className = "msg"; msg.textContent = "Connexion à iCloud… (quelques secondes)";
+  const r = await window.olympus.appleConnect(email, pass);
+  btn.disabled = false;
+  if (r.ok) { $("apPass").value = ""; msg.className = "msg ok"; msg.textContent = `✅ iCloud connecté — ${r.calendars.length} calendrier(s) trouvé(s).`; refreshConnections(); }
+  else { msg.className = "msg err"; msg.textContent = r.error; }
+};
+$("apDisconnect").onclick = async () => { await window.olympus.appleDisconnect(); $("apCals").innerHTML = ""; refreshConnections(); };
 $("connGmailBtn").onclick = async () => {
   const f = $("gmailForm"); const show = f.style.display === "none"; f.style.display = show ? "" : "none";
   if (show) { const st = await window.olympus.irisStatus(); if (st.email) $("gmEmail").value = st.email; }

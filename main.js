@@ -872,6 +872,49 @@ ipcMain.handle("iris:connect", async (_e, email, appPassword) => {
 
 ipcMain.handle("iris:disconnect", () => { const s = loadSettings(); delete s.gmailEmail; saveSettings(s); return { ok: true }; });
 
+// ══════════ CHRONOS — calendrier iCloud (CalDAV via tsdav, deux sens) ══════════
+let appleClient = null;
+function appleKeychainGet(a) { return new Promise((res) => execFile("security", ["find-generic-password", "-a", a, "-s", "OlympusApple", "-w"], (e, o) => res(e ? null : String(o).trim()))); }
+function appleKeychainSet(a, p) { return new Promise((res) => execFile("security", ["add-generic-password", "-U", "-a", a, "-s", "OlympusApple", "-w", p], () => res())); }
+async function appleMakeClient(email, password) {
+  const { DAVClient } = await import("tsdav"); // ESM → import() dynamique
+  const client = new DAVClient({ serverUrl: "https://caldav.icloud.com", credentials: { username: email, password }, authMethod: "Basic", defaultAccountType: "caldav" });
+  await client.login();
+  return client;
+}
+async function appleGetClient() {
+  if (appleClient) return appleClient;
+  const email = loadSettings().appleEmail; if (!email) return null;
+  const pw = await appleKeychainGet(email); if (!pw) return null;
+  try { appleClient = await appleMakeClient(email, pw); return appleClient; } catch { return null; }
+}
+function appleName(dn) { return typeof dn === "string" ? dn : (dn && (dn._cdata || dn["#text"] || dn.value)) || "Calendrier"; }
+function appleCalsLight(cals) {
+  return (cals || [])
+    .filter((c) => c.url && (!c.components || c.components.includes("VEVENT")))
+    .map((c) => ({ url: c.url, name: appleName(c.displayName), color: c.calendarColor || null }));
+}
+ipcMain.handle("apple:status", async () => {
+  const s = loadSettings(); const email = s.appleEmail || null;
+  return { ok: true, connected: !!email && !!(await appleKeychainGet(email)), email, calendars: s.appleCalendars || [], sync: s.appleSync || null };
+});
+ipcMain.handle("apple:connect", async (_e, email, appPassword) => {
+  email = String(email || "").trim(); appPassword = String(appPassword || "").replace(/\s+/g, "");
+  if (!email || !appPassword) return { ok: false, error: "Identifiant Apple et mot de passe d'application requis." };
+  let client;
+  try { client = await appleMakeClient(email, appPassword); }
+  catch (e) { return { ok: false, error: /401|403|unauthor|credential|principal/i.test(e.message || "") ? "Identifiant Apple ou mot de passe d'application refusé par iCloud. Vérifie l'email et le mot de passe d'application (pas ton mot de passe habituel)." : ("Connexion iCloud échouée : " + String(e.message).slice(0, 140)) }; }
+  let cals;
+  try { cals = appleCalsLight(await client.fetchCalendars()); }
+  catch (e) { return { ok: false, error: "Connecté, mais lecture des calendriers impossible : " + String(e.message).slice(0, 140) }; }
+  const s = loadSettings(); s.appleEmail = email; s.appleCalendars = cals; if (!s.appleSync && cals[0]) s.appleSync = cals[0].url; saveSettings(s);
+  await appleKeychainSet(email, appPassword);
+  appleClient = client;
+  return { ok: true, calendars: cals };
+});
+ipcMain.handle("apple:setSync", (_e, url) => { const s = loadSettings(); s.appleSync = url; saveSettings(s); return { ok: true }; });
+ipcMain.handle("apple:disconnect", () => { const s = loadSettings(); delete s.appleEmail; delete s.appleCalendars; delete s.appleSync; saveSettings(s); appleClient = null; return { ok: true }; });
+
 // Libellés Gmail via IMAP (un libellé = une boîte IMAP) — synchro réelle dans les deux sens.
 async function gmailImap() {
   const email = loadSettings().gmailEmail; if (!email) return null;
