@@ -1297,6 +1297,58 @@ async function pgPrjRenderCol(s) {
     };
   });
 }
+// Prompt de la conversation « micro-modifications » : contexte du site + la version
+// de référence choisie (en ligne vs en cours de modification).
+function pgMicroPrompt(s, which, draftLabel) {
+  const ref = which === "actuelle"
+    ? "la VERSION ACTUELLE DU SITE (l'état réellement en ligne) : appuie-toi sur site.json, content.json, home.html (snapshot du site réel) et le wireframe déployé (wireframes/ → la version marquée deployed dans manifest.json)."
+    : `la VERSION EN COURS DE MODIFICATION du wireframe : la dernière version de travail « ${draftLabel || ""} » dans wireframes/ (la plus récente non déployée du manifest.json), et le moodboard de travail.`;
+  return [
+    `Micro-modifications sur le site « ${s.label} ». Le projet est ouvert en local dans ce dossier.`,
+    `Référence de travail : ${ref}`,
+    ``,
+    `Lis les fichiers du projet pour avoir le contexte (arborescence.json, moodboard.json, pipeline.json, et le site local — wordpress/ ou les .html). Utilise les outils Medusa/Pegasus s'ils sont disponibles.`,
+    `Je vais te donner des retouches ponctuelles à faire. Applique-les EN LOCAL uniquement, une par une, en respectant la charte (moodboard) et la doctrine orphic-web-design (zones protégées : ne touche pas à ce qui est validé au-delà de la retouche demandée).`,
+    `Ne déploie JAMAIS : la mise en ligne passe par le bouton « Pousser en ligne » d'Olympus, sur décision explicite. Dis-moi quelles retouches tu veux que je fasse.`,
+  ].join("\n");
+}
+async function pgMicroStart(s) {
+  const wl = await window.olympus.pegasusWireList(s.key);
+  const versions = (wl.ok && wl.versions) || [];
+  const deployed = wl.ok ? wl.deployed : null;
+  const drafts = versions.filter((v) => v.id !== deployed).sort((a, b) => (a.ts < b.ts ? 1 : -1));
+  const launch = async (which, label) => {
+    const r = await window.olympus.pegasusWorkOn(s.key, pgMicroPrompt(s, which, label));
+    const msg = $("pgWorkMsg");
+    if (r.ok && msg) { msg.className = "msg ok"; msg.textContent = "Projet ouvert en local + conversation Claude lancée — " + (which === "actuelle" ? "version actuelle du site." : "version en cours de modification."); }
+    if (!r.ok) alert("Échec : " + (r.error || ""));
+  };
+  // Pas de version en cours → directement sur la version actuelle du site
+  if (!drafts.length) { if (confirm("Ouvrir le projet en local + une conversation avec Claude (version actuelle du site) ?")) await launch("actuelle"); return; }
+  // Sinon : proposer entre la version en ligne et celle en cours de modification
+  const draft = drafts[0];
+  const ov = document.createElement("div"); ov.className = "modal-overlay show";
+  ov.innerHTML = `
+    <div class="modal-panel" style="width:600px;">
+      <div class="modal-head"><h2>Sur quelle version travailler ?</h2><button class="modal-x" data-x aria-label="Fermer">✕</button></div>
+      <div class="modal-body">
+        <p class="pg-mnote" style="margin-top:0;">Tu as une version en cours de modification. Sur laquelle faire les retouches ? Dans les deux cas, j'ouvre le projet en local et une conversation en contexte.</p>
+        <div class="wk-choices">
+          <button class="wk-choice" data-w="actuelle"><div class="wk-t">🌐 Version actuelle du site</div><div class="wk-d">L'état réellement en ligne aujourd'hui.</div></button>
+          <button class="wk-choice" data-w="modif"><div class="wk-t">✏️ Version en cours de modification</div><div class="wk-d">Ta dernière version de travail : « ${escapeHtml(draft.label || "Sans nom")} ».</div></button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  const close = () => ov.remove();
+  ov.querySelector("[data-x]").onclick = close;
+  ov.onclick = (e) => { if (e.target === ov) close(); };
+  ov.querySelectorAll(".wk-choice").forEach((b) => b.onclick = async () => {
+    ov.querySelectorAll(".wk-choice").forEach((x) => x.disabled = true);
+    await launch(b.dataset.w, draft.label);
+    close();
+  });
+}
 async function pgPipelineRender(s) {
   const box = $("pgPipeline"); if (!box) return;
   if (!pgPlCache[s.key]) {
@@ -1335,21 +1387,15 @@ async function pgPipelineRender(s) {
     return;
   }
 
-  // ── Micro-modifications : pas de stepper, des raccourcis ──
+  // ── Micro-modifications : ouvrir le projet en local + conversation contextualisée ──
   if (pl.mode === "micro") {
     box.innerHTML = `
-      <p class="pg-mnote">Mode <b>micro-modifications</b> : les vues sont préremplies depuis le site réel. Tu retouches ce que tu veux, quand tu veux — le wireframe, la charte, ou directement le code en local.</p>
+      <p class="pg-mnote">Mode <b>micro-modifications</b> : j'ouvre le projet en local et une conversation avec moi, en contexte. Dis-moi les retouches à faire, je les applique en local — le site en ligne n'est pas touché.</p>
       <div class="pl-shortcuts">
-        <button class="pg-bigbtn" data-goto="arbo"><span class="t">Arborescence</span><span class="d">retoucher le wireframe</span></button>
-        <button class="pg-bigbtn" data-goto="mood"><span class="t">Moodboard</span><span class="d">retoucher la charte</span></button>
-        <button class="pg-bigbtn" id="plWorkBtn"><span class="t">Travailler sur le site</span><span class="d">local + session Claude</span></button>
+        <button class="pg-bigbtn" id="plMicroStart"><span class="t">Ouvrir le projet + discuter avec Claude</span><span class="d">local + conversation en contexte</span></button>
       </div>
       <div style="margin-top:18px;"><button class="btn sec" id="plReset">Changer de mode de travail</button></div>`;
-    box.querySelectorAll("[data-goto]").forEach((b) => b.onclick = () => { pgSiteTab = b.dataset.goto; pgRenderSide(); pgRenderDetail(); });
-    $("plWorkBtn").onclick = async () => {
-      if (!confirm("Lancer le site en local + ouvrir une session Claude Code ?")) return;
-      await window.olympus.pegasusWorkOn(s.key);
-    };
+    $("plMicroStart").onclick = () => pgMicroStart(s);
     $("plReset").onclick = () => { if (confirm("Changer de mode ? (les statuts d'étapes seront conservés)")) { pl.mode = null; pgPlSave(s.key); pgPipelineRender(s); } };
     return;
   }

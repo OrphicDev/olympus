@@ -305,7 +305,7 @@ function pegTerminal(cmd) {
   // Ouvre une nouvelle fenêtre Terminal.app qui exécute `cmd` (via le shell de login → PATH complet)
   return new Promise((res) => execFile("/usr/bin/osascript", ["-e", `tell application "Terminal" to do script ${JSON.stringify(cmd)}`], () => res()));
 }
-ipcMain.handle("pegasus:workOn", async (_e, key) => {
+ipcMain.handle("pegasus:workOn", async (_e, key, prompt) => {
   try {
     const sites = await pegSites(); const s = sites[key];
     if (!s) throw new Error("Site inconnu.");
@@ -333,8 +333,9 @@ ipcMain.handle("pegasus:workOn", async (_e, key) => {
     } else {
       mode = "vide";
     }
-    // 3. Ouvrir une session Claude Code dans le dossier du projet
-    await pegTerminal(`cd '${dir}' && claude`);
+    // 3. Ouvrir une session Claude Code dans le dossier du projet (avec un prompt de contexte si fourni)
+    const p = String(prompt || "").slice(0, 4000);
+    await pegTerminal(p ? `cd '${dir}' && claude ${JSON.stringify(p)}` : `cd '${dir}' && claude`);
     return { ok: true, dir, mode, copied };
   } catch (e) { return { ok: false, error: e.message }; }
 });
