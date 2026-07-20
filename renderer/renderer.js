@@ -1427,6 +1427,26 @@ async function pgMicroStart(s) {
     close();
   });
 }
+// Ouvre l'arborescence ou le moodboard EN MODALE (on reste dans le pipeline).
+// Les fonctions de rendu ciblent #pgArbo / #pgMood → on leur fournit ces conteneurs
+// dans la modale (l'onglet pipeline ne les a pas, donc pas de collision).
+function pgOpenViewModal(s, which) {
+  const isArbo = which === "arbo";
+  const ov = document.createElement("div");
+  ov.className = "modal-overlay show pg-viewmodal";
+  ov.innerHTML = `
+    <div class="modal-panel pg-viewpanel">
+      <div class="modal-head"><h2>${isArbo ? "Arborescence" : "Moodboard"}</h2><button class="modal-x" data-x aria-label="Fermer">✕</button></div>
+      <div class="modal-body pg-viewbody">
+        <div id="${isArbo ? "pgArbo" : "pgMood"}"><div class="rb-empty">Chargement…</div></div>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  const close = () => { ov.remove(); pgPipelineRender(s); }; // rafraîchit le pipeline à la fermeture
+  ov.querySelector("[data-x]").onclick = close;
+  ov.onclick = (e) => { if (e.target === ov) close(); };
+  if (isArbo) pgArboRender(s); else pgMoodRender(s);
+}
 async function pgPipelineRender(s) {
   const box = $("pgPipeline"); if (!box) return;
   if (!pgPlCache[s.key]) {
@@ -1597,7 +1617,7 @@ async function pgPipelineRender(s) {
     const st = () => et[e.id] || (et[e.id] = { statut: "afaire" });
     el.querySelectorAll(".pl-acts .pl-b").forEach((b) => b.onclick = async () => {
       const act = b.dataset.act;
-      if (act === "open") { pgSiteTab = e.vue; pgRenderSide(); pgRenderDetail(); return; }
+      if (act === "open") { pgOpenViewModal(s, e.vue); return; }
       if (act === "work") {
         if (!confirm("Créer/lancer le projet en local + ouvrir une session Claude Code ?")) return;
         await window.olympus.pegasusWorkOn(s.key); return;
