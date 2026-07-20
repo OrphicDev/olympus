@@ -451,6 +451,7 @@ const PG_TABS = [
   { id: "pipeline", label: "Pipeline" },
   { id: "arbo", label: "Arborescence" },
   { id: "mood", label: "Moodboard" },
+  { id: "audience", label: "Audience" },
   { id: "seo", label: "SEO" },
   { id: "perf", label: "Performance" },
   { id: "secu", label: "Sécurité" },
@@ -484,6 +485,7 @@ function pgRenderDetail() {
   // Historique des métriques pour les sparklines des tableaux de bord
   if (["seo", "perf", "secu", "rapport"].includes(pgSiteTab) && !pgMetrics[s.key]) pgLoadMetrics(s.key).then((m) => { if (m && pgSel === s.key) pgRenderDetail(); });
   if (pgSiteTab === "rapport") pgRapportRender(s);
+  if (pgSiteTab === "audience") pgAudienceRender(s);
   pgRenderSecPanel(s);
   if (pgSiteTab === "pipeline") pgPipelineRender(s);
   if (pgSiteTab === "arbo") pgArboRender(s);
@@ -504,6 +506,7 @@ function pgTabHTML(tab, s) {
   if (tab === "perf") return pgTabPerf(s);
   if (tab === "secu") return pgTabSecu(s);
   if (tab === "rapport") return `<div id="pgRapport"><div class="rb-empty">Chargement du rapport…</div></div>`;
+  if (tab === "audience") return `<div id="pgAudience"><div class="rb-empty">Chargement de l'audience…</div></div>`;
   return "";
 }
 
@@ -2417,6 +2420,96 @@ async function pgRapportRender(s) {
     if (r.ok && msg) { msg.className = "msg ok"; msg.textContent = "Session Claude ouverte — l'analyse rédigée arrivera dans metrics-analyse.md."; }
     else if (!r.ok) alert("Échec : " + (r.error || ""));
   };
+}
+
+// ══════════ AUDIENCE — Google Analytics 4 + Search Console (visites, provenance) ══════════
+let pgAudiencePeriod = 30;
+const pgAudCache = {};
+const pgFlag = (cc) => { // code pays ISO-2 → drapeau emoji
+  if (!cc || cc.length !== 2 || !/^[A-Za-z]{2}$/.test(cc)) return "🌐";
+  return String.fromCodePoint(...[...cc.toUpperCase()].map((c) => 127397 + c.charCodeAt(0)));
+};
+function pgAudienceConfigForm(s, cfg) {
+  return `
+    <div class="aud-cfg">
+      <p class="pg-mnote">Connecte ce site à ses données Google. Renseigne l'ID de propriété <b>GA4</b> et/ou l'URL de la propriété <b>Search Console</b>. (Le compte de service Google doit avoir été ajouté en lecture sur ces propriétés.)</p>
+      <div class="mq-label">ID de propriété GA4</div>
+      <input class="mood-in" id="audGa4" placeholder="ex : 123456789 (Admin GA4 → Détails de la propriété)" value="${escapeHtml(cfg.ga4Property || "")}">
+      <div class="mq-label" style="margin-top:10px;">Propriété Search Console</div>
+      <input class="mood-in" id="audSc" placeholder="ex : https://${escapeHtml((s.base_url || "").replace(/^https?:\/\//, "").replace(/\/$/, ""))}/  ou  sc-domain:${escapeHtml((s.base_url || "").replace(/^https?:\/\//, "").replace(/\/$/, ""))}" value="${escapeHtml(cfg.scUrl || "")}">
+      <div style="margin-top:14px;display:flex;gap:10px;"><button class="cal-btn primary" id="audSave">Enregistrer la connexion</button></div>
+    </div>`;
+}
+async function pgAudienceRender(s) {
+  const box = $("pgAudience"); if (!box) return;
+  const st = await window.olympus.pegasusAnalyticsStatus();
+  if (!st.sa) {
+    box.innerHTML = `<div class="aud-cfg">
+      <p class="pg-mnote">Pour voir les <b>visites, la provenance et les requêtes Google</b>, Pegasus se connecte à Google Analytics 4 et Search Console via un <b>compte de service</b> (configuré une seule fois pour toute l'agence).</p>
+      <div class="pg-sub">À faire une fois (Sacha)</div>
+      <div class="pg-alert"><span>1</span> Créer un projet Google Cloud, activer <b>Google Analytics Data API</b> et <b>Search Console API</b>.</div>
+      <div class="pg-alert"><span>2</span> Créer un <b>compte de service</b>, générer une clé JSON, la déposer dans <code>~/.pegasus/google-sa.json</code>.</div>
+      <div class="pg-alert"><span>3</span> Dans chaque propriété GA4 et Search Console du client, ajouter l'email du compte de service (<code>…@…iam.gserviceaccount.com</code>) en <b>lecture</b>.</div>
+      <div class="pg-alert"><span>4</span> Revenir ici : chaque site se connectera avec son ID de propriété.</div>
+    </div>`;
+    return;
+  }
+  const cr = await window.olympus.pegasusAnalyticsConfigGet(s.key);
+  const cfg = (cr.ok && cr.config) || {};
+  if (!cfg.ga4Property && !cfg.scUrl) {
+    box.innerHTML = pgAudienceConfigForm(s, cfg);
+    $("audSave").onclick = async () => {
+      await window.olympus.pegasusAnalyticsConfigSet(s.key, { ga4Property: $("audGa4").value.trim(), scUrl: $("audSc").value.trim() });
+      delete pgAudCache[s.key]; pgAudienceRender(s);
+    };
+    return;
+  }
+  const days = pgAudiencePeriod;
+  const cacheKey = s.key + ":" + days;
+  if (!pgAudCache[cacheKey]) {
+    box.innerHTML = `<div class="rb-empty">Récupération des données Google… (visites, sources, requêtes)</div>`;
+    pgAudCache[cacheKey] = await window.olympus.pegasusAnalyticsFetch(s.key, days);
+  }
+  const r = pgAudCache[cacheKey];
+  const head = `<div class="rp-head">
+      <div class="rp-periods">${[[7, "7 j"], [30, "30 j"], [90, "90 j"]].map(([d, l]) => `<button class="rp-per${days === d ? " on" : ""}" data-per="${d}">${l}</button>`).join("")}</div>
+      <button class="btn sec" id="audCfgBtn">⚙ Connexion</button>
+      <button class="btn sec" id="audReload">↻ Actualiser</button>
+    </div>`;
+  if (!r.ok) {
+    box.innerHTML = head + `<div class="rb-empty">Impossible de récupérer les données : ${escapeHtml(r.error || "")}${r.error === "non-configuré" ? "" : "<br>Vérifie l'ID de propriété et que le compte de service a bien accès."}</div>`;
+  } else {
+    const d = r.data;
+    const kpi = (n, l) => `<div class="pg-dcard"><div class="pg-dbig">${n}</div><div class="pg-dlabel">${l}</div></div>`;
+    const fmt = (x) => (x >= 1000 ? (x / 1000).toFixed(1).replace(".0", "") + "k" : String(x));
+    let html = head + `<div class="rp-title">Audience — ${escapeHtml(s.label)} <span>· ${days} derniers jours</span></div>`;
+    if (d.ga4) {
+      html += `<div class="pg-dash">
+        ${kpi(fmt(d.totalSessions || 0), "Visites")}
+        ${kpi(fmt(d.totalUsers || 0), "Visiteurs")}
+        <div class="pg-dcard pg-dwide"><div class="pg-dlabel">Visites par jour</div>${pgSparkline((d.visits || []).map((v) => v.sessions), "var(--accent2)")}</div>
+      </div>`;
+      if (d.sources?.length) html += `<div class="pg-sub">D'où viennent les visiteurs</div>${pgBars(d.sources.map((x) => ({ label: x.label, value: x.value, color: "var(--accent2)" })))}`;
+      if (d.countries?.length) html += `<div class="pg-sub">Pays</div>${pgBars(d.countries.map((x) => ({ label: pgFlag(x.label === "France" ? "FR" : x.label) + " " + x.label, value: x.value, color: "#7fb2e8" })))}`;
+      if (d.pages?.length) html += `<div class="pg-sub">Pages les plus vues</div>${pgBars(d.pages.map((x) => ({ label: x.label, value: x.value, color: "var(--ok)" })))}`;
+    }
+    if (d.sc && d.scTotals) {
+      html += `<div class="pg-dash" style="margin-top:14px;">
+        ${kpi(fmt(d.scTotals.clicks), "Clics Google")}
+        ${kpi(fmt(d.scTotals.impressions), "Impressions")}
+        ${kpi((d.scTotals.ctr * 100).toFixed(1) + "%", "Taux de clic")}
+        ${kpi(d.scTotals.position.toFixed(1), "Position moyenne")}
+      </div>`;
+      if (d.queries?.length) {
+        html += `<div class="pg-sub">Requêtes Google</div><div class="aud-queries">${d.queries.map((q) => `<div class="aud-q"><span class="aud-q-t">${escapeHtml(q.query)}</span><span class="aud-q-n">${q.clicks} clic(s) · ${q.impressions} vues · pos. ${q.position.toFixed(1)}</span></div>`).join("")}</div>`;
+      }
+    }
+    if (!d.ga4 && !d.sc) html += `<div class="rb-empty">Connecté, mais ni GA4 ni Search Console renseignés.</div>`;
+    box.innerHTML = html;
+  }
+  box.querySelectorAll(".rp-per").forEach((b) => b.onclick = () => { pgAudiencePeriod = +b.dataset.per; pgAudienceRender(s); });
+  const cb = $("audCfgBtn"); if (cb) cb.onclick = () => { box.innerHTML = pgAudienceConfigForm(s, cfg); $("audSave").onclick = async () => { await window.olympus.pegasusAnalyticsConfigSet(s.key, { ga4Property: $("audGa4").value.trim(), scUrl: $("audSc").value.trim() }); Object.keys(pgAudCache).forEach((k) => k.startsWith(s.key + ":") && delete pgAudCache[k]); pgAudienceRender(s); }; };
+  const rl = $("audReload"); if (rl) rl.onclick = () => { Object.keys(pgAudCache).forEach((k) => k.startsWith(s.key + ":") && delete pgAudCache[k]); pgAudienceRender(s); };
 }
 
 async function pgRunSeo(key) {

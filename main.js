@@ -4,7 +4,7 @@ const { readFileSync, writeFileSync, mkdirSync, existsSync, chmodSync, readdirSy
 const { join } = require("node:path");
 const { homedir, tmpdir } = require("node:os");
 const { execFile } = require("node:child_process");
-const { randomUUID, privateDecrypt, constants: cryptoConstants } = require("node:crypto");
+const { randomUUID, privateDecrypt, constants: cryptoConstants, createSign } = require("node:crypto");
 const nodemailer = require("nodemailer");
 
 const CFG = JSON.parse(readFileSync(join(__dirname, "app-config.json"), "utf8"));
@@ -1129,6 +1129,87 @@ ipcMain.handle("pegasus:metricsAppend", async (_e, key, kind, point) => {
     if (arr.length > 500) arr.splice(0, arr.length - 500);
     writeFileSync(p, JSON.stringify(m, null, 2));
     return { ok: true, count: arr.length };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
+// ── Audience (Google Analytics 4 + Search Console) via COMPTE DE SERVICE ──
+// La clé de service (JSON) est posée UNE fois dans ~/.pegasus/google-sa.json et son
+// email est ajouté en lecture sur les propriétés GA4/Search Console des clients.
+// Par site : analytics.json { ga4Property, scUrl }.
+const PEG_GOOGLE_SA = join(homedir(), ".pegasus", "google-sa.json");
+function pegGoogleSA() {
+  if (!existsSync(PEG_GOOGLE_SA)) throw new Error("Compte de service Google absent (~/.pegasus/google-sa.json).");
+  const sa = JSON.parse(readFileSync(PEG_GOOGLE_SA, "utf8"));
+  if (!sa.client_email || !sa.private_key) throw new Error("Clé de service Google invalide (client_email / private_key manquants).");
+  return sa;
+}
+const _gb64 = (s) => Buffer.from(s).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const _gTok = {};
+async function pegGoogleToken(scope) {
+  const now = Math.floor(Date.now() / 1000);
+  if (_gTok[scope] && _gTok[scope].exp - 60 > now) return _gTok[scope].token;
+  const sa = pegGoogleSA();
+  const head = _gb64(JSON.stringify({ alg: "RS256", typ: "JWT" }));
+  const claim = _gb64(JSON.stringify({ iss: sa.client_email, scope, aud: "https://oauth2.googleapis.com/token", iat: now, exp: now + 3600 }));
+  const sig = createSign("RSA-SHA256").update(`${head}.${claim}`).sign(sa.private_key).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const r = await fetch("https://oauth2.googleapis.com/token", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion: `${head}.${claim}.${sig}` }) });
+  const j = await r.json();
+  if (!j.access_token) throw new Error("Auth Google refusée : " + (j.error_description || j.error || "vérifie l'accès du compte de service"));
+  _gTok[scope] = { token: j.access_token, exp: now + (j.expires_in || 3600) };
+  return j.access_token;
+}
+async function pegAnalyticsCfg(key) {
+  const p = join(await pegSiteDir(key), "analytics.json");
+  return { path: p, cfg: existsSync(p) ? JSON.parse(readFileSync(p, "utf8")) : {} };
+}
+ipcMain.handle("pegasus:analyticsStatus", () => ({ ok: true, sa: existsSync(PEG_GOOGLE_SA) }));
+ipcMain.handle("pegasus:analyticsConfigGet", async (_e, key) => {
+  try { const { cfg } = await pegAnalyticsCfg(key); return { ok: true, config: cfg }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
+ipcMain.handle("pegasus:analyticsConfigSet", async (_e, key, cfg) => {
+  try { const { path } = await pegAnalyticsCfg(key); writeFileSync(path, JSON.stringify(cfg || {}, null, 2)); return { ok: true }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
+// Récupère l'audience du site : GA4 (visites, sources, pays, pages) + Search Console (requêtes)
+ipcMain.handle("pegasus:analyticsFetch", async (_e, key, days) => {
+  try {
+    const { cfg } = await pegAnalyticsCfg(key);
+    days = Math.max(1, Math.min(365, days || 30));
+    if (!cfg.ga4Property && !cfg.scUrl) return { ok: false, error: "non-configuré" };
+    const out = { ga4: !!cfg.ga4Property, sc: !!cfg.scUrl, days };
+    if (cfg.ga4Property) {
+      const tok = await pegGoogleToken("https://www.googleapis.com/auth/analytics.readonly");
+      const dr = [{ startDate: `${days}daysAgo`, endDate: "today" }];
+      const body = { requests: [
+        { dimensions: [{ name: "date" }], metrics: [{ name: "sessions" }, { name: "totalUsers" }], dateRanges: dr, orderBys: [{ dimension: { dimensionName: "date" } }] },
+        { dimensions: [{ name: "sessionDefaultChannelGroup" }], metrics: [{ name: "sessions" }], dateRanges: dr, orderBys: [{ metric: { metricName: "sessions" }, desc: true }], limit: "8" },
+        { dimensions: [{ name: "country" }], metrics: [{ name: "sessions" }], dateRanges: dr, orderBys: [{ metric: { metricName: "sessions" }, desc: true }], limit: "8" },
+        { dimensions: [{ name: "pagePath" }], metrics: [{ name: "screenPageViews" }], dateRanges: dr, orderBys: [{ metric: { metricName: "screenPageViews" }, desc: true }], limit: "8" },
+      ] };
+      const r = await fetch(`https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(cfg.ga4Property)}:batchRunReports`, { method: "POST", headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const j = await r.json();
+      if (j.error) throw new Error("GA4 : " + (j.error.message || "erreur"));
+      const rows = (i) => (j.reports?.[i]?.rows || []);
+      out.visits = rows(0).map((x) => ({ date: x.dimensionValues[0].value, sessions: +x.metricValues[0].value, users: +x.metricValues[1].value }));
+      out.sources = rows(1).map((x) => ({ label: x.dimensionValues[0].value, value: +x.metricValues[0].value }));
+      out.countries = rows(2).map((x) => ({ label: x.dimensionValues[0].value, value: +x.metricValues[0].value }));
+      out.pages = rows(3).map((x) => ({ label: x.dimensionValues[0].value, value: +x.metricValues[0].value }));
+      out.totalSessions = out.visits.reduce((n, v) => n + v.sessions, 0);
+      out.totalUsers = out.visits.reduce((n, v) => n + v.users, 0);
+    }
+    if (cfg.scUrl) {
+      const tok = await pegGoogleToken("https://www.googleapis.com/auth/webmasters.readonly");
+      const iso = (d) => d.toISOString().slice(0, 10);
+      const q = async (dims) => (await fetch(`https://searchconsole.googleapis.com/webmasters/v3/sites/${encodeURIComponent(cfg.scUrl)}/searchAnalytics/query`, { method: "POST", headers: { Authorization: `Bearer ${tok}`, "Content-Type": "application/json" }, body: JSON.stringify({ startDate: iso(new Date(Date.now() - days * 86400000)), endDate: iso(new Date()), dimensions: dims, rowLimit: 10 }) })).json();
+      const totals = await q([]);
+      if (totals.error) throw new Error("Search Console : " + (totals.error.message || "erreur"));
+      const t = (totals.rows && totals.rows[0]) || {};
+      out.scTotals = { clicks: t.clicks || 0, impressions: t.impressions || 0, ctr: t.ctr || 0, position: t.position || 0 };
+      const qr = await q(["query"]);
+      out.queries = (qr.rows || []).map((x) => ({ query: x.keys[0], clicks: x.clicks, impressions: x.impressions, position: x.position }));
+    }
+    return { ok: true, data: out };
   } catch (e) { return { ok: false, error: e.message }; }
 });
 
