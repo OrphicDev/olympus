@@ -1574,7 +1574,7 @@ function pegBuildBrief(arbo, mb, siteLabel, pipeline) {
 // besoin + lance le local) et une session Claude Code. mode "auto" = génère le brief
 // depuis la version ciblée + moodboard et lance le prompt de construction ; mode
 // "manual" = session vierge, l'humain construit. Ne touche PAS au site en ligne.
-ipcMain.handle("pegasus:wireWork", async (_e, key, id, mode) => {
+ipcMain.handle("pegasus:wireWork", async (_e, key, id, mode, moodId) => {
   try {
     const sites = await pegSites(); const s = sites[key];
     if (!s) throw new Error("Site inconnu.");
@@ -1600,7 +1600,9 @@ ipcMain.handle("pegasus:wireWork", async (_e, key, id, mode) => {
       const vf = join(wdir, String(id).replace(/[^\w]/g, "") + ".json");
       if (!existsSync(vf)) throw new Error("Version introuvable.");
       const arbo = JSON.parse(readFileSync(vf, "utf8"));
-      const mbf = join(dir, "moodboard.json");
+      // Moodboard connecté au pipeline (moodId) sinon le moodboard de travail
+      const mvf = moodId ? join(dir, "moodboards", String(moodId).replace(/[^\w]/g, "") + ".json") : null;
+      const mbf = mvf && existsSync(mvf) ? mvf : join(dir, "moodboard.json");
       const mb = existsSync(mbf) ? JSON.parse(readFileSync(mbf, "utf8")) : null;
       const plf = join(dir, "pipeline.json");
       const pl = existsSync(plf) ? JSON.parse(readFileSync(plf, "utf8")) : null;

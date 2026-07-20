@@ -1098,7 +1098,7 @@ async function pgWireRenderCol(s) {
 // Modale « Travailler sur le site depuis ce wireframe » : ouvre la version locale et,
 // au choix, laisse Claude générer automatiquement les pages/sections/boutons/liens
 // depuis le wireframe ciblé, ou laisse l'utilisateur construire à la main.
-function pgWireWorkModal(s, v) {
+function pgWireWorkModal(s, v, moodId) {
   const ov = document.createElement("div");
   ov.className = "modal-overlay show";
   ov.innerHTML = `
@@ -1127,7 +1127,7 @@ function pgWireWorkModal(s, v) {
     const mode = b.dataset.mode;
     ov.querySelectorAll(".wk-choice").forEach((x) => x.disabled = true);
     const msg = ov.querySelector("#wkMsg"); msg.className = "msg"; msg.textContent = "Ouverture de la version locale…";
-    const r = await window.olympus.pegasusWireWork(s.key, v.id, mode);
+    const r = await window.olympus.pegasusWireWork(s.key, v.id, mode, moodId || null);
     if (r.ok) {
       msg.className = "msg ok";
       msg.textContent = mode === "auto"
@@ -1243,13 +1243,13 @@ function pgPlSave(key) {
   pgPlSaveT = setTimeout(() => window.olympus.pegasusPipelineSave(key, pgPlCache[key]), 400);
 }
 const PL_ETAPES = [
-  { id: "wireframe", titre: "Mise en place du wireframe", vue: "arbo",
+  { id: "wireframe", titre: "Mise en place du wireframe", vue: "arbo", connect: "wire",
     desc: "Structure du site en nodes : pages, sections, connexions. Scanne le site ou pars de zéro, puis enregistre une version.",
     prompt: "On travaille le wireframe du site (arborescence.json : pages, sections, connexions). Regarde l'existant et aide-moi à structurer les pages et les parcours. Quand on décide quelque chose, mets à jour arborescence.json." },
   { id: "maquette", titre: "Maquette — textes & contexte", vue: "arbo",
     desc: "Chaque page du wireframe porte sa maquette : le contexte de la page et le texte de chaque section (bouton 📝 sur les nodes). C'est la matière du site.",
     prompt: "On remplit la maquette : le contexte de chaque page (champ contexte) et le texte de chaque section (champ texte) dans arborescence.json. Propose des textes fidèles au positionnement du site, page par page — je valide ou j'ajuste." },
-  { id: "charte", titre: "Charte graphique", vue: "mood",
+  { id: "charte", titre: "Charte graphique", vue: "mood", connect: "mood",
     desc: "Couleurs, typographies, logo — dans le Moodboard. Pré-remplie si le site existe déjà.",
     prompt: "On définit la charte graphique dans moodboard.json (couleurs, typos, logo, notes). Propose une direction cohérente avec le secteur et l'ambition du site." },
   { id: "niveau", titre: "Niveau du site (1 à 4)", vue: "mood",
@@ -1521,6 +1521,22 @@ async function pgPipelineRender(s) {
   const remplies = PL_ETAPES.filter((e) => ["fait", "ia"].includes(et[e.id]?.statut)).length;
   const passees = PL_ETAPES.filter((e) => et[e.id]?.statut === "passee");
   const stBadge = (st) => `<span class="pl-badge ${st}">${PL_STATUTS[st] || st}</span>`;
+  // Versions disponibles pour connecter un wireframe / un moodboard au pipeline
+  const [wl, ml] = await Promise.all([window.olympus.pegasusWireList(s.key), window.olympus.pegasusMbList(s.key)]);
+  const connOpts = (r, sel) => {
+    const versions = (r.ok && r.versions) || []; const dep = r.ok ? r.deployed : null;
+    const list = versions.slice().sort((a, b) => (a.ts < b.ts ? 1 : -1));
+    return `<option value="">— choisir —</option>` + list.map((v) =>
+      `<option value="${v.id}" ${sel === v.id ? "selected" : ""}>${escapeHtml(v.label || "Sans nom")}${v.id === dep ? " (copie en ligne)" : ""}</option>`).join("");
+  };
+  const connectHTML = (which) => {
+    const r = which === "wire" ? wl : ml;
+    const sel = which === "wire" ? pl.wireId : pl.moodId;
+    return `<div class="pl-connect">
+      <span class="pl-connect-l">${which === "wire" ? "Wireframe connecté" : "Moodboard connecté"}</span>
+      <select class="pl-select" data-connect="${which}">${connOpts(r, sel)}</select>
+    </div>`;
+  };
 
   box.innerHTML = `
     <div class="pl-layout">
@@ -1546,6 +1562,7 @@ async function pgPipelineRender(s) {
         <div class="pl-body">
           <div class="pl-t">${e.titre} ${na ? '<span class="pl-badge na">non applicable · site N1-N2</span>' : stBadge(st)}</div>
           <div class="pl-d">${e.desc}${e.n34 && !niveau ? " <i>(selon le niveau choisi à l'étape 4)</i>" : ""}</div>
+          ${!na && e.connect ? connectHTML(e.connect) : ""}
           ${!na && e.inline === "story" ? `<textarea class="mood-in mood-ta pl-story" placeholder="Ce que tu recherches : l'émotion, le parcours, ce que la scène raconte…">${escapeHtml(et.storytelling?.texte || "")}</textarea>` : ""}
           ${!na && e.inline === "assets" ? `<div class="pl-assets">${(et.assets?.liste || []).map((a, j) => `
             <label class="pl-asset"><input type="checkbox" data-j="${j}" ${a.fourni ? "checked" : ""}><span>${escapeHtml(a.nom)}${a.note ? ` <i>— ${escapeHtml(a.note)}</i>` : ""}</span><button class="mood-del" data-delasset="${j}">✕</button></label>`).join("")}
@@ -1589,10 +1606,12 @@ async function pgPipelineRender(s) {
       return !na && e.id !== "generation" && (et[e.id]?.statut || "afaire") === "afaire";
     });
     if (manquantes.length && !confirm(`Étapes non remplies : ${manquantes.map((e) => e.titre).join(", ")}.\n\nTu peux générer quand même, mais le résultat pourra s'éloigner de tes attentes. Continuer ?`)) return;
-    const wl = await window.olympus.pegasusWireList(s.key);
-    const vs = ((wl.ok && wl.versions) || []).sort((a, b) => (a.ts < b.ts ? 1 : -1));
-    if (!vs.length) { alert("Aucune version de wireframe. Va dans l'onglet Arborescence et enregistre une version d'abord."); return; }
-    pgWireWorkModal(s, vs[0]);
+    const wr = await window.olympus.pegasusWireList(s.key);
+    const vs = ((wr.ok && wr.versions) || []).sort((a, b) => (a.ts < b.ts ? 1 : -1));
+    if (!vs.length) { alert("Aucun wireframe. Ouvre l'arborescence et crée un wireframe d'abord."); return; }
+    // Génère depuis le wireframe CONNECTÉ (sinon le plus récent) + le moodboard connecté
+    const target = (pl.wireId && vs.find((v) => v.id === pl.wireId)) || vs[0];
+    pgWireWorkModal(s, target, pl.moodId || null);
   };
   $("plGen").onclick = gen;
   $("plEndGen").onclick = gen;
@@ -1633,6 +1652,13 @@ async function pgPipelineRender(s) {
       st().statut = st().statut === act ? "afaire" : act;
       pgPlSave(s.key); pgPipelineRender(s);
     });
+    // Connecter un wireframe / un moodboard au pipeline
+    const sel = el.querySelector(".pl-select");
+    if (sel) sel.onchange = () => {
+      if (sel.dataset.connect === "wire") pl.wireId = sel.value || null;
+      else pl.moodId = sel.value || null;
+      pgPlSave(s.key);
+    };
     // Storytelling inline
     const story = el.querySelector(".pl-story");
     if (story) story.oninput = (ev) => { (et.storytelling = et.storytelling || { statut: "afaire" }).texte = ev.target.value; pgPlSave(s.key); };
