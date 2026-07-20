@@ -3784,13 +3784,39 @@ function chipHtml(ev, dayIso) {
   }
   return `<div class="ev-chip${ev.done ? " done" : ""}" data-ev="${ev.id}"><span class="ev-dot" style="background:${catColor(ev.category)}"></span>${t}${escapeHtml(ev.title)}</div>`;
 }
-function dayCell(y, m, day, byDate, todayIso, firstCol, isLast) {
+// Voies (lanes) des événements multi-jours : chaque event garde la MÊME voie sur
+// tous ses jours → les barres s'alignent horizontalement d'une case à l'autre.
+function assignLanes(events) {
+  const spans = events.filter((e) => evEnd(e) !== e.date).sort((a, b) => a.date.localeCompare(b.date) || evEnd(b).localeCompare(evEnd(a)));
+  const laneEnd = [];
+  for (const ev of spans) {
+    let lane = 0;
+    while (lane < laneEnd.length && laneEnd[lane] >= ev.date) lane++;
+    ev._lane = lane;
+    laneEnd[lane] = evEnd(ev);
+  }
+  events.filter((e) => evEnd(e) === e.date).forEach((e) => { e._lane = undefined; });
+  return laneEnd.length;
+}
+function dayCell(y, m, day, byDate, todayIso, firstCol, isLast, nLanes) {
   const dIso = isoD(y, m, day);
   const cls = (dIso === todayIso ? " today" : "") + (dIso === calSelected ? " sel" : "") + (day === 1 ? " mstart" : "") + (isLast ? " mend" : "");
-  const chips = (byDate[dIso] || []).map((ev) => chipHtml(ev, dIso)).join("");
+  const evs = byDate[dIso] || [];
+  // Événements sur une seule journée en haut ; multi-jours réservés en bas, par voie.
+  const singleChips = evs.filter((e) => evEnd(e) === e.date).map((e) => chipHtml(e, dIso)).join("");
+  let spansHtml = "";
+  if (nLanes > 0) {
+    const spans = evs.filter((e) => evEnd(e) !== e.date);
+    let rows = "";
+    for (let L = 0; L < nLanes; L++) {
+      const s = spans.find((e) => (e._lane || 0) === L);
+      rows += s ? chipHtml(s, dIso) : '<div class="ev-span-ph"></div>';
+    }
+    spansHtml = `<div class="cal-spans">${rows}</div>`;
+  }
   const style = firstCol ? ` style="grid-column-start:${firstCol}"` : "";
   const mark = day === 1 ? ` data-mstart="${monthKey(new Date(y, m, 1))}"` : "";
-  return `<div class="cal-cell${cls}" data-date="${dIso}"${style}${mark}><div class="cal-daynum">${day}</div>${chips}</div>`;
+  return `<div class="cal-cell${cls}" data-date="${dIso}"${style}${mark}><div class="cal-daynum">${day}</div>${singleChips}${spansHtml}</div>`;
 }
 // Labels de mois (à droite) + traits glow, placés DANS le calendrier (offsetTop) → scroll natif, aucune désync.
 function positionCalMonths() {
@@ -3814,6 +3840,7 @@ async function paintCal() {
   const lastEnd = new Date(last.getFullYear(), last.getMonth() + 1, 0);
   const r = await window.olympus.chronosList(isoD(first.getFullYear(), first.getMonth(), 1), isoD(lastEnd.getFullYear(), lastEnd.getMonth(), lastEnd.getDate()));
   chronosEvents = r.ok ? r.events : [];
+  const nLanes = assignLanes(chronosEvents);
   const byDate = groupByDate(chronosEvents);
   const todayIso = todayIsoNow();
   let cells = "";
@@ -3821,7 +3848,7 @@ async function paintCal() {
     const y = mo.getFullYear(), m = mo.getMonth(), days = new Date(y, m + 1, 0).getDate();
     for (let day = 1; day <= days; day++) {
       const firstCol = (mi === 0 && day === 1) ? ((new Date(y, m, 1).getDay() + 6) % 7) + 1 : 0;
-      cells += dayCell(y, m, day, byDate, todayIso, firstCol, day === days);
+      cells += dayCell(y, m, day, byDate, todayIso, firstCol, day === days, nLanes);
     }
   });
   $("calScroll").innerHTML = `<div class="cal-flow"><div class="cal-days" id="calDays">${cells}</div><div class="cal-labels" id="calLabels"></div></div>`;
