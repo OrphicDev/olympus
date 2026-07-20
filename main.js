@@ -1533,7 +1533,10 @@ function pegBuildBrief(arbo, mb, siteLabel, pipeline) {
     md += `### ${p.titre}${p.home ? " (accueil)" : ""}${lvl(p) != null ? ` — niveau ${lvl(p)}` : ""}\n`;
     if (p.contexte) md += `> ${String(p.contexte).replace(/\n/g, "\n> ")}\n`;
     const secs = p.sections || [];
-    if (secs.length) md += secs.map((sc) => `- Section « ${sc.titre} »${sc.cible ? ` — bouton → ${nameOf(sc.cible)}` : ""}${sc.texte ? `\n  > ${String(sc.texte).replace(/\n/g, "\n  > ")}` : ""}${sc.animation ? `\n  > [animations] ${String(sc.animation).replace(/\n/g, "\n  > ")}` : ""}`).join("\n") + "\n";
+    if (secs.length) md += secs.map((sc) => {
+      const anims = (sc.anims || []).length ? sc.anims.join(" · ") : sc.animation;
+      return `- Section « ${sc.titre} »${sc.cible ? ` — bouton → ${nameOf(sc.cible)}` : ""}${sc.texte ? `\n  > ${String(sc.texte).replace(/\n/g, "\n  > ")}` : ""}${anims ? `\n  > [animations] ${String(anims).replace(/\n/g, "\n  > ")}` : ""}`;
+    }).join("\n") + "\n";
     else md += `- (aucune section détaillée)\n`;
     for (const lk of p.links || []) md += `- Lien → ${nameOf(lk.to)}\n`;
     md += `\n`;

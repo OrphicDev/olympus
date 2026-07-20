@@ -574,14 +574,15 @@ function pgAbMerge(cur, scanned) {
       if (Number.isFinite(old.level)) np.level = old.level; // niveau fixé à la main conservé
       if (old.links && old.links.length) np.links = old.links; // liens node→node manuels conservés
       if (old.titre && old.titre !== np.titre && !old.wp_id) np.titre = old.titre;
-      // Maquette conservée : contexte de page + textes/animations de sections (matchés par titre)
+      // Maquette conservée : contexte de page + contenus/animations de sections (matchés par titre)
       if (old.contexte) np.contexte = old.contexte;
-      const oldTxt = new Map((old.sections || []).filter((x) => x.texte || x.animation).map((x) => [x.titre, x]));
+      const oldTxt = new Map((old.sections || []).filter((x) => x.texte || x.animation || (x.anims || []).length).map((x) => [x.titre, x]));
       for (const sc of np.sections) {
         const o = oldTxt.get(sc.titre);
         if (!o) continue;
         if (!sc.texte && o.texte) sc.texte = o.texte;
         if (!sc.animation && o.animation) sc.animation = o.animation;
+        if (!(sc.anims || []).length && (o.anims || []).length) sc.anims = o.anims;
       }
     }
     for (const sc of np.sections) sc.cible = idMap.get(sc.cible) || "";
@@ -684,7 +685,7 @@ async function pgArboRender(s) {
             <div class="ab-phead">
               <div class="ab-title" data-f="titre" title="Double-clic pour renommer">${escapeHtml(p.titre)}</div>
               ${p.artefact ? '<span class="ab-badge dim">artefact</span>' : p.home ? '<span class="ab-badge">accueil</span>' : `<button class="ab-mini" data-act="home" title="Définir comme accueil">⌂</button>`}
-              ${p.artefact ? "" : `<button class="ab-mini${p.contexte || (p.sections || []).some((sc) => sc.texte || sc.animation) ? " has" : ""}" data-act="maquette" title="Maquette : contexte, explication des sections, destinations, animations">📝</button>`}
+              ${p.artefact ? "" : `<button class="ab-mini${p.contexte || (p.sections || []).some((sc) => sc.texte || sc.animation || (sc.anims || []).length) ? " has" : ""}" data-act="maquette" title="Maquette : contexte, contenu des sections, destinations, animations">📝</button>`}
               <button class="ab-mini" data-act="rename" title="Renommer">✎</button>
               <button class="ab-mini" data-act="addsec" title="Ajouter une section">＋</button>
               <button class="ab-mini" data-act="delpage" title="Supprimer la page">✕</button>
@@ -1098,19 +1099,33 @@ function pgWireWorkModal(s, v) {
   });
 }
 
-// Modale « Maquette » d'une page du wireframe : le contexte de la page + le texte
-// de chaque section. C'est la matière que le brief transmet à la construction.
+// Modale « Maquette » d'une page du wireframe : le contexte de la page + pour
+// chaque section, son contenu, sa destination et ses animations (puces guidées
+// du vocabulaire motion Orphic). C'est la matière que le brief transmet.
+const AB_ANIMS = ["Fondu à l'arrivée", "Montée au scroll", "Parallaxe", "Texte révélé mot à mot", "Zoom lent des images", "Survol lumineux", "Épinglée au scroll", "Aucune animation"];
 function pgAbMaquetteModal(s, p, ro) {
+  // Migration : l'ancien champ libre `animation` devient une puce personnalisée
+  for (const sec of p.sections || []) {
+    if (sec.animation && !sec.anims) { sec.anims = [sec.animation]; delete sec.animation; }
+  }
   const ov = document.createElement("div");
   ov.className = "modal-overlay show";
+  const chips = (sec, i) => {
+    const on = sec.anims || [];
+    const custom = on.filter((a) => !AB_ANIMS.includes(a));
+    return `<div class="mq-chips" data-ci="${i}">
+      ${AB_ANIMS.map((a) => `<button class="mq-chip${on.includes(a) ? " on" : ""}${a === "Aucune animation" ? " calm" : ""}" data-a="${escapeHtml(a)}" ${ro ? "disabled" : ""}>${a}</button>`).join("")}
+      ${custom.map((a) => `<button class="mq-chip on custom" data-a="${escapeHtml(a)}" title="${ro ? "" : "Cliquer pour retirer"}" ${ro ? "disabled" : ""}>${escapeHtml(a)} ✕</button>`).join("")}
+      ${ro ? "" : `<button class="mq-chip add" data-addanim>＋ préciser…</button>`}
+    </div>`;
+  };
   ov.innerHTML = `
-    <div class="modal-panel" style="width:640px;">
+    <div class="modal-panel" style="width:660px;">
       <div class="modal-head"><h2>Maquette — ${escapeHtml(p.titre)}</h2><button class="modal-x" data-x aria-label="Fermer">✕</button></div>
       <div class="modal-body">
         ${ro ? `<div class="pg-alert" style="border:0;color:var(--dim);margin-bottom:10px;">🔒 Version en ligne — lecture seule. Duplique la version en ligne (barre du haut) pour modifier la maquette.</div>` : ""}
-        <div class="mood-h" style="margin-bottom:8px;">Contexte de la page</div>
+        <div class="mq-label">Rôle de la page</div>
         <textarea class="mood-in mood-ta" data-mq="ctx" placeholder="À quoi sert cette page, à qui elle parle, ce qu'elle doit provoquer…" ${ro ? "disabled" : ""}>${escapeHtml(p.contexte || "")}</textarea>
-        ${(p.sections || []).length ? `<div class="mood-h" style="margin:16px 0 8px;">Les sections</div>` : ""}
         ${(p.sections || []).map((sec, i) => {
           const cible = sec.cible && (pgArboCache[s.key]?.pages || []).find((x) => x.id === sec.cible);
           return `
@@ -1119,8 +1134,10 @@ function pgAbMaquetteModal(s, p, ro) {
               <span class="ab-secdot" style="background:${sec.color || "var(--line2)"};"></span>${escapeHtml(sec.titre)}
               <span class="mq-dest${cible ? " on" : ""}">${cible ? `⇢ emmène vers <b>${escapeHtml(cible.titre)}</b>` : "⇢ n'emmène nulle part"}</span>
             </div>
-            <textarea class="mood-in mood-ta mini" data-mq="${i}" placeholder="Explique la section : son rôle, ce qu'elle raconte, son texte…" ${ro ? "disabled" : ""}>${escapeHtml(sec.texte || "")}</textarea>
-            <textarea class="mood-in mood-ta mini mq-anim" data-mqa="${i}" placeholder="Les animations : à l'arrivée, au scroll, au survol…" ${ro ? "disabled" : ""}>${escapeHtml(sec.animation || "")}</textarea>
+            <div class="mq-label">Contenu — ce que la section raconte</div>
+            <textarea class="mood-in mood-ta mini" data-mq="${i}" placeholder="Son rôle, son message, son texte…" ${ro ? "disabled" : ""}>${escapeHtml(sec.texte || "")}</textarea>
+            <div class="mq-label">Animations</div>
+            ${chips(sec, i)}
           </div>`;
         }).join("")}
       </div>
@@ -1130,15 +1147,45 @@ function pgAbMaquetteModal(s, p, ro) {
   const close = () => ov.remove();
   ov.querySelectorAll("[data-x]").forEach((b) => b.onclick = close);
   ov.onclick = (e) => { if (e.target === ov) close(); };
-  ov.querySelectorAll("[data-mq],[data-mqa]").forEach((t) => t.oninput = () => {
-    if (t.dataset.mqa !== undefined) p.sections[+t.dataset.mqa].animation = t.value;
-    else if (t.dataset.mq === "ctx") p.contexte = t.value;
-    else p.sections[+t.dataset.mq].texte = t.value;
-    pgArboSave(s.key);
-    // Le badge 📝 du node s'allume dès qu'une maquette existe
+  const syncBadge = () => {
     const btn = document.querySelector(`.ab-node[data-p="${p.id}"] [data-act="maquette"]`);
-    if (btn) btn.classList.toggle("has", !!(p.contexte || (p.sections || []).some((sc) => sc.texte || sc.animation)));
+    if (btn) btn.classList.toggle("has", !!(p.contexte || (p.sections || []).some((sc) => sc.texte || (sc.anims || []).length)));
+  };
+  ov.querySelectorAll("[data-mq]").forEach((t) => t.oninput = () => {
+    if (t.dataset.mq === "ctx") p.contexte = t.value;
+    else p.sections[+t.dataset.mq].texte = t.value;
+    pgArboSave(s.key); syncBadge();
   });
+  if (ro) return;
+  // Les puces d'animation : clic = choisir/retirer ; « Aucune animation » est exclusive
+  const rechips = (box, sec, i) => { box.outerHTML = chips(sec, i); wireChips(ov.querySelector(`.mq-chips[data-ci="${i}"]`), sec, i); };
+  function wireChips(box, sec, i) {
+    box.querySelectorAll(".mq-chip:not(.add)").forEach((c) => c.onclick = () => {
+      const a = c.dataset.a;
+      sec.anims = sec.anims || [];
+      if (sec.anims.includes(a)) sec.anims = sec.anims.filter((x) => x !== a);
+      else if (a === "Aucune animation") sec.anims = [a];
+      else sec.anims = [...sec.anims.filter((x) => x !== "Aucune animation"), a];
+      pgArboSave(s.key); syncBadge(); rechips(box, sec, i);
+    });
+    const add = box.querySelector("[data-addanim]");
+    if (add) add.onclick = () => {
+      const inp = document.createElement("input");
+      inp.className = "mood-in mini mq-chip-in";
+      inp.placeholder = "décris l'animation + Entrée";
+      add.replaceWith(inp); inp.focus();
+      let done = false;
+      const commit = () => {
+        if (done) return; done = true;
+        const v = inp.value.trim();
+        if (v) { sec.anims = [...(sec.anims || []).filter((x) => x !== "Aucune animation"), v]; pgArboSave(s.key); syncBadge(); }
+        rechips(box, sec, i);
+      };
+      inp.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); commit(); } if (e.key === "Escape") { inp.value = ""; commit(); } };
+      inp.onblur = commit;
+    };
+  }
+  ov.querySelectorAll(".mq-chips").forEach((box) => wireChips(box, p.sections[+box.dataset.ci], +box.dataset.ci));
 }
 
 // ══ Pipeline de travail : le fil conducteur d'un site ══
