@@ -4789,7 +4789,7 @@ function renderAppleCals(ast) {
   $("apSyncSel").onchange = () => window.olympus.appleSetSync($("apSyncSel").value);
 }
 $("connAppleBtn").onclick = async () => {
-  const f = $("appleForm"); const show = f.style.display === "none"; f.style.display = show ? "" : "none";
+  const f = $("appleForm"); const show = f.style.display === "none"; f.style.display = show ? "block" : "none";
   if (show) { const ast = await window.olympus.appleStatus(); if (ast.email) $("apEmail").value = ast.email; renderAppleCals(ast); }
 };
 $("apConnectBtn").onclick = async () => {
@@ -4803,7 +4803,7 @@ $("apConnectBtn").onclick = async () => {
 };
 $("apDisconnect").onclick = async () => { await window.olympus.appleDisconnect(); $("apCals").innerHTML = ""; refreshConnections(); };
 $("connGmailBtn").onclick = async () => {
-  const f = $("gmailForm"); const show = f.style.display === "none"; f.style.display = show ? "" : "none";
+  const f = $("gmailForm"); const show = f.style.display === "none"; f.style.display = show ? "block" : "none";
   if (show) { const st = await window.olympus.irisStatus(); if (st.email) $("gmEmail").value = st.email; }
 };
 $("gmConnectBtn").onclick = async () => {
