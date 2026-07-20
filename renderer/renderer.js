@@ -478,8 +478,8 @@ function pgAbLayout(nodes, force) {
     if (t && !t.artefact && !level.has(t.id)) { level.set(t.id, 2); menuSeeds.push(t.id); }
   }
   bfs((n) => (n.sections || []).filter((sc) => sc.menu), menuSeeds);
-  // Phase 2 — le contenu : complète les pages hors menu
-  bfs((n) => n.sections || [], [...level.keys()]);
+  // Phase 2 — le contenu : complète les pages hors menu (sections + liens node→node manuels)
+  bfs((n) => [...(n.sections || []), ...((n.links || []).map((l) => ({ cible: l.to })))], [...level.keys()]);
   // Phase 3 — les pages TERMINALES ferment le pipeline (dernière colonne) :
   // conversion = ciblée par la majorité des pages de contenu et quasi sans liens
   // sortants (ex : Contact, où tous les CTA mènent) ; utilitaire = accessible
@@ -566,6 +566,7 @@ function pgAbMerge(cur, scanned) {
       if (old.x != null) { np.x = old.x; np.y = old.y; }
       if (hadHome) np.home = !!old.home;
       if (Number.isFinite(old.level)) np.level = old.level; // niveau fixé à la main conservé
+      if (old.links && old.links.length) np.links = old.links; // liens node→node manuels conservés
       if (old.titre && old.titre !== np.titre && !old.wp_id) np.titre = old.titre;
     }
     for (const sc of np.sections) sc.cible = idMap.get(sc.cible) || "";
@@ -636,7 +637,7 @@ async function pgArboRender(s) {
   if (dirty) pgArboSave(s.key);
   pgAbLink = null;
   pgAbSel.clear();
-  const HINT = `Glisse une carte pour la déplacer · double-clique un nom pour le renommer · clique un <b>port</b> puis une page pour tracer une connexion · clic droit sur un port pour détacher`;
+  const HINT = `Glisse une carte pour la déplacer · double-clique un nom pour le renommer · clique un <b>port</b> (section ou bord droit du node) puis une page pour tracer un lien · clique un <b>câble</b> pour le supprimer`;
 
   box.innerHTML = `
     <div class="pg-actrow" style="margin-bottom:12px;">
@@ -651,6 +652,7 @@ async function pgArboRender(s) {
         ${pages.map((p) => `
           <div class="ab-node${p.home ? " home" : ""}${p.artefact ? " artefact" : ""}" data-p="${p.id}" style="left:${p.x}px;top:${p.y}px;">
             ${p.artefact ? "" : '<span class="inport"></span>'}
+            ${p.artefact ? "" : '<span class="ab-outport" data-outport title="Clique, puis choisis la page vers laquelle ce node pointe"></span>'}
             <div class="ab-phead">
               <div class="ab-title" data-f="titre" title="Double-clic pour renommer">${escapeHtml(p.titre)}</div>
               ${p.artefact ? '<span class="ab-badge dim">artefact</span>' : p.home ? '<span class="ab-badge">accueil</span>' : `<button class="ab-mini" data-act="home" title="Définir comme accueil">⌂</button>`}
@@ -705,23 +707,48 @@ async function pgArboRender(s) {
   let abHot = null;
   function drawWires() {
     const sr = stage.getBoundingClientRect();
-    const paths = [];
-    for (const p of pages) for (const sec of p.sections) {
-      if (!sec.cible) continue;
-      const from = stage.querySelector(`.ab-sec[data-s="${sec.id}"] .ab-port`);
-      const to = stage.querySelector(`.ab-node[data-p="${sec.cible}"] .inport`);
-      if (!from || !to) continue;
-      const a = from.getBoundingClientRect(), b = to.getBoundingClientRect();
-      const z = abZoom || 1;
+    const z = abZoom || 1;
+    // Un câble = une zone de clic large (invisible) + le trait visible. Cliquer la
+    // zone supprime le lien (le survol l'épaissit). meta = data pour la suppression.
+    const seg = (fromEl, toEl, color, dashed, hot, meta) => {
+      const a = fromEl.getBoundingClientRect(), b = toEl.getBoundingClientRect();
       const x1 = (a.left - sr.left + a.width / 2) / z, y1 = (a.top - sr.top + a.height / 2) / z;
       const x2 = (b.left - sr.left + b.width / 2) / z, y2 = (b.top - sr.top + b.height / 2) / z;
       const dx = Math.max(50, Math.abs(x2 - x1) * 0.45);
-      const hot = !abHot || p.id === abHot || sec.cible === abHot;
-      paths.push(`<path style="stroke:${sec.color || "var(--line2)"};opacity:${hot ? (abHot ? ".95" : ".7") : ".07"};" d="M ${x1.toFixed(1)} ${y1.toFixed(1)} C ${(x1 + dx).toFixed(1)} ${y1.toFixed(1)}, ${(x2 - dx).toFixed(1)} ${y2.toFixed(1)}, ${x2.toFixed(1)} ${y2.toFixed(1)}"/>`);
+      const d = `M ${x1.toFixed(1)} ${y1.toFixed(1)} C ${(x1 + dx).toFixed(1)} ${y1.toFixed(1)}, ${(x2 - dx).toFixed(1)} ${y2.toFixed(1)}, ${x2.toFixed(1)} ${y2.toFixed(1)}`;
+      const op = hot ? (abHot ? ".95" : ".7") : ".07";
+      return `<path class="ab-hit" d="${d}" ${meta}><title>Cliquer pour supprimer ce lien</title></path>`
+        + `<path class="ab-wire" style="stroke:${color};opacity:${op};${dashed ? "stroke-dasharray:5 5;" : ""}" d="${d}"/>`;
+    };
+    const paths = [];
+    for (const p of pages) {
+      for (const sec of p.sections) {
+        if (!sec.cible) continue;
+        const from = stage.querySelector(`.ab-sec[data-s="${sec.id}"] .ab-port`);
+        const to = stage.querySelector(`.ab-node[data-p="${sec.cible}"] .inport`);
+        if (!from || !to) continue;
+        const hot = !abHot || p.id === abHot || sec.cible === abHot;
+        paths.push(seg(from, to, sec.color || "var(--line2)", false, hot, `data-kind="sec" data-p="${p.id}" data-s="${sec.id}"`));
+      }
+      for (const lk of p.links || []) {
+        const from = stage.querySelector(`.ab-node[data-p="${p.id}"] .ab-outport`);
+        const to = stage.querySelector(`.ab-node[data-p="${lk.to}"] .inport`);
+        if (!from || !to) continue;
+        const hot = !abHot || p.id === abHot || lk.to === abHot;
+        paths.push(seg(from, to, "var(--muted)", true, hot, `data-kind="node" data-p="${p.id}" data-to="${lk.to}"`));
+      }
     }
     svgW.innerHTML = paths.join("");
   }
   drawWires();
+  // Cliquer un câble = supprimer le lien (section→page ou node→node)
+  svgW.onclick = (e) => {
+    const hit = e.target.closest(".ab-hit"); if (!hit) return;
+    const src = find(hit.dataset.p); if (!src) return;
+    if (hit.dataset.kind === "sec") { const sec = src.sections.find((x) => x.id === hit.dataset.s); if (sec) sec.cible = ""; }
+    else src.links = (src.links || []).filter((l) => l.to !== hit.dataset.to);
+    pgArboSave(s.key); pgArboRender(s);
+  };
 
   // Barre d'actions
   box.querySelector("#abAddPage").onclick = () => {
@@ -761,7 +788,7 @@ async function pgArboRender(s) {
     ne.addEventListener("mouseenter", () => { abHot = p.id; drawWires(); });
     ne.addEventListener("mouseleave", () => { abHot = null; drawWires(); });
     ne.addEventListener("pointerdown", (e) => {
-      if (e.target.closest('button,.ab-port,[contenteditable="true"]')) return;
+      if (e.target.closest('button,.ab-port,.ab-outport,[contenteditable="true"]')) return;
       if (e.shiftKey) return; // maj+clic = sélection (gérée au clic)
       e.preventDefault();
       // Déplacement groupé si ce node fait partie de la sélection multiple
@@ -798,11 +825,26 @@ async function pgArboRender(s) {
       }
       if (!pgAbLink || ne.dataset.p === pgAbLink.p || p.artefact) return;
       const src = find(pgAbLink.p);
-      const sec = src && src.sections.find((x) => x.id === pgAbLink.s);
-      if (sec) { sec.cible = ne.dataset.p; pgArboSave(s.key); }
+      if (pgAbLink.node) {
+        // Lien direct node → node
+        if (src) { src.links = src.links || []; if (!src.links.some((l) => l.to === ne.dataset.p)) src.links.push({ id: pgArboId(), to: ne.dataset.p }); pgArboSave(s.key); }
+      } else {
+        const sec = src && src.sections.find((x) => x.id === pgAbLink.s);
+        if (sec) { sec.cible = ne.dataset.p; pgArboSave(s.key); }
+      }
       pgAbLink = null;
       pgArboRender(s);
     });
+    // Port de sortie du node : démarre un lien direct vers une autre page
+    const outp = ne.querySelector(".ab-outport");
+    if (outp) outp.onclick = (e) => {
+      e.stopPropagation();
+      pgAbLink = pgAbLink && pgAbLink.node && pgAbLink.p === p.id ? null : { p: p.id, node: true };
+      stage.querySelectorAll(".ab-port,.ab-outport").forEach((x) => x.classList.remove("linking"));
+      stage.querySelectorAll(".ab-node").forEach((x) => x.classList.toggle("linktarget", !!pgAbLink && x.dataset.p !== p.id && !x.classList.contains("artefact")));
+      if (pgAbLink) { outp.classList.add("linking"); $("abHint").innerHTML = "Clique la <b>page de destination</b> du lien — clic dans le vide pour annuler"; }
+      else hintReset();
+    };
     const titleEl = ne.querySelector('[data-f="titre"]');
     pgAbEditable(titleEl, (v) => { p.titre = v || "Sans titre"; titleEl.textContent = p.titre; pgArboSave(s.key); });
     ne.querySelectorAll(".ab-phead [data-act]").forEach((b) => {
@@ -813,7 +855,10 @@ async function pgArboRender(s) {
         if (b.dataset.act === "home") pages.forEach((x) => { x.home = x.id === p.id; });
         if (b.dataset.act === "delpage") {
           arbo.pages = pages.filter((x) => x.id !== p.id);
-          for (const q of arbo.pages) for (const sc of q.sections) if (sc.cible === p.id) sc.cible = "";
+          for (const q of arbo.pages) {
+            for (const sc of q.sections) if (sc.cible === p.id) sc.cible = "";
+            if (q.links) q.links = q.links.filter((l) => l.to !== p.id);
+          }
           pgArboCache[s.key] = arbo;
         }
         pgArboSave(s.key); pgArboRender(s);
@@ -849,7 +894,7 @@ async function pgArboRender(s) {
       port.onclick = (e) => {
         e.stopPropagation();
         pgAbLink = pgAbLink && pgAbLink.s === sec.id ? null : { p: p.id, s: sec.id };
-        stage.querySelectorAll(".ab-port").forEach((x) => x.classList.remove("linking"));
+        stage.querySelectorAll(".ab-port,.ab-outport").forEach((x) => x.classList.remove("linking"));
         stage.querySelectorAll(".ab-node").forEach((x) => x.classList.toggle("linktarget", !!pgAbLink && x.dataset.p !== p.id && !x.classList.contains("artefact")));
         if (pgAbLink) { port.classList.add("linking"); $("abHint").innerHTML = "Clique la <b>page de destination</b> — clic dans le vide pour annuler"; }
         else hintReset();
