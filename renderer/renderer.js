@@ -629,6 +629,11 @@ async function pgArboRender(s) {
     return;
   }
 
+  // La version en ligne (le socle) n'est PAS éditable : on ne modifie jamais le site
+  // en place. Pour toucher au wireframe il faut une version de travail distincte.
+  const man = await pgWirePrep(s);
+  const editable = (arbo.versionId ?? null) !== man.deployed;
+
   const pages = arbo.pages || [];
   let dirty = pgAbLayout(pages);
   // Couleur pour toute section qui n'en a pas encore (dot devant le nom)
@@ -637,27 +642,33 @@ async function pgArboRender(s) {
     if (!sec.color) { sec.color = AB_COLORS[ci % AB_COLORS.length]; dirty = true; }
     ci++;
   }
-  if (dirty) pgArboSave(s.key);
+  if (dirty && editable) pgArboSave(s.key);
   pgAbLink = null;
   pgAbSel.clear();
-  const HINT = `Glisse une carte pour la déplacer · double-clique un nom pour le renommer · clique un <b>port</b> (section ou bord droit du node) puis une page pour tracer un lien · clique un <b>câble</b> pour le supprimer`;
+  const HINT = `Glisse d'un <b>port</b> (section ou bord droit du node) jusqu'à une page pour tracer un lien · double-clique un nom pour le renommer · clique un <b>câble</b> pour le supprimer`;
 
   box.innerHTML = `
     <div class="pg-actrow" style="margin-bottom:12px;">
+      ${editable ? `
       <button class="cal-btn" id="abAddPage">＋ Page</button>
       <button class="btn sec" id="abRescan" title="Repart des pages et liens réels du site (positions conservées)">⟳ Rescanner le site</button>
       <button class="btn sec" id="abRelayout" title="Range les nodes par niveaux, en colonnes de gauche à droite">⇄ Réorganiser</button>
       <button class="cal-btn primary" id="abSaveVer" title="Fige l'état actuel comme une version du wireframe">✓ Enregistrer une version</button>
       <span class="ab-hint" id="abHint">${HINT}</span>
+      ` : `
+      <span class="ab-lock">🔒 Version en ligne — lecture seule. Pour modifier le wireframe, crée une version de travail :</span>
+      <button class="cal-btn primary" id="abDupLive" title="Repart de la structure du site actuel">Dupliquer la version en ligne</button>
+      <button class="btn sec" id="abBlankNew" title="Nouvelle arborescence vide">Partir d'une page blanche</button>
+      `}
     </div>
-    <div class="ab-layout">
+    <div class="ab-layout${editable ? "" : " readonly"}">
     <div class="ab-canvas" id="abCanvas">
       <div class="ab-stage" id="abStage" style="width:${Math.max(2600, (Math.max(...pages.map((p) => p.x || 0)) + 700))}px;height:${Math.max(1600, (Math.max(...pages.map((p) => p.y || 0)) + 700))}px;">
         <svg class="ab-wires" id="abWires"></svg>
         ${pages.map((p) => `
           <div class="ab-node${p.home ? " home" : ""}${p.artefact ? " artefact" : ""}" data-p="${p.id}" style="left:${p.x}px;top:${p.y}px;">
             ${p.artefact ? "" : '<span class="inport"></span>'}
-            ${p.artefact ? "" : '<span class="ab-outport" data-outport title="Clique, puis choisis la page vers laquelle ce node pointe"></span>'}
+            ${p.artefact ? "" : '<span class="ab-outport" data-outport title="Glisse jusqu\'à la page vers laquelle ce node pointe"></span>'}
             <div class="ab-phead">
               <div class="ab-title" data-f="titre" title="Double-clic pour renommer">${escapeHtml(p.titre)}</div>
               ${p.artefact ? '<span class="ab-badge dim">artefact</span>' : p.home ? '<span class="ab-badge">accueil</span>' : `<button class="ab-mini" data-act="home" title="Définir comme accueil">⌂</button>`}
@@ -678,7 +689,7 @@ async function pgArboRender(s) {
                 <span class="ab-secdot" style="background:${sec.color};box-shadow:0 0 6px ${sec.color}55;"></span>
                 <div class="ab-title sec" data-f="sec-titre" title="Double-clic pour renommer">${escapeHtml(sec.titre)}</div>
                 <button class="ab-mini" data-act="delsec" title="Supprimer la section">✕</button>
-                <span class="ab-port${sec.cible ? " linked" : ""}" data-port ${sec.cible ? `style="background:${sec.color};border-color:transparent;box-shadow:0 0 7px ${sec.color}88;"` : ""} title="${sec.cible ? "⇢ " + escapeHtml((pages.find((x) => x.id === sec.cible) || {}).titre || "?") + " — clic droit pour détacher" : "Clique, puis choisis la page de destination"}"></span>
+                <span class="ab-port${sec.cible ? " linked" : ""}" data-port ${sec.cible ? `style="background:${sec.color};border-color:transparent;box-shadow:0 0 7px ${sec.color}88;"` : ""} title="${sec.cible ? "⇢ " + escapeHtml((pages.find((x) => x.id === sec.cible) || {}).titre || "?") + " — clic droit pour détacher" : "Glisse jusqu'à la page de destination"}"></span>
               </div>`).join("")}</div>` : ""}
           </div>`).join("")}
       </div>
@@ -686,7 +697,6 @@ async function pgArboRender(s) {
     <div class="ab-versions" id="abVersions"><div class="rb-empty">Versions…</div></div>
     </div>`;
 
-  pgWireRenderCol(s);
   const stage = $("abStage"), canvas = $("abCanvas"), svgW = $("abWires");
   const find = (pid) => pages.find((x) => x.id === pid);
   const hintReset = () => { $("abHint").innerHTML = HINT; };
@@ -749,48 +759,105 @@ async function pgArboRender(s) {
     svgW.innerHTML = paths.join("");
   }
   drawWires();
-  // Cliquer un câble = supprimer le lien (section→page ou node→node)
-  svgW.onclick = (e) => {
-    const hit = e.target.closest(".ab-hit"); if (!hit) return;
-    const src = find(hit.dataset.p); if (!src) return;
-    if (hit.dataset.kind === "sec") { const sec = src.sections.find((x) => x.id === hit.dataset.s); if (sec) sec.cible = ""; }
-    else src.links = (src.links || []).filter((l) => l.to !== hit.dataset.to);
-    pgArboSave(s.key); pgArboRender(s);
-  };
+  pgWireRenderCol(s);
 
-  // Barre d'actions
-  box.querySelector("#abAddPage").onclick = () => {
-    pages.push({ id: pgArboId(), titre: "Nouvelle page", sections: [], x: 70 + canvas.scrollLeft, y: 70 + canvas.scrollTop });
-    pgArboSave(s.key); pgArboRender(s);
-  };
-  box.querySelector("#abRelayout").onclick = () => {
-    pgAbLayout(pages, true);
-    pgArboSave(s.key); pgArboRender(s);
-  };
-  box.querySelector("#abSaveVer").onclick = async (e) => {
-    const btn = e.currentTarget; btn.disabled = true;
-    // Numérote les brouillons de wireframe (« Version N »), indépendamment du socle « Site en ligne ».
-    const existing = (pgWireCache[s.key] && pgWireCache[s.key].versions) || [];
-    const n = existing.filter((v) => /^Version \d+$/.test(v.label || "")).length + 1;
-    const label = "Version " + n;
-    const r = await window.olympus.pegasusWireSave(s.key, pgArboCache[s.key], label, false);
-    delete pgWireCache[s.key];
-    await pgWireRenderCol(s);
-    btn.disabled = false;
-    const msg = $("pgWorkMsg");
-    if (r.ok && msg) { msg.className = "msg ok"; msg.textContent = label + " enregistrée."; }
-    if (!r.ok) alert("Échec de l'enregistrement : " + (r.error || ""));
-  };
-  box.querySelector("#abRescan").onclick = async (e) => {
-    e.currentTarget.disabled = true;
-    $("abHint").innerHTML = "Scan du site en cours… (pages + connexions réelles)";
-    const homeWp = (pages.find((x) => x.home) || {}).wp_id || null;
-    const r = await window.olympus.pegasusArboScan(s.key, homeWp);
-    if (r.ok) { pgArboCache[s.key] = pgAbMerge(pgArboCache[s.key], r.arbo); pgArboSave(s.key); }
-    pgArboRender(s);
-  };
+  // ── Version en ligne (lecture seule) : proposer une version de travail ──
+  if (!editable) {
+    box.querySelector("#abDupLive").onclick = () => {
+      const copy = JSON.parse(JSON.stringify(arbo));
+      copy.versionId = null;            // brouillon non enregistré = éditable
+      pgArboCache[s.key] = copy; pgArboSave(s.key); pgArboRender(s);
+    };
+    box.querySelector("#abBlankNew").onclick = () => {
+      pgArboCache[s.key] = { pages: [{ id: pgArboId(), titre: "Accueil", home: true, sections: [] }], versionId: null, zoom: arbo.zoom };
+      pgArboSave(s.key); pgArboRender(s);
+    };
+  }
 
-  // Pan du canvas (fond) — et clic dans le vide = annule le câblage en cours
+  if (editable) {
+    // Cliquer un câble = supprimer le lien (section→page ou node→node)
+    svgW.onclick = (e) => {
+      const hit = e.target.closest(".ab-hit"); if (!hit) return;
+      const src = find(hit.dataset.p); if (!src) return;
+      if (hit.dataset.kind === "sec") { const sec = src.sections.find((x) => x.id === hit.dataset.s); if (sec) sec.cible = ""; }
+      else src.links = (src.links || []).filter((l) => l.to !== hit.dataset.to);
+      pgArboSave(s.key); pgArboRender(s);
+    };
+    // Barre d'actions
+    box.querySelector("#abAddPage").onclick = () => {
+      pages.push({ id: pgArboId(), titre: "Nouvelle page", sections: [], x: 70 + canvas.scrollLeft, y: 70 + canvas.scrollTop });
+      pgArboSave(s.key); pgArboRender(s);
+    };
+    box.querySelector("#abRelayout").onclick = () => {
+      pgAbLayout(pages, true);
+      pgArboSave(s.key); pgArboRender(s);
+    };
+    box.querySelector("#abSaveVer").onclick = async (e) => {
+      const btn = e.currentTarget; btn.disabled = true;
+      // Numérote les brouillons de wireframe (« Version N »), indépendamment du socle « Site en ligne ».
+      const existing = (pgWireCache[s.key] && pgWireCache[s.key].versions) || [];
+      const n = existing.filter((v) => /^Version \d+$/.test(v.label || "")).length + 1;
+      const label = "Version " + n;
+      const r = await window.olympus.pegasusWireSave(s.key, pgArboCache[s.key], label, false);
+      if (r.ok) { arbo.versionId = r.id; pgArboSave(s.key); } // on édite désormais cette version
+      delete pgWireCache[s.key];
+      await pgWireRenderCol(s);
+      btn.disabled = false;
+      const msg = $("pgWorkMsg");
+      if (r.ok && msg) { msg.className = "msg ok"; msg.textContent = label + " enregistrée."; }
+      if (!r.ok) alert("Échec de l'enregistrement : " + (r.error || ""));
+    };
+    box.querySelector("#abRescan").onclick = async (e) => {
+      e.currentTarget.disabled = true;
+      $("abHint").innerHTML = "Scan du site en cours… (pages + connexions réelles)";
+      const homeWp = (pages.find((x) => x.home) || {}).wp_id || null;
+      const r = await window.olympus.pegasusArboScan(s.key, homeWp);
+      if (r.ok) { pgArboCache[s.key] = pgAbMerge(pgArboCache[s.key], r.arbo); pgArboSave(s.key); }
+      pgArboRender(s);
+    };
+  }
+
+  // Glisser-connecter : rester appuyé d'un port (A) jusqu'à une page (B) trace le lien.
+  const stageXY = (cx, cy) => { const sr = stage.getBoundingClientRect(); const z = abZoom || 1; return [(cx - sr.left) / z, (cy - sr.top) / z]; };
+  const portXY = (el) => { const sr = stage.getBoundingClientRect(); const b = el.getBoundingClientRect(); const z = abZoom || 1; return [(b.left - sr.left + b.width / 2) / z, (b.top - sr.top + b.height / 2) / z]; };
+  const curve = (x1, y1, x2, y2) => { const dx = Math.max(50, Math.abs(x2 - x1) * 0.45); return `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`; };
+  function startLink(e, src, portEl) {
+    if (e.button !== 0) return;
+    e.preventDefault(); e.stopPropagation();
+    const [x1, y1] = portXY(portEl);
+    portEl.classList.add("linking");
+    stage.querySelectorAll(".ab-node").forEach((x) => x.classList.toggle("linktarget", x.dataset.p !== src.p && !x.classList.contains("artefact")));
+    const h = $("abHint"); if (h) h.innerHTML = "Relâche sur la <b>page de destination</b>";
+    const temp = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    temp.setAttribute("class", "ab-wire");
+    temp.setAttribute("style", `stroke:${src.color || "var(--accent2)"};opacity:.9;stroke-dasharray:5 5;`);
+    svgW.appendChild(temp);
+    let hover = null;
+    const nodeAt = (cx, cy) => { const el = document.elementFromPoint(cx, cy); const n = el && el.closest(".ab-node"); return n && n.dataset.p !== src.p && !n.classList.contains("artefact") ? n : null; };
+    const move = (ev) => {
+      const [x2, y2] = stageXY(ev.clientX, ev.clientY);
+      temp.setAttribute("d", curve(x1, y1, x2, y2));
+      const n = nodeAt(ev.clientX, ev.clientY);
+      if (hover !== n) { if (hover) hover.classList.remove("linkhover"); hover = n; if (hover) hover.classList.add("linkhover"); }
+    };
+    const up = (ev) => {
+      window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up);
+      const n = nodeAt(ev.clientX, ev.clientY);
+      const source = find(src.p);
+      let done = false;
+      if (n && source) {
+        const to = n.dataset.p;
+        if (src.kind === "sec") { const sec = source.sections.find((x) => x.id === src.s); if (sec) { sec.cible = to; done = true; } }
+        else { source.links = source.links || []; if (!source.links.some((l) => l.to === to)) { source.links.push({ id: pgArboId(), to }); done = true; } }
+      }
+      if (done) { pgArboSave(s.key); pgArboRender(s); }
+      else { temp.remove(); portEl.classList.remove("linking"); stage.querySelectorAll(".ab-node").forEach((x) => x.classList.remove("linktarget", "linkhover")); hintReset(); }
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  }
+
+  // Pan du canvas (fond)
   const abSyncSel = () => stage.querySelectorAll(".ab-node").forEach((x) => x.classList.toggle("selected", pgAbSel.has(x.dataset.p)));
   stage.addEventListener("pointerdown", (e) => {
     if (e.target !== stage) return;
@@ -804,11 +871,12 @@ async function pgArboRender(s) {
     window.addEventListener("pointerup", up);
   });
 
-  // Nodes : drag depuis N'IMPORTE OÙ sur la carte, câblage, édition
+  // Nodes : survol (toujours) ; drag / câblage / édition seulement si éditable
   stage.querySelectorAll(".ab-node").forEach((ne) => {
     const p = find(ne.dataset.p);
     ne.addEventListener("mouseenter", () => { abHot = p.id; drawWires(); });
     ne.addEventListener("mouseleave", () => { abHot = null; drawWires(); });
+    if (!editable) return;
     ne.addEventListener("pointerdown", (e) => {
       if (e.target.closest('button,.ab-port,.ab-outport,[contenteditable="true"]')) return;
       if (e.shiftKey) return; // maj+clic = sélection (gérée au clic)
@@ -838,35 +906,15 @@ async function pgArboRender(s) {
       window.addEventListener("pointermove", move);
       window.addEventListener("pointerup", up);
     });
-    // En mode câblage, cliquer une page = destination de la section
+    // Maj+clic = sélection multiple
     ne.addEventListener("click", (e) => {
-      if (e.shiftKey) {
-        if (pgAbSel.has(p.id)) pgAbSel.delete(p.id); else pgAbSel.add(p.id);
-        abSyncSel();
-        return;
-      }
-      if (!pgAbLink || ne.dataset.p === pgAbLink.p || p.artefact) return;
-      const src = find(pgAbLink.p);
-      if (pgAbLink.node) {
-        // Lien direct node → node
-        if (src) { src.links = src.links || []; if (!src.links.some((l) => l.to === ne.dataset.p)) src.links.push({ id: pgArboId(), to: ne.dataset.p }); pgArboSave(s.key); }
-      } else {
-        const sec = src && src.sections.find((x) => x.id === pgAbLink.s);
-        if (sec) { sec.cible = ne.dataset.p; pgArboSave(s.key); }
-      }
-      pgAbLink = null;
-      pgArboRender(s);
+      if (!e.shiftKey) return;
+      if (pgAbSel.has(p.id)) pgAbSel.delete(p.id); else pgAbSel.add(p.id);
+      abSyncSel();
     });
-    // Port de sortie du node : démarre un lien direct vers une autre page
+    // Port de sortie du node : glisser jusqu'à une page = lien direct node → node
     const outp = ne.querySelector(".ab-outport");
-    if (outp) outp.onclick = (e) => {
-      e.stopPropagation();
-      pgAbLink = pgAbLink && pgAbLink.node && pgAbLink.p === p.id ? null : { p: p.id, node: true };
-      stage.querySelectorAll(".ab-port,.ab-outport").forEach((x) => x.classList.remove("linking"));
-      stage.querySelectorAll(".ab-node").forEach((x) => x.classList.toggle("linktarget", !!pgAbLink && x.dataset.p !== p.id && !x.classList.contains("artefact")));
-      if (pgAbLink) { outp.classList.add("linking"); $("abHint").innerHTML = "Clique la <b>page de destination</b> du lien — clic dans le vide pour annuler"; }
-      else hintReset();
-    };
+    if (outp) outp.addEventListener("pointerdown", (e) => startLink(e, { kind: "node", p: p.id, color: "var(--muted)" }, outp));
     const titleEl = ne.querySelector('[data-f="titre"]');
     pgAbEditable(titleEl, (v) => { p.titre = v || "Sans titre"; titleEl.textContent = p.titre; pgArboSave(s.key); });
     ne.querySelectorAll(".ab-phead [data-act]").forEach((b) => {
@@ -913,14 +961,8 @@ async function pgArboRender(s) {
         pgArboSave(s.key); pgArboRender(s);
       };
       const port = se.querySelector("[data-port]");
-      port.onclick = (e) => {
-        e.stopPropagation();
-        pgAbLink = pgAbLink && pgAbLink.s === sec.id ? null : { p: p.id, s: sec.id };
-        stage.querySelectorAll(".ab-port,.ab-outport").forEach((x) => x.classList.remove("linking"));
-        stage.querySelectorAll(".ab-node").forEach((x) => x.classList.toggle("linktarget", !!pgAbLink && x.dataset.p !== p.id && !x.classList.contains("artefact")));
-        if (pgAbLink) { port.classList.add("linking"); $("abHint").innerHTML = "Clique la <b>page de destination</b> — clic dans le vide pour annuler"; }
-        else hintReset();
-      };
+      // Glisser du port jusqu'à une page = destination ; clic droit = détacher
+      port.addEventListener("pointerdown", (e) => startLink(e, { kind: "sec", p: p.id, s: sec.id, color: sec.color }, port));
       port.oncontextmenu = (e) => {
         e.preventDefault(); e.stopPropagation();
         sec.cible = ""; pgArboSave(s.key); pgArboRender(s);
@@ -934,18 +976,24 @@ async function pgArboRender(s) {
 // (celle du site réel, pas forcément la dernière) est marquée. Point 5 : « Pousser ».
 const pgWireCache = {};
 let pgWireBaselining = false;
-async function pgWireRenderCol(s) {
-  const box = $("abVersions"); if (!box) return;
+// Garantit que la version « Site en ligne » existe (socle = état scanné, toujours
+// présent, marqué en ligne) et rattache le doc de travail à cette version quand
+// c'est le tout premier chargement. Renvoie le manifeste {versions, deployed}.
+async function pgWirePrep(s) {
   let r = await window.olympus.pegasusWireList(s.key);
-  // La version actuelle du site est TOUJOURS présente dans la colonne : si aucune
-  // version n'existe encore, on fige l'état scanné comme socle « Site en ligne »
-  // (marqué en ligne). Il reste ensuite en permanence et n'est pas supprimable.
-  if (r.ok && (!r.versions || r.versions.length === 0) && pgArboCache[s.key] && !pgWireBaselining) {
+  const arbo = pgArboCache[s.key];
+  if (r.ok && (!r.versions || r.versions.length === 0) && arbo && arbo.pages && !pgWireBaselining) {
     pgWireBaselining = true;
-    await window.olympus.pegasusWireSave(s.key, pgArboCache[s.key], "Site en ligne", true);
+    const sr = await window.olympus.pegasusWireSave(s.key, arbo, "Site en ligne", true);
     pgWireBaselining = false;
+    if (sr.ok) { arbo.versionId = sr.id; pgArboSave(s.key); } // le doc de travail = la version en ligne (lecture seule)
     r = await window.olympus.pegasusWireList(s.key);
   }
+  return pgWireCache[s.key] = r.ok ? { versions: r.versions || [], deployed: r.deployed || null } : { versions: [], deployed: null };
+}
+async function pgWireRenderCol(s) {
+  const box = $("abVersions"); if (!box) return;
+  const r = await window.olympus.pegasusWireList(s.key);
   const man = pgWireCache[s.key] = r.ok ? { versions: r.versions || [], deployed: r.deployed || null } : { versions: [], deployed: null };
   const vs = [...man.versions].sort((a, b) => (a.ts < b.ts ? 1 : -1)); // plus récent en haut
   const fmt = (ts) => { try { return new Date(ts).toLocaleString("fr-FR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }); } catch { return ts; } };
@@ -973,7 +1021,7 @@ async function pgWireRenderCol(s) {
     el.querySelector('[data-act="load"]').onclick = async () => {
       if (!confirm("Charger cette version dans l'éditeur ? L'état actuel sera remplacé (enregistre-le d'abord si besoin).")) return;
       const lr = await window.olympus.pegasusWireLoad(s.key, id);
-      if (lr.ok) { pgArboCache[s.key] = lr.arbo; pgArboSave(s.key); pgArboRender(s); }
+      if (lr.ok) { lr.arbo.versionId = id; pgArboCache[s.key] = lr.arbo; pgArboSave(s.key); pgArboRender(s); }
       else alert("Échec : " + (lr.error || ""));
     };
     el.querySelector('[data-act="push"]').onclick = async (e) => {
