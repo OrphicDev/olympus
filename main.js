@@ -1102,6 +1102,53 @@ ipcMain.handle("pegasus:siteDiag", async (_e, key) => {
   try { return { ok: true, diag: await pegCall(key, "GET", "/diagnostic", 30000) }; }
   catch (e) { return { ok: false, error: e.message }; }
 });
+
+// ── Historique des métriques (SEO / Performance / Sécurité) : séries dans le temps
+// pour les tableaux de bord et les rapports. Stocké dans <site>/metrics.json ──
+async function pegMetricsPath(key) { return join(await pegSiteDir(key), "metrics.json"); }
+ipcMain.handle("pegasus:metricsGet", async (_e, key) => {
+  try {
+    const p = await pegMetricsPath(key);
+    if (!existsSync(p)) return { ok: true, metrics: { seo: [], perf: [], secu: [] } };
+    const m = JSON.parse(readFileSync(p, "utf8"));
+    return { ok: true, metrics: { seo: m.seo || [], perf: m.perf || [], secu: m.secu || [] } };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+// Ajoute un point de mesure daté à une série (seo|perf|secu). Dédupe si < 5 min.
+ipcMain.handle("pegasus:metricsAppend", async (_e, key, kind, point) => {
+  try {
+    if (!["seo", "perf", "secu"].includes(kind)) throw new Error("Série inconnue.");
+    const p = await pegMetricsPath(key);
+    const m = existsSync(p) ? JSON.parse(readFileSync(p, "utf8")) : {};
+    m.seo = m.seo || []; m.perf = m.perf || []; m.secu = m.secu || [];
+    const now = new Date().toISOString();
+    const arr = m[kind];
+    const last = arr[arr.length - 1];
+    if (last && new Date(now) - new Date(last.ts) < 5 * 60 * 1000) arr[arr.length - 1] = { ts: now, ...point };
+    else arr.push({ ts: now, ...point });
+    if (arr.length > 500) arr.splice(0, arr.length - 500);
+    writeFileSync(p, JSON.stringify(m, null, 2));
+    return { ok: true, count: arr.length };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
+// Export d'un rapport HTML en PDF (fenêtre hors-écran → printToPDF → boîte de sauvegarde)
+ipcMain.handle("pegasus:exportPdf", async (_e, html, filename) => {
+  let win;
+  try {
+    const tmp = join(tmpdir(), `pegasus-report-${Date.now()}.html`);
+    writeFileSync(tmp, String(html || ""));
+    win = new BrowserWindow({ show: false, width: 900, height: 1200, webPreferences: { javascript: false } });
+    await win.loadFile(tmp);
+    const pdf = await win.webContents.printToPDF({ printBackground: true, margins: { marginType: "custom", top: 0.4, bottom: 0.4, left: 0.4, right: 0.4 } });
+    win.destroy(); win = null;
+    try { rmSync(tmp); } catch {}
+    const { canceled, filePath } = await dialog.showSaveDialog({ defaultPath: filename || "rapport-pegasus.pdf", filters: [{ name: "PDF", extensions: ["pdf"] }] });
+    if (canceled || !filePath) return { ok: false, error: "Export annulé." };
+    writeFileSync(filePath, pdf);
+    return { ok: true, path: filePath };
+  } catch (e) { if (win) try { win.destroy(); } catch {} ; return { ok: false, error: e.message }; }
+});
 // Contenus du site (pages réelles) — sert à générer l'arborescence
 ipcMain.handle("pegasus:siteContent", async (_e, key) => {
   try { return { ok: true, content: await pegCall(key, "GET", "/content") }; }

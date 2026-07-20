@@ -1061,6 +1061,38 @@
   .ab-layout.readonly .ab-mini{display:none;}
   .ab-layout.readonly .ab-mini[data-act="maquette"]{display:inline-block;}
   .ab-layout.readonly .ab-outport,.ab-layout.readonly .ab-lvlb{display:none;}
+  /* ── Tableaux de bord (SEO/Perf/Sécurité) + Rapport ── */
+  .pg-dash{display:flex;gap:12px;margin:12px 0 6px;flex-wrap:wrap;}
+  .pg-dcard{flex:1;min-width:150px;border:1px solid var(--line);border-radius:14px;padding:14px;background:var(--bg2);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;}
+  .pg-dcard.pg-dwide{flex:2.2;min-width:240px;align-items:stretch;}
+  .pg-gwrap{width:120px;}
+  .pg-gauge{width:100%;height:auto;}
+  .pg-dbig{font-size:34px;font-weight:700;color:var(--txt);line-height:1;}
+  .pg-dlabel{font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--dim);text-align:center;}
+  .pg-dcard.pg-dwide .pg-dlabel{text-align:left;margin-bottom:4px;}
+  .pg-spark{width:100%;height:54px;display:block;}
+  .pg-nospark{color:var(--dim);font-size:11px;line-height:1.5;display:flex;align-items:center;min-height:44px;}
+  .pg-bars{display:flex;flex-direction:column;gap:6px;}
+  .pg-bar-row{display:flex;align-items:center;gap:9px;font-size:12px;}
+  .pg-bar-l{flex:0 0 130px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .pg-bar-track{flex:1;height:8px;border-radius:5px;background:var(--card2);overflow:hidden;}
+  .pg-bar-fill{display:block;height:100%;border-radius:5px;}
+  .pg-bar-v{flex:0 0 34px;text-align:right;color:var(--txt);font-weight:600;}
+  .rp-head{display:flex;align-items:center;gap:10px;margin:14px 0;flex-wrap:wrap;}
+  .rp-periods{display:flex;gap:4px;background:var(--card2);border-radius:10px;padding:3px;}
+  .rp-per{background:none;border:none;color:var(--muted);font-size:12px;cursor:pointer;padding:6px 13px;border-radius:8px;transition:background .12s,color .12s;}
+  .rp-per:hover{color:var(--txt);}
+  .rp-per.on{background:var(--panel);color:var(--txt);box-shadow:var(--neu);}
+  .rp-title{font-size:17px;font-weight:600;margin:6px 0 10px;}
+  .rp-title span{color:var(--dim);font-weight:400;font-size:13px;}
+  .rp-domain{margin-bottom:6px;}
+  .rp-dhead{display:flex;align-items:baseline;justify-content:space-between;margin-top:14px;}
+  .rp-dhead h3{font-size:13.5px;font-weight:600;}
+  .rp-dcount{font-size:11px;color:var(--dim);}
+  .rp-anz{margin-bottom:12px;}
+  .rp-anz-t{font-size:12.5px;font-weight:600;color:var(--txt);margin-bottom:3px;}
+  .rp-anz-l{font-size:12.5px;color:var(--muted);line-height:1.55;margin:2px 0;}
+  .rp-anz-l b{color:var(--txt);}
   /* ── Medusa : statut + capacités ── */
   .md-hero{display:flex;align-items:center;gap:16px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px 20px;max-width:660px;}
   .md-hero .pg-dot{width:11px;height:11px;}

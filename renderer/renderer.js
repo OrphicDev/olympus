@@ -155,8 +155,69 @@ let pgFacet = { label: "Toutes les références" };
 const pgFacetOf = (el) => ({ kind: el.dataset.kind || "", niveau: el.dataset.niveau || "", registre: el.dataset.registre || "", business: el.dataset.business || "", label: el.dataset.label || el.querySelector(".lname").textContent });
 const pgFacetEq = (el) => (el.dataset.kind || "") === (pgFacet.kind || "") && (el.dataset.niveau || "") === (pgFacet.niveau || "") && (el.dataset.registre || "") === (pgFacet.registre || "") && (el.dataset.business || "") === (pgFacet.business || "");
 const pgHealth = {}, pgInspect = {}, pgSeo = {}, pgPerf = {}, pgDiag = {};
-let pgSiteTab = "general"; // onglet du détail site : general | seo | perf | secu
+let pgSiteTab = "general"; // onglet du détail site : general | seo | perf | secu | rapport
 let pgSecAction = null; // panneau des 3 gros boutons : copy | push | rollback | null
+
+// ══ Graphiques SVG maison (aucune dépendance, CSP-safe ; couleur passée en argument
+// pour marcher à la fois dans l'app (var(--…)) et dans le PDF (hex)) ══
+function pgGauge(value, max, color, label) {
+  const pct = Math.max(0, Math.min(1, (value || 0) / (max || 1)));
+  const circ = Math.PI * 52; // demi-cercle r=52
+  return `<svg viewBox="0 0 120 72" class="pg-gauge" preserveAspectRatio="xMidYMid meet">
+    <path d="M8 62 A52 52 0 0 1 112 62" fill="none" stroke="var(--line,#e6e6e6)" stroke-width="9" stroke-linecap="round"/>
+    <path d="M8 62 A52 52 0 0 1 112 62" fill="none" stroke="${color}" stroke-width="9" stroke-linecap="round" stroke-dasharray="${(circ * pct).toFixed(1)} ${circ.toFixed(1)}"/>
+    <text x="60" y="56" text-anchor="middle" style="fill:${color};font-size:26px;font-weight:700;">${label != null ? label : value}</text>
+  </svg>`;
+}
+function pgSparkline(vals, color, w, h) {
+  vals = (vals || []).filter((v) => v != null && !isNaN(v));
+  w = w || 260; h = h || 54; const pad = 4;
+  if (vals.length < 2) return `<div class="pg-nospark">Historique insuffisant — reviens après quelques analyses pour voir la tendance.</div>`;
+  const min = Math.min(...vals), max = Math.max(...vals), rng = (max - min) || 1;
+  const X = (i) => pad + (i / (vals.length - 1)) * (w - 2 * pad);
+  const Y = (v) => h - pad - ((v - min) / rng) * (h - 2 * pad);
+  const line = vals.map((v, i) => `${i ? "L" : "M"}${X(i).toFixed(1)} ${Y(v).toFixed(1)}`).join(" ");
+  const area = `${line} L${X(vals.length - 1).toFixed(1)} ${(h - pad).toFixed(1)} L${X(0).toFixed(1)} ${(h - pad).toFixed(1)} Z`;
+  const last = vals[vals.length - 1];
+  return `<svg viewBox="0 0 ${w} ${h}" class="pg-spark" preserveAspectRatio="none">
+    <path d="${area}" fill="${color}" opacity=".13"/>
+    <path d="${line}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="${X(vals.length - 1).toFixed(1)}" cy="${Y(last).toFixed(1)}" r="2.6" fill="${color}"/>
+  </svg>`;
+}
+function pgBars(series) {
+  const max = Math.max(1, ...series.map((s) => s.value || 0));
+  return `<div class="pg-bars">${series.map((s) => `
+    <div class="pg-bar-row"><span class="pg-bar-l">${escapeHtml(s.label)}</span>
+      <span class="pg-bar-track"><span class="pg-bar-fill" style="width:${((s.value || 0) / max * 100).toFixed(0)}%;background:${s.color || "var(--accent2)"}"></span></span>
+      <span class="pg-bar-v">${s.value}</span></div>`).join("")}</div>`;
+}
+// Tendance entre le 1er et le dernier point d'une série (goodDown = une baisse est bonne)
+function pgTrend(vals, goodDown) {
+  vals = (vals || []).filter((v) => v != null && !isNaN(v));
+  if (vals.length < 2) return null;
+  const d = vals[vals.length - 1] - vals[0];
+  if (d === 0) return { dir: "stable", txt: "stable", good: null };
+  const up = d > 0;
+  const good = goodDown ? !up : up;
+  return { dir: up ? "up" : "down", delta: d, good, txt: `${up ? "▲" : "▼"} ${Math.abs(d).toFixed(goodDown && Math.abs(d) < 3 ? 2 : 0)}` };
+}
+
+// ── Historique des métriques (SEO/Perf/Sécurité) : cache + capture ──
+const pgMetrics = {};
+const pgMetricsLoading = new Set();
+async function pgLoadMetrics(key) {
+  if (pgMetrics[key]) return pgMetrics[key];
+  if (pgMetricsLoading.has(key)) return null;
+  pgMetricsLoading.add(key);
+  const r = await window.olympus.pegasusMetricsGet(key);
+  pgMetrics[key] = r.ok ? r.metrics : { seo: [], perf: [], secu: [] };
+  pgMetricsLoading.delete(key);
+  return pgMetrics[key];
+}
+async function pgCaptureMetric(key, kind, point) {
+  try { await window.olympus.pegasusMetricsAppend(key, kind, point); delete pgMetrics[key]; } catch {}
+}
 let pgCarousel = 0; // vue de la colonne en carrousel : 0 Parc · 1 Bibliothèque · 2 Réglages
 const PG_CVIEWS = ["parc", "biblio", "reglages"];
 
@@ -393,6 +454,7 @@ const PG_TABS = [
   { id: "seo", label: "SEO" },
   { id: "perf", label: "Performance" },
   { id: "secu", label: "Sécurité" },
+  { id: "rapport", label: "Rapport" },
 ];
 
 function pgRenderDetail() {
@@ -417,6 +479,9 @@ function pgRenderDetail() {
   const scb = box.querySelector("#pgSecuBtn"); if (scb) scb.onclick = () => pgLoadDiag(s.key);
   // La Sécurité s'analyse à l'ouverture de l'onglet (diagnostic à distance)
   if (pgSiteTab === "secu" && pgDiag[s.key] === undefined) pgLoadDiag(s.key);
+  // Historique des métriques pour les sparklines des tableaux de bord
+  if (["seo", "perf", "secu", "rapport"].includes(pgSiteTab) && !pgMetrics[s.key]) pgLoadMetrics(s.key).then((m) => { if (m && pgSel === s.key) pgRenderDetail(); });
+  if (pgSiteTab === "rapport") pgRapportRender(s);
   pgRenderSecPanel(s);
   if (pgSiteTab === "pipeline") pgPipelineRender(s);
   if (pgSiteTab === "arbo") pgArboRender(s);
@@ -436,6 +501,7 @@ function pgTabHTML(tab, s) {
   if (tab === "seo") return pgTabSeo(s);
   if (tab === "perf") return pgTabPerf(s);
   if (tab === "secu") return pgTabSecu(s);
+  if (tab === "rapport") return `<div id="pgRapport"><div class="rb-empty">Chargement du rapport…</div></div>`;
   return "";
 }
 
@@ -2105,7 +2171,15 @@ function pgTabSeo(s) {
   if (seo.loading) return `<div class="rb-empty">Audit en cours… (lecture du HTML rendu de chaque page)</div>`;
   if (!seo.ok) return `<div class="rb-empty">Audit impossible : ${escapeHtml(seo.error || "")}</div><button class="cal-btn" id="pgSeoBtn" style="margin-top:8px;">Réessayer</button>`;
   const a = seo.seo;
-  let html = `<div class="pg-line"><span class="k">Plugin SEO</span><span class="v">${escapeHtml(a.plugin_seo)}</span></div>`;
+  const problemes = Object.values(a.resume_problemes || {}).reduce((n, x) => n + (x || 0), 0);
+  const score = Math.max(0, Math.round(100 - (a.pages_auditees ? (problemes / a.pages_auditees) * 20 : 0)));
+  const sp = (pgMetrics[s.key]?.seo || []).map((m) => m.score);
+  let html = `<div class="pg-dash">
+    <div class="pg-dcard"><div class="pg-gwrap">${pgGauge(score, 100, score >= 85 ? "var(--ok)" : score >= 60 ? "var(--warn,#e8c268)" : "var(--err)")}</div><div class="pg-dlabel">Santé SEO</div></div>
+    <div class="pg-dcard"><div class="pg-dbig">${problemes}</div><div class="pg-dlabel">Problèmes · ${a.pages_auditees} page(s)</div></div>
+    <div class="pg-dcard pg-dwide"><div class="pg-dlabel">Tendance (santé SEO)</div>${pgSparkline(sp, "var(--accent2)")}</div>
+  </div>`;
+  html += `<div class="pg-line"><span class="k">Plugin SEO</span><span class="v">${escapeHtml(a.plugin_seo)}</span></div>`;
   html += `<div class="pg-line"><span class="k">Sitemap</span><span class="v">${escapeHtml(a.sitemap)}</span></div>`;
   html += `<div class="pg-line"><span class="k">robots.txt</span><span class="v">${escapeHtml(a.robots_txt)}</span></div>`;
   const res = Object.entries(a.resume_problemes || {}).filter(([, n]) => n > 0);
@@ -2128,8 +2202,11 @@ function pgTabPerf(s) {
   const lcpOk = p.lcp_ms != null ? p.lcp_ms <= 2500 : null;
   const clsOk = p.cls_val != null ? p.cls_val <= 0.1 : null;
   const mark = (ok) => ok == null ? "" : ok ? ` <b style="color:var(--ok)">✓</b>` : ` <b style="color:var(--err)">✕ hors budget</b>`;
-  let html = `<div class="pg-kpis">
-    <div class="pg-kpi"><div class="n" style="color:${p.score >= 90 ? "var(--ok)" : p.score >= 50 ? "var(--warn)" : "var(--err)"}">${p.score}</div><div class="l">Score perf · ${escapeHtml(p.strategy)}</div></div>
+  const scoreCol = p.score >= 90 ? "var(--ok)" : p.score >= 50 ? "var(--warn,#e8c268)" : "var(--err)";
+  const sp = (pgMetrics[s.key]?.perf || []).map((m) => m.score);
+  let html = `<div class="pg-dash">
+    <div class="pg-dcard"><div class="pg-gwrap">${pgGauge(p.score, 100, scoreCol)}</div><div class="pg-dlabel">Score perf · ${escapeHtml(p.strategy)}</div></div>
+    <div class="pg-dcard pg-dwide"><div class="pg-dlabel">Tendance (score performance)</div>${pgSparkline(sp, scoreCol)}</div>
   </div>`;
   html += `<div class="pg-sub">Métriques (terrain / labo PageSpeed)</div>`;
   html += `<div class="pg-line"><span class="k">LCP</span><span class="v">${escapeHtml(p.lcp || "—")}${mark(lcpOk)}</span></div>`;
@@ -2141,41 +2218,38 @@ function pgTabPerf(s) {
   return html;
 }
 
-function pgTabSecu(s) {
-  const dg = pgDiag[s.key];
-  if (!dg) return `<div class="rb-empty">Analyse de sécurité en cours…</div>`;
-  if (!dg.ok) return `<div class="rb-empty">Analyse impossible : ${escapeHtml(dg.error || "")}</div><button class="cal-btn" id="pgSecuBtn" style="margin-top:8px;">Réessayer</button>`;
-  const d = dg.diag;
+// Contrôles de sécurité dérivés du diagnostic (partagés onglet + capture métrique)
+function pgSecuChecks(s, d) {
   const https = /^https:\/\//i.test(s.base_url);
   const phpV = parseFloat(String(d.site?.php || ""));
   const locks = d.verrous_serveur || {};
   const plugins = d.plugins || [];
   const inactifs = plugins.filter((p) => !p.active);
-  // Chaque contrôle : état (ok|warn|err) + libellé + conseil
   const checks = [
-    https
-      ? ["ok", "Connexion HTTPS active", ""]
-      : ["err", "Pas de HTTPS", "requis pour sécuriser les identifiants et le référencement"],
-    d.site?.debug
-      ? ["err", "Mode debug WordPress ACTIVÉ en production", "expose des chemins et erreurs — à désactiver (WP_DEBUG=false)"]
-      : ["ok", "Mode debug désactivé", ""],
-    locks.DISALLOW_FILE_EDIT
-      ? ["ok", "Éditeur de fichiers du back-office désactivé", ""]
-      : ["warn", "Éditeur de thème/plugin actif dans wp-admin", "un compte admin compromis peut injecter du PHP — verrouiller avec DISALLOW_FILE_EDIT"],
-    phpV >= 8.1
-      ? ["ok", `PHP ${escapeHtml(String(d.site?.php))}`, "version maintenue"]
-      : ["warn", `PHP ${escapeHtml(String(d.site?.php || "?"))}`, "fin de vie / bientôt — planifier une montée de version avec l'hébergeur"],
-    inactifs.length
-      ? ["warn", `${inactifs.length} extension(s) inactive(s)`, "à supprimer : même inactives, elles restent une surface d'attaque"]
-      : ["ok", "Aucune extension inactive qui traîne", ""],
-    d.multisite
-      ? ["warn", "Installation multisite", "surface et droits élargis — à surveiller"]
-      : null,
+    https ? ["ok", "Connexion HTTPS active", ""] : ["err", "Pas de HTTPS", "requis pour sécuriser les identifiants et le référencement"],
+    d.site?.debug ? ["err", "Mode debug WordPress ACTIVÉ en production", "expose des chemins et erreurs — à désactiver (WP_DEBUG=false)"] : ["ok", "Mode debug désactivé", ""],
+    locks.DISALLOW_FILE_EDIT ? ["ok", "Éditeur de fichiers du back-office désactivé", ""] : ["warn", "Éditeur de thème/plugin actif dans wp-admin", "un compte admin compromis peut injecter du PHP — verrouiller avec DISALLOW_FILE_EDIT"],
+    phpV >= 8.1 ? ["ok", `PHP ${escapeHtml(String(d.site?.php))}`, "version maintenue"] : ["warn", `PHP ${escapeHtml(String(d.site?.php || "?"))}`, "fin de vie / bientôt — planifier une montée de version avec l'hébergeur"],
+    inactifs.length ? ["warn", `${inactifs.length} extension(s) inactive(s)`, "à supprimer : même inactives, elles restent une surface d'attaque"] : ["ok", "Aucune extension inactive qui traîne", ""],
+    d.multisite ? ["warn", "Installation multisite", "surface et droits élargis — à surveiller"] : null,
   ].filter(Boolean);
   const nOk = checks.filter((c) => c[0] === "ok").length;
-  const nBad = checks.length - nOk;
+  return { checks, nOk, nBad: checks.length - nOk, https, phpV, plugins, inactifs };
+}
+function pgTabSecu(s) {
+  const dg = pgDiag[s.key];
+  if (!dg) return `<div class="rb-empty">Analyse de sécurité en cours…</div>`;
+  if (!dg.ok) return `<div class="rb-empty">Analyse impossible : ${escapeHtml(dg.error || "")}</div><button class="cal-btn" id="pgSecuBtn" style="margin-top:8px;">Réessayer</button>`;
+  const d = dg.diag;
+  const { checks, nOk, nBad, plugins, inactifs } = pgSecuChecks(s, d);
+  const spark = (pgMetrics[s.key]?.secu || []).map((m) => m.score);
+  const dashTop = `<div class="pg-dash">
+    <div class="pg-dcard"><div class="pg-gwrap">${pgGauge(nOk, checks.length, nBad === 0 ? "var(--ok)" : nBad <= 1 ? "var(--warn,#e8c268)" : "var(--err)", nOk + "/" + checks.length)}</div><div class="pg-dlabel">Contrôles au vert</div></div>
+    <div class="pg-dcard pg-dwide"><div class="pg-dlabel">Tendance (score sécurité)</div>${pgSparkline(spark, "var(--ok)")}</div>
+  </div>`;
   const ico = { ok: '<span style="color:var(--ok)">✓</span>', warn: '<span style="color:var(--warn,#e8c268)">!</span>', err: '<span style="color:var(--err)">✕</span>' };
   let html = `<p class="pg-mnote">Contrôles de sécurité lus à distance par Pegasus (sans FTP). ${nBad === 0 ? "Tout est au vert." : `${nOk} au vert · <b style="color:var(--txt)">${nBad} à traiter</b>.`} Le suivi CVE/uptime continu viendra avec l'agent de monitoring.</p>`;
+  html += dashTop;
   html += `<div class="pg-sub">Contrôles</div>`;
   html += checks.map(([st, label, detail]) => `<div class="pg-alert">${ico[st]} ${label}${detail ? ` <span style="color:var(--dim)">— ${detail}</span>` : ""}</div>`).join("");
   html += `<div class="pg-sub">Ce que Pegasus peut toucher</div>`;
@@ -2195,7 +2269,152 @@ async function pgLoadDiag(key) {
   pgDiag[key] = null;
   const r = await window.olympus.pegasusSiteDiag(key);
   pgDiag[key] = r;
+  if (r.ok && r.diag) {
+    const s = pgSites.find((x) => x.key === key) || { base_url: "", key };
+    const c = pgSecuChecks(s, r.diag);
+    const score = Math.round((c.nOk / (c.checks.length || 1)) * 100);
+    await pgCaptureMetric(key, "secu", { score, ok: c.nOk, bad: c.nBad });
+  }
   if (pgSel === key && pgSiteTab === "secu") pgRenderDetail();
+}
+
+// ══════════ RAPPORT — tableau de bord dans le temps + analyse + export PDF ══════════
+let pgRapportPeriod = 30;
+const pgSlugish = (s) => String(s || "site").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "site";
+function pgWithin(arr, days) {
+  if (!days) return arr.slice();
+  const cut = Date.now() - days * 86400000;
+  return (arr || []).filter((m) => new Date(m.ts).getTime() >= cut);
+}
+function pgReportData(m, days) {
+  return { seo: pgWithin(m.seo || [], days), perf: pgWithin(m.perf || [], days), secu: pgWithin(m.secu || [], days) };
+}
+// Analyse « chiffres → sens » : état, tendance, priorités. Renvoie 3 blocs.
+function pgReportAnalysis(data) {
+  const blocs = [];
+  const trendTxt = (t) => !t ? "" : t.dir === "stable" ? " — stable sur la période" : t.good ? ` — en amélioration (${t.txt})` : ` — en dégradation (${t.txt})`;
+  if (data.seo.length) {
+    const l = data.seo[data.seo.length - 1], t = pgTrend(data.seo.map((x) => x.score), false);
+    const lignes = [`Santé SEO à <b>${l.score}/100</b> sur ${l.pages} page(s) auditée(s)${trendTxt(t)}.`];
+    if (l.problemes) lignes.push(`${l.problemes} problème(s) SEO relevé(s) — titres, méta-descriptions, H1, canonical ou balises Open Graph à compléter, page par page dans l'onglet SEO.`);
+    else lignes.push("Aucun problème SEO majeur détecté.");
+    if (!l.sitemap) lignes.push("⚠ Pas de sitemap détecté — à activer pour l'indexation.");
+    if (!l.robots) lignes.push("⚠ robots.txt absent.");
+    blocs.push({ titre: "Référencement (SEO)", score: l.score, lignes });
+  }
+  if (data.perf.length) {
+    const l = data.perf[data.perf.length - 1], t = pgTrend(data.perf.map((x) => x.score), false);
+    const lignes = [`Score de performance <b>${l.score}/100</b> (${l.strategy})${trendTxt(t)}.`];
+    if (l.lcp != null) lignes.push(`LCP ${(l.lcp / 1000).toFixed(1)} s ${l.lcp <= 2500 ? "✓ dans le budget Orphic (< 2,5 s)" : "✕ hors budget (> 2,5 s) — optimiser images/police/hébergement"}.`);
+    if (l.cls != null) lignes.push(`CLS ${l.cls.toFixed(2)} ${l.cls <= 0.1 ? "✓ stable" : "✕ mise en page instable — réserver les tailles d'images/embeds"}.`);
+    blocs.push({ titre: "Performance", score: l.score, lignes });
+  }
+  if (data.secu.length) {
+    const l = data.secu[data.secu.length - 1], t = pgTrend(data.secu.map((x) => x.score), false);
+    const lignes = [`Score de sécurité <b>${l.score}/100</b> — ${l.ok} contrôle(s) au vert, <b>${l.bad}</b> à traiter${trendTxt(t)}.`];
+    if (l.bad) lignes.push("Points ouverts détaillés dans l'onglet Sécurité (verrou de l'éditeur de fichiers, version PHP, extensions inactives…).");
+    else lignes.push("Tous les contrôles de sécurité passent.");
+    blocs.push({ titre: "Sécurité", score: l.score, lignes });
+  }
+  return blocs;
+}
+function pgReportBody(s, data, days) {
+  const per = days ? `${days} derniers jours` : "tout l'historique";
+  const dom = (label, arr, key, color) => {
+    if (!arr.length) return "";
+    const l = arr[arr.length - 1];
+    return `<div class="rp-domain">
+      <div class="rp-dhead"><h3>${label}</h3><span class="rp-dcount">${arr.length} mesure(s)</span></div>
+      <div class="pg-dash">
+        <div class="pg-dcard"><div class="pg-gwrap">${pgGauge(l[key], 100, color)}</div><div class="pg-dlabel">Score actuel</div></div>
+        <div class="pg-dcard pg-dwide"><div class="pg-dlabel">Évolution</div>${pgSparkline(arr.map((x) => x[key]), color)}</div>
+      </div>
+    </div>`;
+  };
+  const blocs = pgReportAnalysis(data);
+  return `
+    <div class="rp-title">Rapport — ${escapeHtml(s.label)} <span>· ${per}</span></div>
+    ${dom("Référencement (SEO)", data.seo, "score", "var(--accent2)")}
+    ${dom("Performance", data.perf, "score", "#7fb2e8")}
+    ${dom("Sécurité", data.secu, "score", "var(--ok)")}
+    <div class="pg-sub">Analyse</div>
+    ${blocs.map((b) => `<div class="rp-anz"><div class="rp-anz-t">${b.titre}</div>${b.lignes.map((x) => `<div class="rp-anz-l">${x}</div>`).join("")}</div>`).join("") || '<div class="rb-empty">—</div>'}`;
+}
+function pgReportPdfHTML(s, data, days) {
+  const per = days ? `${days} derniers jours` : "tout l'historique";
+  const C = { acc: "#7a1b28", ok: "#2e7d32", warn: "#b7791f", err: "#c62828", blue: "#3a6ea5" };
+  const dom = (label, arr, color) => {
+    if (!arr.length) return "";
+    const l = arr[arr.length - 1];
+    return `<div class="dom"><h2>${label}</h2>
+      <div class="row"><div class="gauge">${pgGauge(l.score, 100, color)}<div class="cap">Score actuel</div></div>
+      <div class="spark">${pgSparkline(arr.map((x) => x.score), color)}<div class="cap">Évolution sur la période (${arr.length} mesures)</div></div></div></div>`;
+  };
+  const blocs = pgReportAnalysis(data);
+  const now = new Date().toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" });
+  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1c1c1c;font-size:13px;line-height:1.55;padding:8px 4px}
+    .head{border-bottom:3px solid ${C.acc};padding-bottom:14px;margin-bottom:22px}
+    .head .brand{color:${C.acc};font-weight:800;letter-spacing:.14em;font-size:12px}
+    .head h1{font-size:24px;margin:6px 0 3px;font-weight:700}
+    .head .meta{color:#666;font-size:12px}
+    h2{font-size:15px;margin:0 0 10px;color:${C.acc}}
+    .dom{border:1px solid #e6e6e6;border-radius:12px;padding:16px 18px;margin-bottom:16px;break-inside:avoid}
+    .row{display:flex;gap:26px;align-items:center}
+    .gauge{width:150px;text-align:center;flex-shrink:0}
+    .spark{flex:1}
+    .cap{color:#777;font-size:11px;margin-top:4px}
+    .pg-gauge{width:130px;height:78px}
+    .pg-spark{width:100%;height:56px}
+    .anz{margin-bottom:14px;break-inside:avoid}
+    .anz h3{font-size:13.5px;margin-bottom:4px;color:#111}
+    .anz p{margin:3px 0;color:#333}
+    .sec-title{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#999;margin:24px 0 12px;border-top:1px solid #eee;padding-top:14px}
+    .foot{margin-top:28px;border-top:1px solid #eee;padding-top:12px;color:#999;font-size:11px;text-align:center}
+    b{color:#111}
+  </style></head><body>
+    <div class="head"><div class="brand">ORPHIC AGENCY</div><h1>Rapport — ${escapeHtml(s.label)}</h1>
+      <div class="meta">Période : ${per} · Édité le ${now} · ${escapeHtml(s.base_url || "")}</div></div>
+    ${dom("Référencement (SEO)", data.seo, C.acc)}
+    ${dom("Performance", data.perf, C.blue)}
+    ${dom("Sécurité", data.secu, C.ok)}
+    <div class="sec-title">Analyse</div>
+    ${blocs.map((b) => `<div class="anz"><h3>${b.titre}</h3>${b.lignes.map((x) => `<p>${x}</p>`).join("")}</div>`).join("") || "<p>Pas encore de données sur la période.</p>"}
+    <div class="foot">Généré par Pegasus · Olympus — Orphic Agency, Monaco</div>
+  </body></html>`;
+}
+async function pgRapportRender(s) {
+  const box = $("pgRapport"); if (!box) return;
+  const m = (await pgLoadMetrics(s.key)) || pgMetrics[s.key] || { seo: [], perf: [], secu: [] };
+  const days = pgRapportPeriod;
+  const data = pgReportData(m, days);
+  const empty = !data.seo.length && !data.perf.length && !data.secu.length;
+  box.innerHTML = `
+    <p class="pg-mnote">Vue d'ensemble de <b>${escapeHtml(s.label)}</b> dans le temps — chaque analyse SEO / Performance / Sécurité alimente l'historique. Choisis une période, lis l'analyse, exporte en PDF.</p>
+    <div class="rp-head">
+      <div class="rp-periods">${[[7, "7 j"], [30, "30 j"], [90, "90 j"], [0, "Tout"]].map(([d, l]) => `<button class="rp-per${days === d ? " on" : ""}" data-per="${d}">${l}</button>`).join("")}</div>
+      <button class="btn sec" id="rpClaude" title="Ouvre une session Claude Code sur les métriques pour une analyse rédigée">✨ Analyse par Claude</button>
+      <button class="cal-btn primary" id="rpPdf">⤓ Exporter en PDF</button>
+    </div>
+    ${empty ? `<div class="rb-empty">Aucune donnée sur cette période. Lance les analyses SEO, Performance et Sécurité (elles s'enregistrent automatiquement), puis reviens ici — la tendance apparaît dès la 2ᵉ mesure.</div>` : pgReportBody(s, data, days)}`;
+  box.querySelectorAll(".rp-per").forEach((b) => b.onclick = () => { pgRapportPeriod = +b.dataset.per; pgRapportRender(s); });
+  const pdf = $("rpPdf"); if (pdf) pdf.onclick = async () => {
+    if (empty) { alert("Rien à exporter : lance d'abord les analyses."); return; }
+    pdf.disabled = true; pdf.textContent = "Génération…";
+    const r = await window.olympus.pegasusExportPdf(pgReportPdfHTML(s, data, days), `rapport-${pgSlugish(s.label)}-${new Date().toISOString().slice(0, 10)}.pdf`);
+    pdf.disabled = false; pdf.textContent = "⤓ Exporter en PDF";
+    const msg = $("pgWorkMsg");
+    if (r.ok && msg) { msg.className = "msg ok"; msg.textContent = "PDF exporté : " + r.path; }
+    else if (!r.ok && r.error !== "Export annulé.") alert("Échec de l'export : " + (r.error || ""));
+  };
+  const clb = $("rpClaude"); if (clb) clb.onclick = async () => {
+    const prompt = `Rédige une analyse du site « ${s.label} » à partir de son historique de métriques (fichier metrics.json de ce dossier : séries seo/perf/secu datées). Période : ${days ? `${days} derniers jours` : "tout l'historique"}. Donne un état des lieux par domaine (SEO, performance, sécurité), les tendances (amélioration ou dégradation), les points prioritaires et des recommandations concrètes et chiffrées. Écris en français, ton professionnel, et enregistre le résultat dans metrics-analyse.md.`;
+    const r = await window.olympus.pegasusPipelineDiscuss(s.key, prompt);
+    const msg = $("pgWorkMsg");
+    if (r.ok && msg) { msg.className = "msg ok"; msg.textContent = "Session Claude ouverte — l'analyse rédigée arrivera dans metrics-analyse.md."; }
+    else if (!r.ok) alert("Échec : " + (r.error || ""));
+  };
 }
 
 async function pgRunSeo(key) {
@@ -2203,6 +2422,14 @@ async function pgRunSeo(key) {
   pgRenderDetail();
   const r = await window.olympus.pegasusSiteSeo(key, 10);
   pgSeo[key] = r;
+  if (r.ok && r.seo) {
+    const a = r.seo;
+    const problemes = Object.values(a.resume_problemes || {}).reduce((n, x) => n + (x || 0), 0);
+    const pages = a.pages_auditees || 0;
+    // Score SEO simple : 100 − (problèmes / pages) pondéré
+    const score = Math.max(0, Math.round(100 - (pages ? (problemes / pages) * 20 : 0)));
+    await pgCaptureMetric(key, "seo", { problemes, pages, score, sitemap: a.sitemap !== "absent", robots: a.robots_txt !== "absent" });
+  }
   if (pgSel === key) pgRenderDetail();
 }
 async function pgRunPerf(key) {
@@ -2210,6 +2437,10 @@ async function pgRunPerf(key) {
   pgRenderDetail();
   const r = await window.olympus.pegasusSitePerf(key, "mobile");
   pgPerf[key] = r;
+  if (r.ok && r.perf) {
+    const p = r.perf;
+    await pgCaptureMetric(key, "perf", { score: p.score, lcp: p.lcp_ms, cls: p.cls_val, strategy: p.strategy });
+  }
   if (pgSel === key) pgRenderDetail();
 }
 
