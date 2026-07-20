@@ -265,6 +265,7 @@
   .fdl:hover{opacity:1;}
   #chatMessages{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding:10px 8px 26px 0;scrollbar-width:none;-webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 26px,#000 calc(100% - 20px),transparent);mask-image:linear-gradient(to bottom,transparent 0,#000 26px,#000 calc(100% - 20px),transparent);}
   #chatMessages::-webkit-scrollbar{display:none;}
+  #chatMessages::before{content:"";margin-top:auto;}/* ancre les messages en bas (chat moderne) */
   .bubble{max-width:70%;padding:9px 13px;border-radius:14px;font-size:14px;line-height:1.5;word-wrap:break-word;}
   .bubble .author{font-size:11px;color:var(--dim);margin-bottom:3px;font-weight:600;}
   .bubble.them{align-self:flex-start;background:var(--card);border:1px solid var(--line);border-bottom-left-radius:4px;}
