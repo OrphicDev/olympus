@@ -1162,6 +1162,24 @@ ipcMain.handle("pegasus:arboScan", async (_e, key, homeWp) => {
       if (fms && fms.length) { footer = fms[fms.length - 1]; html = html.replace(footer, ""); }
       return { header, footer, content: html };
     };
+    // Sections top-level du HTML rendu (comptage de profondeur, <section> imbriquées gérées)
+    const topSections = (html) => {
+      const out = [];
+      const re2 = /<section\b[^>]*>|<\/section>/gi;
+      let depth = 0, st = -1, mm, stTag = "";
+      while ((mm = re2.exec(html))) {
+        if (mm[0][1] !== "/") { if (depth === 0) { st = re2.lastIndex; stTag = mm[0]; } depth++; }
+        else { depth = Math.max(0, depth - 1); if (depth === 0 && st >= 0) { out.push({ tag: stTag, inner: html.slice(st, mm.index) }); st = -1; } }
+      }
+      return out;
+    };
+    const secTitle = (tag, inner, i) => {
+      const h = inner.match(/<h[1-4][^>]*>([\s\S]*?)<\/h[1-4]>/i);
+      let t = h ? h[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim() : "";
+      if (!t) { const idm = tag.match(/id=["']([^"']+)["']/); if (idm) t = idm[1].replace(/[-_]+/g, " "); }
+      if (!t) { const cm = tag.match(/class=["']([^"']+)["']/); if (cm) t = cm[1].split(/\s+/)[0].replace(/[-_]+/g, " "); }
+      return (t || "Section " + (i + 1)).slice(0, 40);
+    };
     const headerLinks = new Map(), footerLinks = new Map();
     const subRels = new Map(); // parentWp -> Map(childWp -> label) : hiérarchie des sous-menus
     // Le menu porte la hiérarchie : un lien dans un <ul> imbriqué (sous-menu) est un
@@ -1216,7 +1234,19 @@ ipcMain.handle("pegasus:arboScan", async (_e, key, homeWp) => {
       const { header, footer, content } = splitRegions(html);
       parseMenu(header, url);
       for (const l of linksIn(footer, url, selfWp)) if (!footerLinks.has(l.wp)) footerLinks.set(l.wp, l.label);
-      if (pageNode) pageNode._links = linksIn(content, url, selfWp);
+      if (pageNode) {
+        const secs = topSections(content);
+        if (secs.length) {
+          // Les vraies sections de la page (avec ou sans destination)
+          pageNode._secs = secs.slice(0, 12).map((sc, i) => {
+            const links = linksIn(sc.inner, url, selfWp);
+            return { titre: secTitle(sc.tag, sc.inner, i), cibleWp: links.length ? links[0].wp : null };
+          });
+        } else {
+          // Markup sans <section> (Elementor conteneurs…) → repli sur les liens
+          pageNode._links = linksIn(content, url, selfWp);
+        }
+      }
     };
     for (const c of items.filter((x) => x.status === "publish").slice(0, 20)) {
       await scanPage(c.url, pages.find((p) => p.wp_id === c.id), c.id);
@@ -1245,8 +1275,9 @@ ipcMain.handle("pegasus:arboScan", async (_e, key, homeWp) => {
       }
     }
     for (const p of pages) {
+      for (const sc of p._secs || []) p.sections.push({ id: mkId(), titre: sc.titre, cible: sc.cibleWp ? idByWp.get(sc.cibleWp) : "", color: nextColor() });
       for (const l of p._links || []) p.sections.push({ id: mkId(), titre: l.label, cible: idByWp.get(l.wp), color: nextColor() });
-      delete p._links;
+      delete p._secs; delete p._links;
     }
     // Hiérarchie des sous-menus : enfants attachés à leur page parente (→ niveau 3)
     for (const [parentWp, children] of subRels) {
@@ -1254,8 +1285,10 @@ ipcMain.handle("pegasus:arboScan", async (_e, key, homeWp) => {
       if (!parentNode) continue;
       for (const [childWp, label] of children) {
         const cid = idByWp.get(childWp);
-        if (!cid || parentNode.sections.some((sc) => sc.cible === cid)) continue;
-        parentNode.sections.push({ id: mkId(), titre: label, cible: cid, color: nextColor() });
+        if (!cid) continue;
+        const existing = parentNode.sections.find((sc) => sc.cible === cid);
+        if (existing) { existing.menu = true; continue; }
+        parentNode.sections.push({ id: mkId(), titre: label, cible: cid, color: nextColor(), menu: true });
       }
       headerLinks.delete && children.forEach((_, cw) => headerLinks.delete(cw));
     }

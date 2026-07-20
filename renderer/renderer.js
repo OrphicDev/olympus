@@ -452,26 +452,32 @@ function pgAbLayout(nodes, force) {
   const artefacts = nodes.filter((n) => n.artefact);
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const H = (n) => 64 + (n.wp_id ? 27 : 0) + (n.sections.length ? 15 + n.sections.length * 23 : 0);
-  // Niveaux (BFS) : graines du niveau 2 = liens de la home + Header + Footer (nav globale)
+  // Niveaux : LA HIÉRARCHIE DU MENU PRIME. Phase 1 (menu) : Header/Footer → niveau 2,
+  // sections marquées menu → niveau parent + 1. Phase 2 (contenu) : les pages restantes
+  // héritent du BFS sur les liens de contenu — un raccourci de contenu ne remonte
+  // jamais une page au-dessus de sa place dans le menu.
   const level = new Map();
   const home = pages.find((n) => n.home) || pages[0];
   if (home) level.set(home.id, 1);
-  const queue = [];
-  const seed = (secs) => {
-    for (const sc of secs || []) {
-      const t = sc.cible && byId.get(sc.cible);
-      if (t && !t.artefact && !level.has(t.id)) { level.set(t.id, 2); queue.push(t.id); }
+  const bfs = (edgesOf, seeds) => {
+    const queue = [...seeds];
+    while (queue.length) {
+      const id = queue.shift();
+      for (const sc of edgesOf(byId.get(id))) {
+        const t = sc.cible && byId.get(sc.cible);
+        if (t && !t.artefact && !level.has(t.id)) { level.set(t.id, level.get(id) + 1); queue.push(t.id); }
+      }
     }
   };
-  if (home) seed(home.sections);
-  for (const a of artefacts) seed(a.sections);
-  while (queue.length) {
-    const id = queue.shift();
-    for (const sc of byId.get(id).sections) {
-      const t = sc.cible && byId.get(sc.cible);
-      if (t && !t.artefact && !level.has(t.id)) { level.set(t.id, level.get(id) + 1); queue.push(t.id); }
-    }
+  // Phase 1 — le menu : artefacts (niveau 2) puis sous-menus en cascade
+  const menuSeeds = [];
+  for (const a of artefacts) for (const sc of a.sections) {
+    const t = sc.cible && byId.get(sc.cible);
+    if (t && !t.artefact && !level.has(t.id)) { level.set(t.id, 2); menuSeeds.push(t.id); }
   }
+  bfs((n) => (n.sections || []).filter((sc) => sc.menu), menuSeeds);
+  // Phase 2 — le contenu : complète les pages hors menu
+  bfs((n) => n.sections || [], [...level.keys()]);
   let maxL = 1;
   for (const v of level.values()) maxL = Math.max(maxL, v);
   for (const n of pages) if (!level.has(n.id)) level.set(n.id, maxL + 1);
