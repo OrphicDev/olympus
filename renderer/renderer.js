@@ -574,10 +574,15 @@ function pgAbMerge(cur, scanned) {
       if (Number.isFinite(old.level)) np.level = old.level; // niveau fixé à la main conservé
       if (old.links && old.links.length) np.links = old.links; // liens node→node manuels conservés
       if (old.titre && old.titre !== np.titre && !old.wp_id) np.titre = old.titre;
-      // Maquette conservée : contexte de page + textes de sections (matchés par titre)
+      // Maquette conservée : contexte de page + textes/animations de sections (matchés par titre)
       if (old.contexte) np.contexte = old.contexte;
-      const oldTxt = new Map((old.sections || []).filter((x) => x.texte).map((x) => [x.titre, x.texte]));
-      for (const sc of np.sections) if (!sc.texte && oldTxt.has(sc.titre)) sc.texte = oldTxt.get(sc.titre);
+      const oldTxt = new Map((old.sections || []).filter((x) => x.texte || x.animation).map((x) => [x.titre, x]));
+      for (const sc of np.sections) {
+        const o = oldTxt.get(sc.titre);
+        if (!o) continue;
+        if (!sc.texte && o.texte) sc.texte = o.texte;
+        if (!sc.animation && o.animation) sc.animation = o.animation;
+      }
     }
     for (const sc of np.sections) sc.cible = idMap.get(sc.cible) || "";
   }
@@ -679,7 +684,7 @@ async function pgArboRender(s) {
             <div class="ab-phead">
               <div class="ab-title" data-f="titre" title="Double-clic pour renommer">${escapeHtml(p.titre)}</div>
               ${p.artefact ? '<span class="ab-badge dim">artefact</span>' : p.home ? '<span class="ab-badge">accueil</span>' : `<button class="ab-mini" data-act="home" title="Définir comme accueil">⌂</button>`}
-              ${p.artefact ? "" : `<button class="ab-mini${p.contexte || (p.sections || []).some((sc) => sc.texte) ? " has" : ""}" data-act="maquette" title="Maquette : contexte de la page + textes des sections">📝</button>`}
+              ${p.artefact ? "" : `<button class="ab-mini${p.contexte || (p.sections || []).some((sc) => sc.texte || sc.animation) ? " has" : ""}" data-act="maquette" title="Maquette : contexte, explication des sections, destinations, animations">📝</button>`}
               <button class="ab-mini" data-act="rename" title="Renommer">✎</button>
               <button class="ab-mini" data-act="addsec" title="Ajouter une section">＋</button>
               <button class="ab-mini" data-act="delpage" title="Supprimer la page">✕</button>
@@ -1105,12 +1110,19 @@ function pgAbMaquetteModal(s, p, ro) {
         ${ro ? `<div class="pg-alert" style="border:0;color:var(--dim);margin-bottom:10px;">🔒 Version en ligne — lecture seule. Duplique la version en ligne (barre du haut) pour modifier la maquette.</div>` : ""}
         <div class="mood-h" style="margin-bottom:8px;">Contexte de la page</div>
         <textarea class="mood-in mood-ta" data-mq="ctx" placeholder="À quoi sert cette page, à qui elle parle, ce qu'elle doit provoquer…" ${ro ? "disabled" : ""}>${escapeHtml(p.contexte || "")}</textarea>
-        ${(p.sections || []).length ? `<div class="mood-h" style="margin:16px 0 8px;">Textes des sections</div>` : ""}
-        ${(p.sections || []).map((sec, i) => `
+        ${(p.sections || []).length ? `<div class="mood-h" style="margin:16px 0 8px;">Les sections</div>` : ""}
+        ${(p.sections || []).map((sec, i) => {
+          const cible = sec.cible && (pgArboCache[s.key]?.pages || []).find((x) => x.id === sec.cible);
+          return `
           <div class="mq-sec">
-            <div class="mq-t"><span class="ab-secdot" style="background:${sec.color || "var(--line2)"};"></span>${escapeHtml(sec.titre)}</div>
-            <textarea class="mood-in mood-ta mini" data-mq="${i}" placeholder="Le texte / contenu voulu pour cette section…" ${ro ? "disabled" : ""}>${escapeHtml(sec.texte || "")}</textarea>
-          </div>`).join("")}
+            <div class="mq-t">
+              <span class="ab-secdot" style="background:${sec.color || "var(--line2)"};"></span>${escapeHtml(sec.titre)}
+              <span class="mq-dest${cible ? " on" : ""}">${cible ? `⇢ emmène vers <b>${escapeHtml(cible.titre)}</b>` : "⇢ n'emmène nulle part"}</span>
+            </div>
+            <textarea class="mood-in mood-ta mini" data-mq="${i}" placeholder="Explique la section : son rôle, ce qu'elle raconte, son texte…" ${ro ? "disabled" : ""}>${escapeHtml(sec.texte || "")}</textarea>
+            <textarea class="mood-in mood-ta mini mq-anim" data-mqa="${i}" placeholder="Les animations : à l'arrivée, au scroll, au survol…" ${ro ? "disabled" : ""}>${escapeHtml(sec.animation || "")}</textarea>
+          </div>`;
+        }).join("")}
       </div>
       <div class="modal-foot"><span class="ab-hint" style="flex:1;">${ro ? "Consultation seule." : "Enregistré automatiquement — repris dans le brief de construction."}</span><button class="btn" data-x>Fermer</button></div>
     </div>`;
@@ -1118,13 +1130,14 @@ function pgAbMaquetteModal(s, p, ro) {
   const close = () => ov.remove();
   ov.querySelectorAll("[data-x]").forEach((b) => b.onclick = close);
   ov.onclick = (e) => { if (e.target === ov) close(); };
-  ov.querySelectorAll("[data-mq]").forEach((t) => t.oninput = () => {
-    if (t.dataset.mq === "ctx") p.contexte = t.value;
+  ov.querySelectorAll("[data-mq],[data-mqa]").forEach((t) => t.oninput = () => {
+    if (t.dataset.mqa !== undefined) p.sections[+t.dataset.mqa].animation = t.value;
+    else if (t.dataset.mq === "ctx") p.contexte = t.value;
     else p.sections[+t.dataset.mq].texte = t.value;
     pgArboSave(s.key);
     // Le badge 📝 du node s'allume dès qu'une maquette existe
     const btn = document.querySelector(`.ab-node[data-p="${p.id}"] [data-act="maquette"]`);
-    if (btn) btn.classList.toggle("has", !!(p.contexte || (p.sections || []).some((sc) => sc.texte)));
+    if (btn) btn.classList.toggle("has", !!(p.contexte || (p.sections || []).some((sc) => sc.texte || sc.animation)));
   });
 }
 
