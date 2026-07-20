@@ -478,9 +478,34 @@ function pgAbLayout(nodes, force) {
   bfs((n) => (n.sections || []).filter((sc) => sc.menu), menuSeeds);
   // Phase 2 — le contenu : complète les pages hors menu
   bfs((n) => n.sections || [], [...level.keys()]);
+  // Phase 3 — les pages TERMINALES ferment le pipeline (dernière colonne) :
+  // conversion = ciblée par la majorité des pages de contenu et quasi sans liens
+  // sortants (ex : Contact, où tous les CTA mènent) ; utilitaire = accessible
+  // uniquement depuis le Footer (ex : Mentions légales). Lecture : home →
+  // rubriques → sous-pages → terminus.
+  const inHeader = new Set((artefacts.find((a) => a.artefact === "header")?.sections || []).map((sc) => sc.cible).filter(Boolean));
+  const inFooter = new Set((artefacts.find((a) => a.artefact === "footer")?.sections || []).map((sc) => sc.cible).filter(Boolean));
+  const contentPages = pages.filter((p) => (p.sections || []).length);
+  const hitBy = new Map();
+  for (const p of contentPages) {
+    const seen = new Set();
+    for (const sc of p.sections || []) {
+      const t = sc.cible && byId.get(sc.cible);
+      if (t && !t.artefact && t.id !== p.id && !seen.has(t.id)) { seen.add(t.id); hitBy.set(t.id, (hitBy.get(t.id) || 0) + 1); }
+    }
+  }
+  const terminal = new Set();
+  for (const n of pages) {
+    if (n === home) continue;
+    const sortants = (n.sections || []).filter((sc) => sc.cible && sc.cible !== n.id).length;
+    const conversion = contentPages.length >= 4 && sortants <= 2 && (hitBy.get(n.id) || 0) >= Math.ceil(contentPages.length * 0.6);
+    const utilitaire = inFooter.has(n.id) && !inHeader.has(n.id);
+    if (conversion || utilitaire) terminal.add(n.id);
+  }
   let maxL = 1;
-  for (const v of level.values()) maxL = Math.max(maxL, v);
-  for (const n of pages) if (!level.has(n.id)) level.set(n.id, maxL + 1);
+  for (const [id, v] of level) if (!terminal.has(id)) maxL = Math.max(maxL, v);
+  for (const id of terminal) level.set(id, maxL + 1);
+  for (const n of pages) if (!level.has(n.id)) level.set(n.id, maxL + (terminal.size ? 2 : 1));
   // Colonnes : niveau 1 = [Header, home, Footer] empilés ; niveaux suivants à droite
   const X0 = 70, Y0 = 70, COLX = 340, GAP = 26;
   const col1 = [artefacts.find((a) => a.artefact === "header"), home, artefacts.find((a) => a.artefact === "footer")].filter(Boolean);
