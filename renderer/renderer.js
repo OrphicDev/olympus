@@ -441,18 +441,56 @@ const pgArboId = () => "n" + Math.random().toString(36).slice(2, 8);
 const AB_COLORS = ["#e8c268", "#8fd6a6", "#7fb2e8", "#e0868f", "#c9a2e8", "#8fd6cf"];
 let pgAbLink = null;                          // {p, s} : section en cours de câblage
 
-// Position auto pour les nodes sans coordonnées : accueil à gauche, grille ensuite
-function pgAbLayout(pages) {
-  let changed = false, i = 0;
-  const home = pages.find((p) => p.home);
-  if (home && home.x == null) { home.x = 70; home.y = 300; changed = true; }
-  for (const p of pages) {
-    if (p === home || p.x != null) { if (p !== home && p.x != null) i++; continue; }
-    p.x = 430 + Math.floor(i / 4) * 330;
-    p.y = 70 + (i % 4) * 215;
-    i++; changed = true;
+// Rangement par NIVEAUX en colonnes : home = niveau 1 (à gauche), les pages
+// qu'elle atteint = niveau 2 (colonne suivante), etc. Header/Footer = artefacts
+// posés au-dessus / en-dessous de la home. `force` réorganise tout.
+function pgAbLayout(nodes, force) {
+  if (force) nodes.forEach((n) => { n.x = null; n.y = null; });
+  if (!nodes.some((n) => n.x == null)) return false;
+  const pages = nodes.filter((n) => !n.artefact);
+  const artefacts = nodes.filter((n) => n.artefact);
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const H = (n) => 64 + (n.wp_id ? 27 : 0) + (n.sections.length ? 15 + n.sections.length * 23 : 0);
+  // Niveaux (BFS) : graines du niveau 2 = liens de la home + Header + Footer (nav globale)
+  const level = new Map();
+  const home = pages.find((n) => n.home) || pages[0];
+  if (home) level.set(home.id, 1);
+  const queue = [];
+  const seed = (secs) => {
+    for (const sc of secs || []) {
+      const t = sc.cible && byId.get(sc.cible);
+      if (t && !t.artefact && !level.has(t.id)) { level.set(t.id, 2); queue.push(t.id); }
+    }
+  };
+  if (home) seed(home.sections);
+  for (const a of artefacts) seed(a.sections);
+  while (queue.length) {
+    const id = queue.shift();
+    for (const sc of byId.get(id).sections) {
+      const t = sc.cible && byId.get(sc.cible);
+      if (t && !t.artefact && !level.has(t.id)) { level.set(t.id, level.get(id) + 1); queue.push(t.id); }
+    }
   }
-  return changed;
+  let maxL = 1;
+  for (const v of level.values()) maxL = Math.max(maxL, v);
+  for (const n of pages) if (!level.has(n.id)) level.set(n.id, maxL + 1);
+  // Colonnes : niveau 1 = [Header, home, Footer] empilés ; niveaux suivants à droite
+  const X0 = 70, Y0 = 70, COLX = 340, GAP = 26;
+  const col1 = [artefacts.find((a) => a.artefact === "header"), home, artefacts.find((a) => a.artefact === "footer")].filter(Boolean);
+  let y = Y0;
+  for (const n of col1) { n.x = X0; n.y = y; y += H(n) + GAP; }
+  const cols = new Map();
+  for (const n of pages) {
+    if (n === home) continue;
+    const l = Math.max(2, level.get(n.id));
+    if (!cols.has(l)) cols.set(l, []);
+    cols.get(l).push(n);
+  }
+  for (const [l, list] of cols) {
+    let cy = Y0;
+    for (const n of list) { n.x = X0 + (l - 1) * COLX; n.y = cy; cy += H(n) + GAP; }
+  }
+  return true;
 }
 
 // Fusionne un scan du site avec l'arborescence existante : positions/accueil/pages
@@ -460,6 +498,7 @@ function pgAbLayout(pages) {
 function pgAbMerge(cur, scanned) {
   if (!cur) return scanned;
   const byWp = new Map(cur.pages.filter((p) => p.wp_id).map((p) => [p.wp_id, p]));
+  const byArt = new Map(cur.pages.filter((p) => p.artefact).map((p) => [p.artefact, p]));
   const idMap = new Map();
   for (const np of scanned.pages) { const old = np.wp_id && byWp.get(np.wp_id); idMap.set(np.id, old ? old.id : np.id); }
   const hadHome = cur.pages.some((p) => p.home);
@@ -473,8 +512,13 @@ function pgAbMerge(cur, scanned) {
     }
     for (const sc of np.sections) sc.cible = idMap.get(sc.cible) || "";
   }
-  const manual = cur.pages.filter((p) => !p.wp_id);
-  return { pages: [...scanned.pages, ...manual] };
+  for (const np of scanned.pages) {
+    if (!np.artefact) continue;
+    const old = byArt.get(np.artefact);
+    if (old && old.x != null) { np.x = old.x; np.y = old.y; }
+  }
+  const manual = cur.pages.filter((p) => !p.wp_id && !p.artefact);
+  return { pages: [...scanned.pages, ...manual], zoom: cur.zoom };
 }
 
 // Titre éditable au DOUBLE-clic (le simple clic sert au drag)
@@ -539,17 +583,18 @@ async function pgArboRender(s) {
     <div class="pg-actrow" style="margin-bottom:12px;">
       <button class="cal-btn" id="abAddPage">＋ Page</button>
       <button class="btn sec" id="abRescan" title="Repart des pages et liens réels du site (positions conservées)">⟳ Rescanner le site</button>
+      <button class="btn sec" id="abRelayout" title="Range les nodes par niveaux, en colonnes de gauche à droite">⇄ Réorganiser</button>
       <span class="ab-hint" id="abHint">${HINT}</span>
     </div>
     <div class="ab-canvas" id="abCanvas">
-      <div class="ab-stage" id="abStage">
+      <div class="ab-stage" id="abStage" style="width:${Math.max(2600, (Math.max(...pages.map((p) => p.x || 0)) + 700))}px;height:${Math.max(1600, (Math.max(...pages.map((p) => p.y || 0)) + 700))}px;">
         <svg class="ab-wires" id="abWires"></svg>
         ${pages.map((p) => `
-          <div class="ab-node${p.home ? " home" : ""}" data-p="${p.id}" style="left:${p.x}px;top:${p.y}px;">
-            <span class="inport"></span>
+          <div class="ab-node${p.home ? " home" : ""}${p.artefact ? " artefact" : ""}" data-p="${p.id}" style="left:${p.x}px;top:${p.y}px;">
+            ${p.artefact ? "" : '<span class="inport"></span>'}
             <div class="ab-phead">
               <div class="ab-title" data-f="titre" title="Double-clic pour renommer">${escapeHtml(p.titre)}</div>
-              ${p.home ? '<span class="ab-badge">accueil</span>' : `<button class="ab-mini" data-act="home" title="Définir comme accueil">⌂</button>`}
+              ${p.artefact ? '<span class="ab-badge dim">artefact</span>' : p.home ? '<span class="ab-badge">accueil</span>' : `<button class="ab-mini" data-act="home" title="Définir comme accueil">⌂</button>`}
               <button class="ab-mini" data-act="rename" title="Renommer">✎</button>
               <button class="ab-mini" data-act="addsec" title="Ajouter une section">＋</button>
               <button class="ab-mini" data-act="delpage" title="Supprimer la page">✕</button>
@@ -570,6 +615,25 @@ async function pgArboRender(s) {
   const find = (pid) => pages.find((x) => x.id === pid);
   const hintReset = () => { $("abHint").innerHTML = HINT; };
 
+  // Zoom au scroll (molette / pincement), centré sur le curseur — persisté
+  let abZoom = arbo.zoom || 1;
+  stage.style.zoom = abZoom;
+  canvas.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const old = abZoom;
+    abZoom = Math.min(1.8, Math.max(0.3, abZoom * (e.deltaY < 0 ? 1.08 : 1 / 1.08)));
+    if (abZoom === old) return;
+    const rect = canvas.getBoundingClientRect();
+    const ox = e.clientX - rect.left, oy = e.clientY - rect.top;
+    const lx = (canvas.scrollLeft + ox) / old, ly = (canvas.scrollTop + oy) / old;
+    stage.style.zoom = abZoom;
+    canvas.scrollLeft = lx * abZoom - ox;
+    canvas.scrollTop = ly * abZoom - oy;
+    arbo.zoom = abZoom;
+    pgArboSave(s.key);
+    requestAnimationFrame(drawWires);
+  }, { passive: false });
+
   // Câbles : du port de chaque section vers l'entrée de sa page cible (couleur = celle de la section).
   // Au survol d'un node, seuls SES câbles (départs + arrivées) restent vifs — les autres s'estompent.
   let abHot = null;
@@ -582,8 +646,9 @@ async function pgArboRender(s) {
       const to = stage.querySelector(`.ab-node[data-p="${sec.cible}"] .inport`);
       if (!from || !to) continue;
       const a = from.getBoundingClientRect(), b = to.getBoundingClientRect();
-      const x1 = a.left - sr.left + a.width / 2, y1 = a.top - sr.top + a.height / 2;
-      const x2 = b.left - sr.left + b.width / 2, y2 = b.top - sr.top + b.height / 2;
+      const z = abZoom || 1;
+      const x1 = (a.left - sr.left + a.width / 2) / z, y1 = (a.top - sr.top + a.height / 2) / z;
+      const x2 = (b.left - sr.left + b.width / 2) / z, y2 = (b.top - sr.top + b.height / 2) / z;
       const dx = Math.max(50, Math.abs(x2 - x1) * 0.45);
       const hot = !abHot || p.id === abHot || sec.cible === abHot;
       paths.push(`<path style="stroke:${sec.color || "var(--line2)"};opacity:${hot ? (abHot ? ".95" : ".7") : ".07"};" d="M ${x1.toFixed(1)} ${y1.toFixed(1)} C ${(x1 + dx).toFixed(1)} ${y1.toFixed(1)}, ${(x2 - dx).toFixed(1)} ${y2.toFixed(1)}, ${x2.toFixed(1)} ${y2.toFixed(1)}"/>`);
@@ -595,6 +660,10 @@ async function pgArboRender(s) {
   // Barre d'actions
   box.querySelector("#abAddPage").onclick = () => {
     pages.push({ id: pgArboId(), titre: "Nouvelle page", sections: [], x: 70 + canvas.scrollLeft, y: 70 + canvas.scrollTop });
+    pgArboSave(s.key); pgArboRender(s);
+  };
+  box.querySelector("#abRelayout").onclick = () => {
+    pgAbLayout(pages, true);
     pgArboSave(s.key); pgArboRender(s);
   };
   box.querySelector("#abRescan").onclick = async (e) => {
@@ -630,8 +699,8 @@ async function pgArboRender(s) {
       let moved = false;
       const move = (ev) => {
         moved = true;
-        p.x = Math.max(0, ox + ev.clientX - sx);
-        p.y = Math.max(0, oy + ev.clientY - sy);
+        p.x = Math.max(0, ox + (ev.clientX - sx) / abZoom);
+        p.y = Math.max(0, oy + (ev.clientY - sy) / abZoom);
         ne.style.left = p.x + "px"; ne.style.top = p.y + "px";
         requestAnimationFrame(drawWires);
       };
@@ -644,7 +713,7 @@ async function pgArboRender(s) {
     });
     // En mode câblage, cliquer une page = destination de la section
     ne.addEventListener("click", () => {
-      if (!pgAbLink || ne.dataset.p === pgAbLink.p) return;
+      if (!pgAbLink || ne.dataset.p === pgAbLink.p || p.artefact) return;
       const src = find(pgAbLink.p);
       const sec = src && src.sections.find((x) => x.id === pgAbLink.s);
       if (sec) { sec.cible = ne.dataset.p; pgArboSave(s.key); }
@@ -681,7 +750,7 @@ async function pgArboRender(s) {
         e.stopPropagation();
         pgAbLink = pgAbLink && pgAbLink.s === sec.id ? null : { p: p.id, s: sec.id };
         stage.querySelectorAll(".ab-port").forEach((x) => x.classList.remove("linking"));
-        stage.querySelectorAll(".ab-node").forEach((x) => x.classList.toggle("linktarget", !!pgAbLink && x.dataset.p !== p.id));
+        stage.querySelectorAll(".ab-node").forEach((x) => x.classList.toggle("linktarget", !!pgAbLink && x.dataset.p !== p.id && !x.classList.contains("artefact")));
         if (pgAbLink) { port.classList.add("linking"); $("abHint").innerHTML = "Clique la <b>page de destination</b> — clic dans le vide pour annuler"; }
         else hintReset();
       };

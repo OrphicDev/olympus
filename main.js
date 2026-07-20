@@ -1121,42 +1121,88 @@ ipcMain.handle("pegasus:arboScan", async (_e, key, homeWp) => {
     });
     const idByWp = new Map(pages.map((p) => [p.wp_id, p.id]));
     let ci = 0;
-    const scanInto = async (url, page, selfWpId) => {
-      let html = "";
+    const nextColor = () => AB_PALETTE[ci++ % AB_PALETTE.length];
+    const fetchHtml = async (url) => {
       try {
         const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 15000);
         const r = await fetch(url, { headers: { "User-Agent": "Olympus-Pegasus/1.0" }, signal: ctl.signal });
         clearTimeout(t);
-        if (r.ok) html = await r.text();
-      } catch {}
-      if (!html || !page) return;
-      const base = abs(url);
-      const seen = new Set(page.sections.map((x) => x.cible));
+        return r.ok ? await r.text() : "";
+      } catch { return ""; }
+    };
+    // Liens internes d'un fragment HTML (dédupliqués par page cible)
+    const linksIn = (html, baseUrl, selfWp) => {
+      const out = []; const seen = new Set();
+      const base = abs(baseUrl);
+      if (!html || !base) return out;
       const re = /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
       let m;
       while ((m = re.exec(html))) {
-        const u = abs(m[1].split("#")[0], url);
-        if (!u || !base || u.hostname.replace(/^www\./, "") !== base.hostname.replace(/^www\./, "")) continue;
+        const u = abs(m[1].split("#")[0], baseUrl);
+        if (!u || u.hostname.replace(/^www\./, "") !== base.hostname.replace(/^www\./, "")) continue;
         const target = byPath.get(norm(u));
-        if (!target || target.id === selfWpId || seen.has(idByWp.get(target.id))) continue;
-        seen.add(idByWp.get(target.id));
+        if (!target || target.id === selfWp || seen.has(target.id)) continue;
+        seen.add(target.id);
         let label = m[2].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
         if (!label || label.length > 42) label = String(target.title || "Lien");
-        page.sections.push({ id: mkId(), titre: label, cible: idByWp.get(target.id), color: AB_PALETTE[ci++ % AB_PALETTE.length] });
+        out.push({ wp: target.id, label });
       }
+      return out;
+    };
+    // Header / Footer = artefacts à part : leurs liens sont retirés du contenu des pages
+    const splitRegions = (html) => {
+      let header = "", footer = "";
+      const hm = html.match(/<header[^>]*>[\s\S]*?<\/header>/i);
+      if (hm) { header = hm[0]; html = html.replace(hm[0], ""); }
+      const nvs = html.match(/<nav[^>]*>[\s\S]*?<\/nav>/gi) || [];
+      for (const nv of nvs) { header += nv; html = html.replace(nv, ""); }
+      const fms = html.match(/<footer[^>]*>[\s\S]*?<\/footer>/gi);
+      if (fms && fms.length) { footer = fms[fms.length - 1]; html = html.replace(footer, ""); }
+      return { header, footer, content: html };
+    };
+    const headerLinks = new Map(), footerLinks = new Map();
+    const scanPage = async (url, pageNode, selfWp) => {
+      const html = await fetchHtml(url);
+      if (!html) return;
+      const { header, footer, content } = splitRegions(html);
+      for (const l of linksIn(header, url, selfWp)) if (!headerLinks.has(l.wp)) headerLinks.set(l.wp, l.label);
+      for (const l of linksIn(footer, url, selfWp)) if (!footerLinks.has(l.wp)) footerLinks.set(l.wp, l.label);
+      if (pageNode) pageNode._links = linksIn(content, url, selfWp);
     };
     for (const c of items.filter((x) => x.status === "publish").slice(0, 20)) {
-      await scanInto(c.url, pages.find((p) => p.wp_id === c.id), c.id);
+      await scanPage(c.url, pages.find((p) => p.wp_id === c.id), c.id);
     }
-    // La vraie page d'accueil (racine du site) : si le node accueil n'a rien capté
-    // (page en brouillon, front-page.php…), on scanne l'URL racine directement.
+    // La vraie page d'accueil (racine, rendue par le thème) → rattachée à l'accueil désigné
     const sites2 = await pegSites();
     const homePage = (homeWp && pages.find((p) => p.wp_id === homeWp)) || pages.find((p) => p.home);
     if (homePage && !homePage.sections.length && sites2[key]) {
       homePage.home = true;
-      await scanInto(sites2[key].base_url + "/", homePage, homePage.wp_id);
+      await scanPage(sites2[key].base_url + "/", homePage, homePage.wp_id);
     }
-    return { ok: true, arbo: { pages } };
+    // Un lien présent dans le contenu de ≥ 80 % des pages scannées = navigation
+    // globale (menu dont le balisage n'est ni <header> ni <nav>) → artefact Header.
+    const scanned = pages.filter((p) => p._links && p._links.length);
+    if (scanned.length >= 4) {
+      const freq = new Map();
+      for (const p of scanned) for (const l of p._links) freq.set(l.wp, (freq.get(l.wp) || 0) + 1);
+      for (const [wp, n] of freq) {
+        if (n / scanned.length >= 0.7 && !footerLinks.has(wp)) {
+          if (!headerLinks.has(wp)) {
+            const any = scanned.flatMap((p) => p._links).find((l) => l.wp === wp);
+            headerLinks.set(wp, any ? any.label : "Lien");
+          }
+          for (const p of scanned) p._links = p._links.filter((l) => l.wp !== wp);
+        }
+      }
+    }
+    for (const p of pages) {
+      for (const l of p._links || []) p.sections.push({ id: mkId(), titre: l.label, cible: idByWp.get(l.wp), color: nextColor() });
+      delete p._links;
+    }
+    const nodes = [...pages];
+    if (headerLinks.size) nodes.push({ id: mkId(), artefact: "header", titre: "Header", sections: [...headerLinks].map(([wp, label]) => ({ id: mkId(), titre: label, cible: idByWp.get(wp), color: nextColor() })) });
+    if (footerLinks.size) nodes.push({ id: mkId(), artefact: "footer", titre: "Footer", sections: [...footerLinks].map(([wp, label]) => ({ id: mkId(), titre: label, cible: idByWp.get(wp), color: nextColor() })) });
+    return { ok: true, arbo: { pages: nodes } };
   } catch (e) { return { ok: false, error: e.message }; }
 });
 // Arborescence du site : stockée dans le dossier du site (~/Pegasus/<site>/arborescence.json)
