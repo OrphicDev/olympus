@@ -448,6 +448,7 @@ async function pgSelect(key) {
 
 const PG_TABS = [
   { id: "general", label: "Général" },
+  { id: "fiche", label: "Fiche technique" },
   { id: "pipeline", label: "Pipeline" },
   { id: "arbo", label: "Arborescence" },
   { id: "mood", label: "Moodboard" },
@@ -484,6 +485,7 @@ function pgRenderDetail() {
   if (pgSiteTab === "secu" && pgDiag[s.key] === undefined) pgLoadDiag(s.key);
   // Historique des métriques pour les sparklines des tableaux de bord
   if (["seo", "perf", "secu", "rapport"].includes(pgSiteTab) && !pgMetrics[s.key]) pgLoadMetrics(s.key).then((m) => { if (m && pgSel === s.key) pgRenderDetail(); });
+  if (pgSiteTab === "general") pgGeneralRender(s);
   if (pgSiteTab === "rapport") pgRapportRender(s);
   if (pgSiteTab === "audience") pgAudienceRender(s);
   pgRenderSecPanel(s);
@@ -498,7 +500,8 @@ function pgRenderDetail() {
 const pgCounted = new Set();
 
 function pgTabHTML(tab, s) {
-  if (tab === "general") return pgTabGeneral(s);
+  if (tab === "general") return `<div id="pgGeneral"><div class="rb-empty">Chargement de l'aperçu…</div></div>`;
+  if (tab === "fiche") return pgTabFiche(s);
   if (tab === "pipeline") return `<div id="pgPipeline"><div class="rb-empty">Chargement du pipeline…</div></div>`;
   if (tab === "arbo") return `<div id="pgArbo"><div class="rb-empty">Chargement de l'arborescence…</div></div>`;
   if (tab === "mood") return `<div id="pgMood"><div class="rb-empty">Chargement du moodboard…</div></div>`;
@@ -2026,7 +2029,7 @@ function moodRef(r, i, ro) {
   </div>`;
 }
 
-function pgTabGeneral(s) {
+function pgTabFiche(s) {
   const h = pgHealth[s.key], ins = pgInspect[s.key];
   const since = s.created_at ? new Date(s.created_at).toLocaleDateString("fr-FR") : "";
   const hh = h && h.ok ? h.health : null;
@@ -2056,6 +2059,139 @@ function pgTabGeneral(s) {
     html += `<div class="pg-sub">Structure</div><div class="rb-empty">Inspection…</div>`;
   }
   return html;
+}
+
+// ══════════ GÉNÉRAL — aperçu du site : modifier + rapports + arbo en ligne + moodboard ══════════
+async function pgGeneralRender(s) {
+  const box = $("pgGeneral"); if (!box) return;
+  box.innerHTML = `
+    <button class="pg-modbtn" id="pgModify">
+      <span class="pg-modbtn-i">✎</span>
+      <span class="pg-modbtn-txt"><b>Modifier le site</b><span>Ouvre le site en local et démarre une conversation avec Claude</span></span>
+      <span class="pg-modbtn-arr">→</span>
+    </button>
+    <div class="pg-ovcard">
+      <div class="pg-ovh">Rapports<button class="pg-ovlink" data-goto="rapport">Voir le rapport complet →</button></div>
+      <div class="pg-ovbody" id="ovReports"><div class="rb-empty">Lecture…</div></div>
+    </div>
+    <div class="pg-ovcard">
+      <div class="pg-ovh">Arborescence du site en ligne<button class="pg-ovlink" data-goto="arbo">Ouvrir l'arborescence →</button></div>
+      <div class="pg-ovbody" id="ovArbo"><div class="rb-empty">Lecture…</div></div>
+    </div>
+    <div class="pg-ovcard">
+      <div class="pg-ovh">Moodboard actuel<button class="pg-ovlink" data-goto="mood">Ouvrir le moodboard →</button></div>
+      <div class="pg-ovbody" id="ovMood"><div class="rb-empty">Lecture…</div></div>
+    </div>`;
+  $("pgModify").onclick = () => pgModifySiteModal(s);
+  box.querySelectorAll(".pg-ovlink").forEach((b) => b.onclick = () => { pgSiteTab = b.dataset.goto; pgRenderSide(); pgRenderDetail(); });
+  pgOvReports(s); pgOvArbo(s); pgOvMood(s);
+}
+
+async function pgOvReports(s) {
+  const box = $("ovReports"); if (!box) return;
+  const m = (await pgLoadMetrics(s.key)) || pgMetrics[s.key] || { seo: [], perf: [], secu: [] };
+  const data = pgReportData(m, 30);
+  const pk = s.key + ":peg:30";
+  if (pgAudCache[pk] === undefined) { try { pgAudCache[pk] = await window.olympus.pegasusAudiencePegasus(s.key, 30); } catch { pgAudCache[pk] = { ok: false }; } }
+  const aud = pgAudCache[pk] && pgAudCache[pk].ok ? pgAudCache[pk].data : null;
+  const g = (label, arr, color) => arr.length
+    ? `<div class="pg-ovmini"><div class="pg-gwrap">${pgGauge(arr[arr.length - 1].score, 100, color)}</div><div class="pg-ovmini-l">${label}</div></div>`
+    : `<div class="pg-ovmini"><div class="pg-ovmini-v dim">—</div><div class="pg-ovmini-l">${label}</div></div>`;
+  if (!data.seo.length && !data.perf.length && !data.secu.length && !(aud && aud.total)) {
+    box.innerHTML = `<div class="rb-empty">Pas encore de données. Lance les analyses SEO, Performance et Sécurité (elles s'enregistrent toutes seules) — l'audience se remplit au fil des visites.</div>`;
+    return;
+  }
+  box.innerHTML = `<div class="pg-ovreports">
+    ${g("SEO", data.seo, "var(--accent2)")}
+    ${g("Performance", data.perf, "#7fb2e8")}
+    ${g("Sécurité", data.secu, "var(--ok)")}
+    <div class="pg-ovmini"><div class="pg-ovmini-v">${aud && aud.total ? pgFmtN(aud.total) : "—"}</div><div class="pg-ovmini-l">Visites · 30 j</div></div>
+  </div>`;
+}
+
+async function pgOvArbo(s) {
+  const box = $("ovArbo"); if (!box) return;
+  let arbo = null;
+  const r = await window.olympus.pegasusWireList(s.key);
+  if (r.ok && r.deployed) { const lr = await window.olympus.pegasusWireLoad(s.key, r.deployed); if (lr.ok) arbo = lr.arbo; }
+  if (!arbo) { const ag = await window.olympus.pegasusArboGet(s.key); if (ag.ok) arbo = ag.arbo; }
+  const pages = (arbo && arbo.pages) || [];
+  if (!pages.length) {
+    box.innerHTML = `<div class="rb-empty">Aucune arborescence pour l'instant. Ouvre l'onglet <b>Arborescence</b> : Pegasus peut scanner le site et générer la structure en ligne, déjà câblée.</div>`;
+    return;
+  }
+  box.innerHTML = `<div class="pg-ovtree">${pages.map((p) => `
+    <div class="pg-ovpage">
+      <div class="pg-ovpage-t">${p.home ? "🏠 " : ""}${escapeHtml(p.titre || "Sans titre")}<span class="pg-ovpage-n">${(p.sections || []).length} section(s)</span></div>
+      ${(p.sections || []).length ? `<div class="pg-ovsecs">${p.sections.map((sec, i) => `<span class="pg-ovsec">${i + 1} · ${escapeHtml(sec.titre || "section")}</span>`).join("")}</div>` : ""}
+    </div>`).join("")}</div>`;
+}
+
+async function pgOvMood(s) {
+  const box = $("ovMood"); if (!box) return;
+  let mb = null;
+  const r = await window.olympus.pegasusMbList(s.key);
+  if (r.ok && r.deployed) { const lr = await window.olympus.pegasusMbLoad(s.key, r.deployed); if (lr.ok) mb = lr.moodboard; }
+  if (!mb) { const mg = await window.olympus.pegasusMoodboardGet(s.key); if (mg.ok) mb = mg.moodboard; }
+  if (!mb || (!(mb.couleurs || []).length && !(mb.typos || []).length && !mb.logo && !(mb.refs || []).length && !mb.niveau)) {
+    box.innerHTML = `<div class="rb-empty">Pas encore de charte graphique. Ouvre l'onglet <b>Moodboard</b> pour la définir (couleurs, typographies, logo, niveau).</div>`;
+    return;
+  }
+  const NIV = { 1: "N1 · Premium", 2: "N2 · Luxe", 3: "N3 · Luxe supérieur", 4: "N4 · Ultra luxe" };
+  const parts = [];
+  if (mb.niveau) parts.push(`<div class="pg-ovmrow"><span class="pg-ovmk">Niveau</span><span class="pg-ovmv">${NIV[mb.niveau] || mb.niveau}</span></div>`);
+  if ((mb.couleurs || []).length) parts.push(`<div class="pg-ovmrow"><span class="pg-ovmk">Couleurs</span><span class="pg-ovmv pg-ovswatches">${mb.couleurs.map((c) => `<span class="pg-ovsw" title="${escapeHtml((c.nom || "") + " " + (c.hex || ""))}" style="background:${escapeHtml(c.hex || "#ccc")}"></span>`).join("")}</span></div>`);
+  if ((mb.typos || []).length) parts.push(`<div class="pg-ovmrow"><span class="pg-ovmk">Typos</span><span class="pg-ovmv">${mb.typos.map((t) => escapeHtml(t.nom || t.role || "?")).filter(Boolean).join(" · ")}</span></div>`);
+  if (mb.logo) parts.push(`<div class="pg-ovmrow"><span class="pg-ovmk">Logo</span><span class="pg-ovmv">${/^https?:|^\/|\.(svg|png|jpe?g|webp)$/i.test(mb.logo) ? `<img class="pg-ovlogo" src="${escapeHtml(mb.logo)}" alt="logo">` : escapeHtml(mb.logo)}</span></div>`);
+  if ((mb.refs || []).length) parts.push(`<div class="pg-ovmrow"><span class="pg-ovmk">Références</span><span class="pg-ovmv">${mb.refs.length} référence(s)</span></div>`);
+  box.innerHTML = `<div class="pg-ovmood">${parts.join("")}</div>`;
+}
+
+// Gros bouton « Modifier le site » : ouvre le local + une conversation Claude.
+// Propose de continuer une modification en cours (dossier local présent) ou de
+// repartir de la version actuelle du site en ligne (copie fraîche).
+async function pgModifySiteModal(s) {
+  const slug = s.host || s.key;
+  const ov = document.createElement("div");
+  ov.className = "modal-overlay show";
+  ov.innerHTML = `<div class="modal-panel" style="width:600px;">
+      <div class="modal-head"><h2>Modifier « ${escapeHtml(s.label)} »</h2><button class="modal-x" data-x aria-label="Fermer">✕</button></div>
+      <div class="modal-body"><div class="rb-empty">Vérification du dossier local…</div></div>
+    </div>`;
+  document.body.appendChild(ov);
+  const close = () => ov.remove();
+  ov.querySelector("[data-x]").onclick = close;
+  ov.onclick = (e) => { if (e.target === ov) close(); };
+  const st = await window.olympus.pegasusFolderExists(slug);
+  const body = ov.querySelector(".modal-body");
+  const promptBase = `Tu ouvres le site « ${s.label} » (${s.base_url}) en local pour le modifier. Le contexte est dans ce dossier : le site local (wordpress/ ou les .html), et si présents arborescence.json (structure + sections), moodboard.json (charte) et pipeline.json. Lis-les d'abord. Puis demande-moi ce que je veux changer et applique les modifications proprement.`;
+  const choices = [];
+  if (st.exists) {
+    choices.push({ mode: "continue", t: "▶ Continuer la modification en cours", d: "Reprend le dossier local tel quel, avec les changements déjà commencés." });
+    choices.push({ mode: "fresh", t: "↻ Repartir de la version actuelle du site", d: "Remplace le local par une copie fraîche du site en ligne, puis l'ouvre (les changements locaux non déployés seront perdus)." });
+  } else {
+    choices.push({ mode: "continue", t: "▶ Ouvrir le site en local + Claude", d: "Télécharge une copie du site en ligne dans le dossier du projet et démarre la conversation." });
+  }
+  body.innerHTML = `<p class="pg-mnote" style="margin-top:0;">${st.exists ? "Une copie locale de ce site existe déjà." : "Aucune copie locale encore — elle sera téléchargée depuis le site en ligne."} On ouvre le site en local et une conversation Claude démarre.</p>
+    <div class="wk-choices">${choices.map((c) => `<button class="wk-choice" data-mode="${c.mode}"><div class="wk-t">${c.t}</div><div class="wk-d">${c.d}</div></button>`).join("")}</div>
+    <div class="msg" id="pgModMsg" style="margin-top:14px;"></div>`;
+  body.querySelectorAll(".wk-choice").forEach((b) => b.onclick = async () => {
+    const mode = b.dataset.mode;
+    body.querySelectorAll(".wk-choice").forEach((x) => x.disabled = true);
+    const msg = body.querySelector("#pgModMsg"); msg.className = "msg";
+    if (mode === "fresh") {
+      msg.textContent = "Copie fraîche du site en ligne…";
+      const cr = await window.olympus.pegasusCopySite(s.key, "overwrite");
+      if (!cr.ok) { msg.className = "msg err"; msg.textContent = cr.error || "Échec de la copie."; body.querySelectorAll(".wk-choice").forEach((x) => x.disabled = false); return; }
+    }
+    msg.textContent = "Préparation du local + ouverture de Claude Code…";
+    const prompt = (mode === "fresh" ? "On repart de la version actuelle du site en ligne. " : st.exists ? "On continue une modification déjà commencée sur ce site. " : "") + promptBase;
+    const r = await window.olympus.pegasusWorkOn(s.key, prompt);
+    if (!r.ok) { msg.className = "msg err"; msg.textContent = r.error || "Échec."; body.querySelectorAll(".wk-choice").forEach((x) => x.disabled = false); return; }
+    msg.className = "msg ok";
+    msg.textContent = (r.copied ? "Copie créée. " : "") + (r.mode === "wordpress" ? "WordPress lancé en local + Claude Code ouvert." : r.mode === "static" ? "Site ouvert dans le navigateur + Claude Code ouvert." : "Dossier prêt + Claude Code ouvert.");
+    setTimeout(close, 2200);
+  });
 }
 
 // Panneau des 3 gros boutons (copie / push / retour arrière)
