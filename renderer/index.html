@@ -848,11 +848,16 @@
   .abv-new.primary{background:color-mix(in srgb,var(--accent) 15%,transparent);border-color:color-mix(in srgb,var(--accent) 40%,transparent);}
   .abv-new.primary:hover{background:color-mix(in srgb,var(--accent) 25%,transparent);}
   .abv-new.primary small{color:var(--txt);opacity:.75;}
-  .abv-item.current{border-color:var(--accent2);box-shadow:0 0 0 1px color-mix(in srgb,var(--accent2) 25%,transparent);}
   .abv-empty{color:var(--dim);font-size:11.5px;line-height:1.5;padding:6px 4px;}
   .abv-item{border:1px solid var(--line);border-radius:12px;padding:10px 11px;background:var(--bg2);transition:border-color .15s,box-shadow .2s;}
   .abv-item:hover{border-color:var(--line2);}
-  .abv-item.deployed{border-color:color-mix(in srgb,var(--ok) 55%,transparent);box-shadow:0 0 0 1px color-mix(in srgb,var(--ok) 25%,transparent);}
+  /* Version EN LIGNE = couleur inversée (référence, se démarque nettement) */
+  .abv-item.deployed{background:var(--txt);border-color:var(--txt);box-shadow:none;}
+  .abv-item.deployed .abv-name,.abv-item.deployed .abv-date,.abv-item.deployed .abv-open{color:var(--bg1);}
+  .abv-item.deployed .abv-live{color:var(--bg1);opacity:.72;}
+  .abv-item.deployed .abv-open:hover{opacity:.6;}
+  /* Version EN PLEIN TRAVAIL = liseré vert */
+  .abv-item.current:not(.deployed){border-color:var(--ok);box-shadow:0 0 0 1px color-mix(in srgb,var(--ok) 35%,transparent);}
   .abv-top{display:flex;align-items:center;gap:6px;}
   .abv-name{font-size:12.5px;font-weight:600;color:var(--txt);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .abv-tag{font-size:8.5px;letter-spacing:.05em;text-transform:uppercase;padding:2px 6px;border-radius:8px;background:var(--card2);color:var(--muted);flex-shrink:0;}
@@ -1034,6 +1039,8 @@
   .ab-lock{color:var(--muted);font-size:12px;}
   .ab-node.linkhover{border-color:var(--accent2);box-shadow:0 0 0 2px var(--accent2),0 0 22px -4px var(--accent2);z-index:6;}
   .ab-layout.readonly .ab-node{cursor:default;}
+  /* Canvas : liseré vert quand on travaille sur une version (édition en cours) */
+  .ab-layout:not(.readonly) .ab-canvas{border-color:color-mix(in srgb,var(--ok) 45%,transparent);}
   /* Lecture seule : seuls la consultation de maquette (📝) et le survol restent */
   .ab-layout.readonly .ab-mini{display:none;}
   .ab-layout.readonly .ab-mini[data-act="maquette"]{display:inline-block;}
