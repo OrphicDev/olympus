@@ -388,6 +388,7 @@ async function pgSelect(key) {
 const PG_TABS = [
   { id: "general", label: "Général" },
   { id: "arbo", label: "Arborescence" },
+  { id: "mood", label: "Moodboard" },
   { id: "seo", label: "SEO" },
   { id: "perf", label: "Performance" },
   { id: "secu", label: "Sécurité" },
@@ -414,6 +415,7 @@ function pgRenderDetail() {
   const pb = box.querySelector("#pgPerfBtn"); if (pb) pb.onclick = () => pgRunPerf(s.key);
   pgRenderSecPanel(s);
   if (pgSiteTab === "arbo") pgArboRender(s);
+  if (pgSiteTab === "mood") pgMoodRender(s);
   // Le nombre de pages se compte une seule fois par site (pas à chaque rafraîchissement)
   const insOk = pgInspect[s.key] && pgInspect[s.key].ok;
   if (insOk && !pgCounted.has(s.key)) { pgCounted.add(s.key); mCountUp(box, ".pg-kpi .n"); }
@@ -424,6 +426,7 @@ const pgCounted = new Set();
 function pgTabHTML(tab, s) {
   if (tab === "general") return pgTabGeneral(s);
   if (tab === "arbo") return `<div id="pgArbo"><div class="rb-empty">Chargement de l'arborescence…</div></div>`;
+  if (tab === "mood") return `<div id="pgMood"><div class="rb-empty">Chargement du moodboard…</div></div>`;
   if (tab === "seo") return pgTabSeo(s);
   if (tab === "perf") return pgTabPerf(s);
   if (tab === "secu") return pgTabSecu(s);
@@ -644,8 +647,10 @@ async function pgArboRender(s) {
       <button class="cal-btn" id="abAddPage">＋ Page</button>
       <button class="btn sec" id="abRescan" title="Repart des pages et liens réels du site (positions conservées)">⟳ Rescanner le site</button>
       <button class="btn sec" id="abRelayout" title="Range les nodes par niveaux, en colonnes de gauche à droite">⇄ Réorganiser</button>
+      <button class="cal-btn primary" id="abSaveVer" title="Fige l'état actuel comme une version du wireframe">✓ Enregistrer une version</button>
       <span class="ab-hint" id="abHint">${HINT}</span>
     </div>
+    <div class="ab-layout">
     <div class="ab-canvas" id="abCanvas">
       <div class="ab-stage" id="abStage" style="width:${Math.max(2600, (Math.max(...pages.map((p) => p.x || 0)) + 700))}px;height:${Math.max(1600, (Math.max(...pages.map((p) => p.y || 0)) + 700))}px;">
         <svg class="ab-wires" id="abWires"></svg>
@@ -677,8 +682,11 @@ async function pgArboRender(s) {
               </div>`).join("")}</div>` : ""}
           </div>`).join("")}
       </div>
+    </div>
+    <div class="ab-versions" id="abVersions"><div class="rb-empty">Versions…</div></div>
     </div>`;
 
+  pgWireRenderCol(s);
   const stage = $("abStage"), canvas = $("abCanvas"), svgW = $("abWires");
   const find = (pid) => pages.find((x) => x.id === pid);
   const hintReset = () => { $("abHint").innerHTML = HINT; };
@@ -758,6 +766,19 @@ async function pgArboRender(s) {
   box.querySelector("#abRelayout").onclick = () => {
     pgAbLayout(pages, true);
     pgArboSave(s.key); pgArboRender(s);
+  };
+  box.querySelector("#abSaveVer").onclick = async (e) => {
+    const btn = e.currentTarget; btn.disabled = true;
+    const cur = pgWireCache[s.key] && pgWireCache[s.key].versions ? pgWireCache[s.key].versions.length : 0;
+    const first = cur === 0;
+    const label = "Version " + (cur + 1);
+    const r = await window.olympus.pegasusWireSave(s.key, pgArboCache[s.key], label, first);
+    delete pgWireCache[s.key];
+    await pgWireRenderCol(s);
+    btn.disabled = false;
+    const msg = $("pgWorkMsg");
+    if (r.ok && msg) { msg.className = "msg ok"; msg.textContent = label + " enregistrée" + (first ? " (marquée comme version en ligne)" : "") + "."; }
+    if (!r.ok) alert("Échec de l'enregistrement : " + (r.error || ""));
   };
   box.querySelector("#abRescan").onclick = async (e) => {
     e.currentTarget.disabled = true;
@@ -905,6 +926,157 @@ async function pgArboRender(s) {
       };
     });
   });
+}
+
+// ══ Versions de wireframe : colonne de droite dans l'arborescence ══
+// Point 3 : la dernière version est en haut. Point 4 : la version « en ligne »
+// (celle du site réel, pas forcément la dernière) est marquée. Point 5 : « Pousser ».
+const pgWireCache = {};
+async function pgWireRenderCol(s) {
+  const box = $("abVersions"); if (!box) return;
+  const r = await window.olympus.pegasusWireList(s.key);
+  const man = pgWireCache[s.key] = r.ok ? { versions: r.versions || [], deployed: r.deployed || null } : { versions: [], deployed: null };
+  const vs = [...man.versions].sort((a, b) => (a.ts < b.ts ? 1 : -1)); // plus récent en haut
+  const fmt = (ts) => { try { return new Date(ts).toLocaleString("fr-FR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }); } catch { return ts; } };
+  box.innerHTML = `
+    <div class="abv-h">Versions du wireframe</div>
+    ${vs.length ? vs.map((v, i) => `
+      <div class="abv-item${man.deployed === v.id ? " deployed" : ""}" data-id="${v.id}">
+        <div class="abv-top">
+          <span class="abv-name" data-f="vname" title="Double-clic pour renommer">${escapeHtml(v.label || "Sans nom")}</span>
+          ${i === 0 ? '<span class="abv-tag last">dernière</span>' : ""}
+        </div>
+        <div class="abv-date">${fmt(v.ts)}</div>
+        ${man.deployed === v.id ? '<div class="abv-live">● version en ligne</div>' : ""}
+        <div class="abv-acts">
+          <button class="abv-b" data-act="load" title="Charger cette version dans l'éditeur">Charger</button>
+          <button class="abv-b primary" data-act="push" title="Construire cette version en local (pages + boutons, d'après le moodboard)">Pousser</button>
+          <button class="abv-b" data-act="del" title="Supprimer">✕</button>
+        </div>
+      </div>`).join("") : '<div class="abv-empty">Aucune version. Clique « Enregistrer une version » pour figer l\'état actuel du wireframe.</div>'}`;
+
+  box.querySelectorAll(".abv-item").forEach((el) => {
+    const id = el.dataset.id;
+    const nameEl = el.querySelector('[data-f="vname"]');
+    pgAbEditable(nameEl, async (v) => { await window.olympus.pegasusWireRename(s.key, id, v || "Sans nom"); delete pgWireCache[s.key]; });
+    el.querySelector('[data-act="load"]').onclick = async () => {
+      if (!confirm("Charger cette version dans l'éditeur ? L'état actuel sera remplacé (enregistre-le d'abord si besoin).")) return;
+      const lr = await window.olympus.pegasusWireLoad(s.key, id);
+      if (lr.ok) { pgArboCache[s.key] = lr.arbo; pgArboSave(s.key); pgArboRender(s); }
+      else alert("Échec : " + (lr.error || ""));
+    };
+    el.querySelector('[data-act="push"]').onclick = async (e) => {
+      if (!confirm("Pousser cette version ?\n\nPegasus va générer le brief de construction (pages + boutons) d'après le moodboard, créer la version en local et ouvrir une session Claude Code pour la bâtir. Le site en ligne n'est pas modifié.")) return;
+      e.currentTarget.disabled = true; e.currentTarget.textContent = "…";
+      const pr = await window.olympus.pegasusWirePush(s.key, id);
+      delete pgWireCache[s.key]; await pgWireRenderCol(s);
+      const msg = $("pgWorkMsg");
+      if (pr.ok) { if (msg) { msg.className = "msg ok"; msg.textContent = "Brief généré (" + pr.briefPath + ") — session Claude Code ouverte pour construire la version."; } }
+      else alert("Échec du push : " + (pr.error || ""));
+    };
+    el.querySelector('[data-act="del"]').onclick = async () => {
+      if (!confirm("Supprimer cette version ?")) return;
+      await window.olympus.pegasusWireDelete(s.key, id);
+      delete pgWireCache[s.key]; await pgWireRenderCol(s);
+    };
+  });
+}
+
+// ══ Moodboard : charte graphique (couleurs, typos, logo) + références du site ══
+const pgMoodCache = {};
+let pgMoodSaveT = null;
+function pgMoodSave(key) {
+  clearTimeout(pgMoodSaveT);
+  pgMoodSaveT = setTimeout(() => window.olympus.pegasusMoodboardSave(key, pgMoodCache[key]), 400);
+}
+async function pgMoodRender(s) {
+  const box = $("pgMood"); if (!box) return;
+  if (!pgMoodCache[s.key]) {
+    const r = await window.olympus.pegasusMoodboardGet(s.key);
+    pgMoodCache[s.key] = (r.ok && r.moodboard) || { couleurs: [], typos: [], logo: "", notes: "", refs: [] };
+  }
+  const mb = pgMoodCache[s.key];
+  const save = () => pgMoodSave(s.key);
+  box.innerHTML = `
+    <p class="pg-mnote">La charte graphique de <b>${escapeHtml(s.label)}</b> : couleurs, typographies, logo et références. C'est la base sur laquelle Pegasus construit le site quand tu pousses un wireframe.</p>
+    <div class="mood-grid">
+      <div class="mood-card">
+        <div class="mood-h">Couleurs <button class="mood-add" data-add="couleur">＋</button></div>
+        <div class="mood-swatches" id="mbColors">${mb.couleurs.map((c, i) => moodSwatch(c, i)).join("") || '<span class="mood-empty">Aucune couleur</span>'}</div>
+      </div>
+      <div class="mood-card">
+        <div class="mood-h">Typographies <button class="mood-add" data-add="typo">＋</button></div>
+        <div id="mbTypos">${mb.typos.map((t, i) => moodTypo(t, i)).join("") || '<span class="mood-empty">Aucune typo</span>'}</div>
+      </div>
+      <div class="mood-card">
+        <div class="mood-h">Logo</div>
+        <input class="mood-in" id="mbLogo" placeholder="URL ou chemin du logo" value="${escapeHtml(mb.logo || "")}">
+        ${mb.logo ? `<div class="mood-logo">${/^https?:|^\/|\.(svg|png|jpe?g|webp)$/i.test(mb.logo) ? `<img src="${escapeHtml(mb.logo)}" alt="logo">` : escapeHtml(mb.logo)}</div>` : ""}
+      </div>
+      <div class="mood-card mood-wide">
+        <div class="mood-h">Références <button class="mood-add" data-add="ref">＋</button></div>
+        <div id="mbRefs">${mb.refs.map((r, i) => moodRef(r, i)).join("") || '<span class="mood-empty">Aucune référence</span>'}</div>
+      </div>
+      <div class="mood-card mood-wide">
+        <div class="mood-h">Notes de direction artistique</div>
+        <textarea class="mood-in mood-ta" id="mbNotes" placeholder="Ambiance, intentions, contraintes…">${escapeHtml(mb.notes || "")}</textarea>
+      </div>
+    </div>`;
+
+  box.querySelectorAll("[data-add]").forEach((b) => b.onclick = () => {
+    if (b.dataset.add === "couleur") mb.couleurs.push({ hex: "#b23a48", nom: "" });
+    if (b.dataset.add === "typo") mb.typos.push({ nom: "", role: "" });
+    if (b.dataset.add === "ref") mb.refs.push({ url: "", note: "" });
+    save(); pgMoodRender(s);
+  });
+  // Couleurs
+  box.querySelectorAll("#mbColors .mood-swatch").forEach((el) => {
+    const i = +el.dataset.i;
+    el.querySelector('[data-f="hex"]').oninput = (e) => { mb.couleurs[i].hex = e.target.value; el.querySelector(".mood-chip").style.background = e.target.value; el.querySelector('[data-f="hextxt"]').value = e.target.value; save(); };
+    el.querySelector('[data-f="hextxt"]').onchange = (e) => { mb.couleurs[i].hex = e.target.value; save(); pgMoodRender(s); };
+    el.querySelector('[data-f="nom"]').oninput = (e) => { mb.couleurs[i].nom = e.target.value; save(); };
+    el.querySelector(".mood-del").onclick = () => { mb.couleurs.splice(i, 1); save(); pgMoodRender(s); };
+  });
+  // Typos
+  box.querySelectorAll("#mbTypos .mood-row").forEach((el) => {
+    const i = +el.dataset.i;
+    el.querySelector('[data-f="nom"]').oninput = (e) => { mb.typos[i].nom = e.target.value; save(); };
+    el.querySelector('[data-f="role"]').oninput = (e) => { mb.typos[i].role = e.target.value; save(); };
+    el.querySelector(".mood-del").onclick = () => { mb.typos.splice(i, 1); save(); pgMoodRender(s); };
+  });
+  // Refs
+  box.querySelectorAll("#mbRefs .mood-row").forEach((el) => {
+    const i = +el.dataset.i;
+    el.querySelector('[data-f="url"]').oninput = (e) => { mb.refs[i].url = e.target.value; save(); };
+    el.querySelector('[data-f="note"]').oninput = (e) => { mb.refs[i].note = e.target.value; save(); };
+    el.querySelector(".mood-del").onclick = () => { mb.refs.splice(i, 1); save(); pgMoodRender(s); };
+    el.querySelector(".mood-open").onclick = () => { if (mb.refs[i].url) window.olympus.openExternal(mb.refs[i].url); };
+  });
+  box.querySelector("#mbLogo").onchange = (e) => { mb.logo = e.target.value.trim(); save(); pgMoodRender(s); };
+  box.querySelector("#mbNotes").oninput = (e) => { mb.notes = e.target.value; save(); };
+}
+function moodSwatch(c, i) {
+  return `<div class="mood-swatch" data-i="${i}">
+    <label class="mood-chip" style="background:${escapeHtml(c.hex || "#000")}"><input type="color" data-f="hex" value="${escapeHtml(c.hex || "#000000")}"></label>
+    <input class="mood-in mini" data-f="hextxt" value="${escapeHtml(c.hex || "")}">
+    <input class="mood-in mini" data-f="nom" placeholder="nom" value="${escapeHtml(c.nom || "")}">
+    <button class="mood-del" title="Supprimer">✕</button>
+  </div>`;
+}
+function moodTypo(t, i) {
+  return `<div class="mood-row" data-i="${i}">
+    <input class="mood-in" data-f="nom" placeholder="Nom de la police" value="${escapeHtml(t.nom || "")}">
+    <input class="mood-in mini" data-f="role" placeholder="rôle (titres…)" value="${escapeHtml(t.role || "")}">
+    <button class="mood-del" title="Supprimer">✕</button>
+  </div>`;
+}
+function moodRef(r, i) {
+  return `<div class="mood-row" data-i="${i}">
+    <input class="mood-in" data-f="url" placeholder="https://…" value="${escapeHtml(r.url || "")}">
+    <input class="mood-in mini" data-f="note" placeholder="note" value="${escapeHtml(r.note || "")}">
+    <button class="mood-open" title="Ouvrir">↗</button>
+    <button class="mood-del" title="Supprimer">✕</button>
+  </div>`;
 }
 
 function pgTabGeneral(s) {

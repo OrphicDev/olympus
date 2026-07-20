@@ -1322,6 +1322,146 @@ ipcMain.handle("pegasus:arboSave", async (_e, key, arbo) => {
     return { ok: true, path: p };
   } catch (e) { return { ok: false, error: e.message }; }
 });
+
+// ── Moodboard / charte graphique du site (couleurs, typos, logo, références) ──
+async function pegSiteDir(key) {
+  const sites = await pegSites(); const s = sites[key];
+  if (!s) throw new Error("Site inconnu.");
+  return pegProjectDir(pegSlug(s.host || key));
+}
+ipcMain.handle("pegasus:moodboardGet", async (_e, key) => {
+  try {
+    const p = join(await pegSiteDir(key), "moodboard.json");
+    if (!existsSync(p)) return { ok: true, moodboard: null };
+    return { ok: true, moodboard: JSON.parse(readFileSync(p, "utf8")) };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+ipcMain.handle("pegasus:moodboardSave", async (_e, key, mb) => {
+  try {
+    const p = join(await pegSiteDir(key), "moodboard.json");
+    writeFileSync(p, JSON.stringify(mb, null, 2));
+    return { ok: true, path: p };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+
+// ── Versions de wireframe : snapshots figés de l'arborescence + version « en ligne » ──
+async function pegWireDir(key) {
+  const dir = join(await pegSiteDir(key), "wireframes");
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
+function pegWireManifest(dir) {
+  const p = join(dir, "manifest.json");
+  if (existsSync(p)) { try { return JSON.parse(readFileSync(p, "utf8")); } catch {} }
+  return { versions: [], deployed: null };
+}
+ipcMain.handle("pegasus:wireList", async (_e, key) => {
+  try { return { ok: true, ...pegWireManifest(await pegWireDir(key)) }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
+// Fige l'arborescence courante comme nouvelle version. deployAsCurrent → marque « en ligne »
+// (utilisé pour la 1re version, qui reflète le site réel juste après un scan).
+ipcMain.handle("pegasus:wireSave", async (_e, key, arbo, label, deployAsCurrent) => {
+  try {
+    const dir = await pegWireDir(key);
+    const man = pegWireManifest(dir);
+    const id = "w" + Date.now().toString(36);
+    const ts = new Date().toISOString();
+    writeFileSync(join(dir, id + ".json"), JSON.stringify(arbo, null, 2));
+    man.versions.push({ id, ts, label: String(label || "").slice(0, 60) });
+    if (deployAsCurrent || !man.deployed) man.deployed = id;
+    writeFileSync(join(dir, "manifest.json"), JSON.stringify(man, null, 2));
+    return { ok: true, id, deployed: man.deployed };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+ipcMain.handle("pegasus:wireRename", async (_e, key, id, label) => {
+  try {
+    const dir = await pegWireDir(key); const man = pegWireManifest(dir);
+    const v = man.versions.find((x) => x.id === id); if (!v) throw new Error("Version introuvable.");
+    v.label = String(label || "").slice(0, 60);
+    writeFileSync(join(dir, "manifest.json"), JSON.stringify(man, null, 2));
+    return { ok: true };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+ipcMain.handle("pegasus:wireLoad", async (_e, key, id) => {
+  try {
+    const p = join(await pegWireDir(key), String(id).replace(/[^\w]/g, "") + ".json");
+    if (!existsSync(p)) throw new Error("Version introuvable.");
+    return { ok: true, arbo: JSON.parse(readFileSync(p, "utf8")) };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+ipcMain.handle("pegasus:wireDelete", async (_e, key, id) => {
+  try {
+    const dir = await pegWireDir(key); const man = pegWireManifest(dir);
+    man.versions = man.versions.filter((v) => v.id !== id);
+    if (man.deployed === id) man.deployed = null;
+    const f = join(dir, String(id).replace(/[^\w]/g, "") + ".json");
+    if (existsSync(f)) rmSync(f);
+    writeFileSync(join(dir, "manifest.json"), JSON.stringify(man, null, 2));
+    return { ok: true, deployed: man.deployed };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+// Génère le BRIEF DE CONSTRUCTION d'une version (pages + boutons + charte) et ouvre
+// une session Claude Code pour la bâtir en local. Marque la version comme « à mettre
+// en ligne » (deployed). Ne touche PAS au site distant (c'est « Pousser en ligne »).
+function pegBuildBrief(arbo, mb, siteLabel) {
+  const pages = (arbo.pages || []).filter((p) => !p.artefact);
+  const byId = new Map((arbo.pages || []).map((p) => [p.id, p]));
+  const nameOf = (id) => { const n = byId.get(id); return n ? n.titre : "?"; };
+  const lvl = (p) => Number.isFinite(p.level) ? p.level : (p.home ? 1 : null);
+  let md = `# Brief de construction — ${siteLabel}\n\n`;
+  md += `Généré par Pegasus depuis le wireframe validé. Construis les pages ci-dessous en local, avec la charte graphique indiquée. Chaque « section » est un bloc de la page ; une section « → Page » est un bouton/lien menant à cette page.\n\n`;
+  if (mb) {
+    md += `## Charte graphique\n`;
+    if (mb.couleurs?.length) md += `- **Couleurs** : ${mb.couleurs.map((c) => `${c.nom || ""} ${c.hex}`.trim()).join(" · ")}\n`;
+    if (mb.typos?.length) md += `- **Typographies** : ${mb.typos.map((t) => `${t.nom}${t.role ? ` (${t.role})` : ""}`).join(" · ")}\n`;
+    if (mb.logo) md += `- **Logo** : ${mb.logo}\n`;
+    if (mb.notes) md += `- **Notes** : ${mb.notes}\n`;
+    if (mb.refs?.length) md += `- **Références** :\n${mb.refs.map((r) => `  - ${r.url}${r.note ? ` — ${r.note}` : ""}`).join("\n")}\n`;
+    md += `\n`;
+  }
+  md += `## Pages (${pages.length})\n\n`;
+  const artHeader = (arbo.pages || []).find((p) => p.artefact === "header");
+  const artFooter = (arbo.pages || []).find((p) => p.artefact === "footer");
+  if (artHeader) md += `### Header (menu global)\n${(artHeader.sections || []).map((sc) => `- ${sc.titre}${sc.cible ? ` → ${nameOf(sc.cible)}` : ""}`).join("\n") || "- (vide)"}\n\n`;
+  const ord = (p) => (lvl(p) == null ? 99 : lvl(p));
+  for (const p of pages.sort((a, b) => ord(a) - ord(b))) {
+    md += `### ${p.titre}${p.home ? " (accueil)" : ""}${lvl(p) != null ? ` — niveau ${lvl(p)}` : ""}\n`;
+    const secs = p.sections || [];
+    if (secs.length) md += secs.map((sc) => `- Section « ${sc.titre} »${sc.cible ? ` — bouton → ${nameOf(sc.cible)}` : ""}`).join("\n") + "\n";
+    else md += `- (aucune section détaillée)\n`;
+    for (const lk of p.links || []) md += `- Lien → ${nameOf(lk.to)}\n`;
+    md += `\n`;
+  }
+  if (artFooter) md += `### Footer\n${(artFooter.sections || []).map((sc) => `- ${sc.titre}${sc.cible ? ` → ${nameOf(sc.cible)}` : ""}`).join("\n") || "- (vide)"}\n\n`;
+  return md;
+}
+ipcMain.handle("pegasus:wirePush", async (_e, key, id) => {
+  try {
+    const sites = await pegSites(); const s = sites[key];
+    if (!s) throw new Error("Site inconnu.");
+    const dir = await pegSiteDir(key);
+    const wdir = join(dir, "wireframes");
+    const vf = join(wdir, String(id).replace(/[^\w]/g, "") + ".json");
+    if (!existsSync(vf)) throw new Error("Version introuvable.");
+    const arbo = JSON.parse(readFileSync(vf, "utf8"));
+    const mbf = join(dir, "moodboard.json");
+    const mb = existsSync(mbf) ? JSON.parse(readFileSync(mbf, "utf8")) : null;
+    const brief = pegBuildBrief(arbo, mb, s.label || s.host || key);
+    const bdir = join(wdir, "build-" + id);
+    mkdirSync(bdir, { recursive: true });
+    const briefPath = join(bdir, "BRIEF.md");
+    writeFileSync(briefPath, brief);
+    writeFileSync(join(bdir, "wireframe.json"), JSON.stringify(arbo, null, 2));
+    // Marque cette version comme la version à mettre en ligne
+    const man = pegWireManifest(wdir);
+    man.deployed = id;
+    writeFileSync(join(wdir, "manifest.json"), JSON.stringify(man, null, 2));
+    // Ouvre une session Claude Code prête à construire, avec le brief en argument
+    await pegTerminal(`cd '${dir}' && claude 'Construis ce site en local en suivant le brief : ${briefPath.replace(/'/g, "'\\''")}'`);
+    return { ok: true, briefPath, dir: bdir, deployed: id };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
 ipcMain.handle("pegasus:siteSeo", async (_e, key, limit) => {
   try { return { ok: true, seo: await pegCall(key, "GET", `/seo-audit${limit ? `?limit=${Number(limit)}` : ""}`, 60000) }; }
   catch (e) { return { ok: false, error: e.message }; }
