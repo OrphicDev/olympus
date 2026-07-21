@@ -5078,13 +5078,14 @@ function arSideRender() {
 function arBrandOf() { return ((arState && arState.brands) || []).find((b) => b.id === arBrand) || null; }
 function arConnected() { return Object.values((arState && arState.connections) || {}).some((c) => c.status === "connected"); }
 function arDemoBadge() {
-  if (arConnected()) return "";
   return `<span class="ar-demo">◌ Données de démonstration — <b data-goconn>connecter les comptes</b></span>`;
 }
-function arHead(title, sub, extraHtml) {
+// isDemo : chaque vue le passe selon SA PROPRE donnée (r.data.demo) — ne dépend jamais de
+// "Meta est connecté quelque part" (une marque non mappée reste en démo même une fois Meta connecté).
+function arHead(title, sub, extraHtml, isDemo = true) {
   return `<div class="ga-head">
     <div class="ga-head-t"><h2>${escapeHtml(title)}</h2><span>${escapeHtml(sub || "")}</span></div>
-    <div class="ga-controls">${extraHtml || ""}${arDemoBadge()}</div>
+    <div class="ga-controls">${extraHtml || ""}${isDemo ? arDemoBadge() : ""}</div>
   </div>`;
 }
 function arWireCommon(box) {
@@ -5332,7 +5333,9 @@ async function arViewAds(box, b) {
   if (!r.ok) { box.innerHTML = `<div class="ga-note">${escapeHtml(r.error)}</div>`; return; }
   const d = r.data;
   const eur = (n) => n.toLocaleString("fr-FR") + " €";
-  let html = arHead("Publicité", "campagnes Meta Ads et Google Ads");
+  let html = arHead("Publicité", "campagnes Meta Ads et Google Ads", "", d.demo !== false);
+  if (r.warning) html += `<div class="ar-alerts"><div class="ar-alert warn"><span class="ai">△</span><span>${escapeHtml(r.warning)}</span></div></div>`;
+  if (!d.campaigns.length) html += `<div class="ga-note">${d.demo === false ? "Aucune campagne active sur les 30 derniers jours pour ce compte." : ""}</div>`;
   html += `<div class="ga-cards">
     ${pgScore("Dépense", eur(d.totals.spend), "", "sur la période")}
     ${pgScore("Conversions", String(d.totals.conversions))}
@@ -5344,7 +5347,7 @@ async function arViewAds(box, b) {
       <div class="cn">
         <div class="n">${escapeHtml(c.name)}</div>
         <div class="s">${arNet(c.platform).label} · CPC ${String(c.cpc).replace(".", ",")} € · ${pgFmtN(c.impressions)} impressions · ${pgFmtN(c.clicks)} clics</div>
-        <div class="ar-budget"><i style="width:${Math.min(100, Math.round(c.spend / c.budget * 100))}%"></i></div>
+        <div class="ar-budget"><i style="width:${Math.min(100, Math.round((c.spend / (c.budget || 1)) * 100))}%"></i></div>
       </div>
       <div class="cv"><div class="b">${eur(c.spend)} / ${eur(c.budget)}</div><div class="s">ROAS ×${c.roas} · ${c.conversions} conv.</div></div>
     </div>`).join(""));
@@ -5449,7 +5452,7 @@ function arReportPdfHTML(b, d, a, lines) {
 
 // Champs de clés + libellés par fournisseur (une app peut couvrir plusieurs surfaces)
 const AR_PROVIDER_KEYS = {
-  meta: [{ k: "app_id", label: "App ID Meta", secret: false }, { k: "app_secret", label: "Clé secrète Meta", secret: true }],
+  meta: [{ k: "app_id", label: "App ID Meta", secret: false }, { k: "app_secret", label: "Clé secrète Meta", secret: true }, { k: "config_id", label: "Configuration ID (Facebook Login for Business)", secret: false }],
   google: [{ k: "client_id", label: "Client ID", secret: false }, { k: "client_secret", label: "Client secret", secret: true }, { k: "developer_token", label: "Developer token (Ads)", secret: true }],
 };
 const AR_PROV_LABEL = { meta: "Meta", google: "Google" };
@@ -5537,6 +5540,7 @@ function arBrandModal(brand) {
   brand = brand || {};
   const ov = document.createElement("div"); ov.className = "modal-overlay show";
   const nets = ["instagram", "facebook", "tiktok", "linkedin", "x", "youtube"];
+  const ma = brand.metaAssets || {};
   ov.innerHTML = `<div class="modal-panel" style="width:520px;">
     <div class="modal-head"><h2>${brand.id ? "Modifier la marque" : "Nouvelle marque"}</h2><button class="modal-x" data-x>✕</button></div>
     <div class="modal-body">
@@ -5544,6 +5548,7 @@ function arBrandModal(brand) {
       <div class="auth-field"><label>Secteur</label><input class="auth-input" id="arBrSect" value="${escapeHtml(brand.secteur || "")}" placeholder="mode, hôtellerie, restaurant…"></div>
       <div class="mq-label" style="margin-top:6px;">Comptes (laisser vide si absent du réseau)</div>
       ${nets.map((n) => `<div class="auth-field" style="margin-top:6px;"><label>${arNet(n).ic} ${arNet(n).label}</label><input class="auth-input" data-brnet="${n}" value="${escapeHtml((brand.networks || {})[n] || "")}" placeholder="@compte"></div>`).join("")}
+      <div id="arBrMetaBox"></div>
       <div class="pg-actrow" style="margin-top:14px;">
         <button class="cal-btn primary" id="arBrSave">${brand.id ? "Enregistrer" : "Créer la marque"}</button>
         ${brand.id ? '<button class="btn sec" id="arBrDel" style="color:#e0868f;">Supprimer</button>' : ""}
@@ -5554,12 +5559,38 @@ function arBrandModal(brand) {
   const close = () => ov.remove();
   ov.querySelector("[data-x]").onclick = close;
   ov.onclick = (e) => { if (e.target === ov) close(); };
+  // Section "comptes Meta" : quelle Page/quel compte pub cette marque utilise réellement,
+  // parmi tous ceux accessibles au compte Meta de l'agence — chargée après ouverture (async).
+  if (arConnected()) {
+    const metaBox = ov.querySelector("#arBrMetaBox");
+    metaBox.innerHTML = `<div class="ga-note" style="margin-top:10px;">Chargement des comptes Meta…</div>`;
+    window.olympus.argosMetaAssets().then((r) => {
+      if (!r.ok || (!r.pages.length && !r.adAccounts.length)) { metaBox.innerHTML = ""; return; }
+      metaBox.innerHTML = `
+        <div class="mq-label" style="margin-top:14px;">Comptes Meta réels (données live plutôt que démo)</div>
+        <div class="auth-field" style="margin-top:6px;"><label>Page Facebook / Instagram</label>
+          <select class="auth-input" id="arBrPage">
+            <option value="">— aucune (rester en démo) —</option>
+            ${r.pages.map((p) => `<option value="${p.id}"${ma.pageId === p.id ? " selected" : ""}>${escapeHtml(p.name)}${p.ig_username ? " — @" + escapeHtml(p.ig_username) : " (pas d'Instagram lié)"}</option>`).join("")}
+          </select>
+        </div>
+        <div class="auth-field" style="margin-top:6px;"><label>Compte publicitaire</label>
+          <select class="auth-input" id="arBrAdAccount">
+            <option value="">— aucun (rester en démo) —</option>
+            ${r.adAccounts.map((a) => `<option value="${a.id}"${ma.adAccountId === a.id ? " selected" : ""}>${escapeHtml(a.name)}</option>`).join("")}
+          </select>
+        </div>`;
+    });
+  }
   ov.querySelector("#arBrSave").onclick = async () => {
     const name = ov.querySelector("#arBrName").value.trim();
     if (!name) return;
     const networks = {};
     ov.querySelectorAll("[data-brnet]").forEach((i) => { if (i.value.trim()) networks[i.dataset.brnet] = i.value.trim(); });
-    const r = await window.olympus.argosBrandSave({ id: brand.id, name, secteur: ov.querySelector("#arBrSect").value.trim(), networks });
+    const pageSel = ov.querySelector("#arBrPage"), adSel = ov.querySelector("#arBrAdAccount");
+    // Si la liste Meta n'a pas fini de charger, on garde le mapping existant plutôt que l'écraser à null.
+    const metaAssets = (pageSel || adSel) ? { pageId: pageSel && pageSel.value ? pageSel.value : null, adAccountId: adSel && adSel.value ? adSel.value : null } : ma;
+    const r = await window.olympus.argosBrandSave({ id: brand.id, name, secteur: ov.querySelector("#arBrSect").value.trim(), networks, metaAssets });
     arState = null; if (r.ok && r.brand) arBrand = r.brand.id; arInvalidate();
     close(); renderArgos();
   };

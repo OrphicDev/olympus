@@ -1603,10 +1603,14 @@ const ARGOS_PROVIDERS = {
     graph: "v25.0",
     authUrl: "https://www.facebook.com/v25.0/dialog/oauth",
     tokenUrl: "https://graph.facebook.com/v25.0/oauth/access_token",
-    // Lecture (insights) + publication IG/FB + lecture pubs. En mode Développement de l'app,
-    // l'admin peut accorder ces permissions sans App Review (cf. guide).
-    scopes: ["instagram_basic", "instagram_manage_insights", "instagram_manage_comments", "instagram_content_publish",
-      "pages_show_list", "pages_read_engagement", "read_insights", "pages_manage_posts", "business_management", "ads_read"],
+    // Les apps créées via le nouveau flux "Facebook Login for Business" (use cases Pages/
+    // Instagram/Marketing API) n'acceptent plus de scopes bruts dans l'URL d'autorisation —
+    // il faut un config_id créé dans Facebook Login for Business → Configurations.
+    // Permissions modernes de référence à sélectionner dans cette configuration :
+    //   Page          : pages_show_list, pages_read_engagement, pages_manage_posts, read_insights
+    //   Instagram acct: instagram_business_basic, instagram_business_manage_insights,
+    //                   instagram_business_manage_comments, instagram_business_content_publish
+    //   Ad account    : ads_read, ads_management (ou business_management pour lister les comptes pub)
   },
 };
 function argosProviderOf(platform) {
@@ -1645,11 +1649,13 @@ function argosLoopbackAuth(authUrl, expectedState) {
 }
 async function argosJson(url) { const r = await fetch(url); const j = await r.json().catch(() => ({})); return { ok: r.ok, status: r.status, j }; }
 // Connexion Meta complète : code → jeton court → jeton long → Pages + comptes IG + comptes pub.
-async function argosMetaConnect(appId, appSecret) {
+// configId : Configuration ID de "Facebook Login for Business" (obligatoire pour les apps créées
+// via le flux "use cases" — elles n'acceptent plus de scopes bruts dans l'URL d'autorisation).
+async function argosMetaConnect(appId, appSecret, configId) {
   const V = ARGOS_PROVIDERS.meta.graph;
   const redirect = `http://localhost:${ARGOS_OAUTH_PORT}/callback`;
   const state = randomUUID();
-  const authUrl = `${ARGOS_PROVIDERS.meta.authUrl}?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(redirect)}&state=${state}&response_type=code&scope=${encodeURIComponent(ARGOS_PROVIDERS.meta.scopes.join(","))}`;
+  const authUrl = `${ARGOS_PROVIDERS.meta.authUrl}?client_id=${encodeURIComponent(appId)}&redirect_uri=${encodeURIComponent(redirect)}&state=${state}&response_type=code&config_id=${encodeURIComponent(configId)}`;
   const code = await argosLoopbackAuth(authUrl, state);
   const short = await argosJson(`${ARGOS_PROVIDERS.meta.tokenUrl}?client_id=${encodeURIComponent(appId)}&client_secret=${encodeURIComponent(appSecret)}&redirect_uri=${encodeURIComponent(redirect)}&code=${encodeURIComponent(code)}`);
   if (!short.ok || !short.j.access_token) throw new Error("Échange du code refusé : " + (short.j.error?.message || short.status));
@@ -1670,17 +1676,21 @@ function argosApis() {
   return _argosApis;
 }
 // Appel API réel — prêt : substitue les placeholders et exécute dès qu'un token existe.
-async function argosApiCall(platform, endpointId, params = {}) {
+// overrides : identifiants spécifiques à une MARQUE (page_id, ig_user_id, ad_account_id…) qui
+// remplacent ceux de la connexion globale — indispensable pour une agence multi-clients où
+// chaque marque a sa propre Page/compte pub derrière le même compte Meta de l'agence.
+async function argosApiCall(platform, endpointId, params = {}, overrides = {}) {
   const st = argosState();
   const conn = st.connections[platform];
-  const token = conn && argosDecSecret(conn.access_token);
+  const token = overrides.access_token ? argosDecSecret(overrides.access_token) : (conn && argosDecSecret(conn.access_token));
   if (!conn || conn.status !== "connected" || !token) {
     const err = new Error("non-connecté"); err.notConnected = true; throw err;
   }
   const spec = (argosApis().apis || []).find((a) => a.platform === platform || (a.covers || []).includes(platform));
   const ep = spec && (spec.endpoints || []).find((e) => e.id === endpointId);
   if (!ep) throw new Error(`Endpoint inconnu : ${platform}/${endpointId}`);
-  let url = ep.url_template.replace(/\{(\w+)\}/g, (_, k) => params[k] ?? conn[k] ?? `{${k}}`);
+  const ctx = { ...conn, ...overrides };
+  let url = ep.url_template.replace(/\{(\w+)\}/g, (_, k) => params[k] ?? ctx[k] ?? `{${k}}`);
   const q = new URLSearchParams();
   for (const p of ep.params || []) if (params[p.name] != null) q.set(p.name, params[p.name]);
   if (!/\baccess_token\b/.test(url) && ep.method === "GET") q.set("access_token", token);
@@ -1779,6 +1789,31 @@ function argosDemoAds(brand) {
   const wRoas = +(campaigns.reduce((n2, c) => n2 + c.roas * c.spend, 0) / (totSpend || 1)).toFixed(1);
   return { demo: true, campaigns, totals: { spend: totSpend, conversions: totConv, roas: wRoas } };
 }
+// Vraies données Meta Ads pour une marque mappée à un compte publicitaire (act_{id}).
+// Renvoie EXACTEMENT la forme d'argosDemoAds — le renderer n'a rien à changer pour l'afficher.
+async function argosRealAds(brand) {
+  const adId = brand.metaAssets && brand.metaAssets.adAccountId;
+  if (!adId) return null;
+  const ov = { ad_account_id: adId };
+  const [camp, ins] = await Promise.all([
+    argosApiCall("meta_ads", "ads_campaigns", { fields: "id,name,objective,effective_status,daily_budget,lifetime_budget" }, ov),
+    argosApiCall("meta_ads", "ads_insights", { level: "campaign", fields: "campaign_id,campaign_name,spend,impressions,clicks,cpc,cpm,ctr,actions,purchase_roas", date_preset: "last_30d" }, ov),
+  ]);
+  const insByCamp = new Map((ins.data || []).map((i) => [i.campaign_id, i]));
+  const campaigns = (camp.data || []).map((c) => {
+    const i = insByCamp.get(c.id) || {};
+    const spend = +(i.spend || 0);
+    const roasArr = i.purchase_roas || [];
+    const roas = roasArr.length ? +roasArr[0].value : 0;
+    const conversions = (i.actions || []).reduce((n, a) => n + (/purchase|lead|complete_registration|omni_/.test(a.action_type) ? +a.value : 0), 0);
+    const budget = c.daily_budget ? Math.round((+c.daily_budget / 100) * 30) : (c.lifetime_budget ? Math.round(+c.lifetime_budget / 100) : Math.round(spend));
+    return { id: c.id, name: c.name, platform: "meta_ads", status: c.effective_status === "ACTIVE" ? "active" : "ended", budget, spend: Math.round(spend), roas: +roas.toFixed(1), cpc: +(i.cpc || 0), impressions: Math.round(+(i.impressions || 0)), clicks: Math.round(+(i.clicks || 0)), conversions };
+  });
+  const totSpend = campaigns.reduce((n, c) => n + c.spend, 0);
+  const totConv = campaigns.reduce((n, c) => n + c.conversions, 0);
+  const wRoas = totSpend ? +(campaigns.reduce((n, c) => n + c.roas * c.spend, 0) / totSpend).toFixed(1) : 0;
+  return { demo: false, campaigns, totals: { spend: totSpend, conversions: totConv, roas: wRoas } };
+}
 function argosDemoCompetitors(brand) {
   const rng = argosRng(brand.id + ":comp");
   const mine = argosDemoOverview(brand, 30);
@@ -1850,10 +1885,25 @@ ipcMain.handle("argos:keywords", (_e, brandId, keywords) => {
   b.keywords = (keywords || []).map((k) => String(k).trim()).filter(Boolean).slice(0, 20);
   return { ok: argosSave(st), keywords: b.keywords };
 });
-ipcMain.handle("argos:ads", (_e, brandId) => {
+ipcMain.handle("argos:ads", async (_e, brandId) => {
   const st = argosState(); const b = st.brands.find((x) => x.id === brandId);
   if (!b) return { ok: false, error: "Marque inconnue." };
+  if (b.metaAssets && b.metaAssets.adAccountId) {
+    try { const real = await argosRealAds(b); if (real) return { ok: true, data: real }; }
+    catch (e) { return { ok: true, data: argosDemoAds(b), warning: "Compte pub mappé mais l'appel réel a échoué (" + e.message + ") — données de démonstration affichées." }; }
+  }
   return { ok: true, data: argosDemoAds(b) };
+});
+// Liste des Pages/comptes IG/comptes pub disponibles côté Meta — pour le mapping par marque.
+ipcMain.handle("argos:metaAssets", () => {
+  const st = argosState();
+  const assets = (st.providers.meta && st.providers.meta.assets) || { pages: [], adAccounts: [] };
+  return {
+    ok: true,
+    connected: !!(st.connections.facebook || st.connections.instagram || st.connections.meta_ads),
+    pages: (assets.pages || []).map((p) => ({ id: p.id, name: p.name, ig_user_id: p.ig_user_id || null, ig_username: p.ig_username || null })),
+    adAccounts: (assets.adAccounts || []).map((a) => ({ id: a.id, name: a.name })),
+  };
 });
 ipcMain.handle("argos:competitors", (_e, brandId) => {
   const st = argosState(); const b = st.brands.find((x) => x.id === brandId);
@@ -1887,7 +1937,7 @@ ipcMain.handle("argos:postDelete", (_e, id) => {
 });
 // Seuls ces champs sont acceptés du renderer — jamais status/access_token (sinon on pourrait
 // forcer le chemin API réel sans OAuth). Les secrets sont chiffrés avant stockage.
-const ARGOS_KEY_FIELDS = { app_id: false, client_id: false, developer_token: true, app_secret: true, client_secret: true, login_customer_id: false };
+const ARGOS_KEY_FIELDS = { app_id: false, client_id: false, developer_token: true, app_secret: true, client_secret: true, login_customer_id: false, config_id: false };
 ipcMain.handle("argos:connSaveKeys", (_e, platform, keys) => {
   if (!ARGOS_PLATFORMS.some((p) => p.id === platform)) return { ok: false, error: "Plateforme inconnue." };
   const st = argosState();
@@ -1907,9 +1957,10 @@ ipcMain.handle("argos:connect", async (_e, platform) => {
   const pk = st.providers[provider] || {};
   try {
     if (provider === "meta") {
-      const appId = pk.app_id, appSecret = argosDecSecret(pk.app_secret);
+      const appId = pk.app_id, appSecret = argosDecSecret(pk.app_secret), configId = pk.config_id;
       if (!appId || !appSecret) return { ok: false, error: "Renseigne d'abord l'App ID et le secret Meta." };
-      const r = await argosMetaConnect(appId, appSecret);
+      if (!configId) return { ok: false, error: "Il manque le Configuration ID — crée-le dans Facebook Login for Business → Configurations, puis colle-le dans les clés Meta." };
+      const r = await argosMetaConnect(appId, appSecret, configId);
       if (!r.pages.length) return { ok: false, error: "Aucune Page Facebook accessible avec ce compte. Vérifie que tu es admin d'au moins une Page (et lie ton compte Instagram pro à cette Page)." };
       const pages = r.pages.map((p) => ({ id: p.id, name: p.name, token: argosEncSecret(p.access_token), ig_user_id: p.ig_user_id, ig_username: p.ig_username }));
       const igPages = pages.filter((p) => p.ig_user_id);
