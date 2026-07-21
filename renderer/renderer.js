@@ -3695,6 +3695,7 @@ function syncGridToWheel() {
   if (calView !== "month") { renderChronos(); return; }   // semaine/jour : suivent le jour sélectionné
   if (wheelDate.getFullYear() !== calDate.getFullYear() || wheelDate.getMonth() !== calDate.getMonth()) {
     calDate = new Date(wheelDate.getFullYear(), wheelDate.getMonth(), 1);
+    calCenterNext = true;                    // navigation VOULUE → on centre sur le nouveau mois
     renderChronos();                         // change de mois → regénère la grille (surligne calSelected)
   } else {
     highlightSelected();
@@ -3835,11 +3836,10 @@ function positionCalMonths() {
   flow.insertAdjacentHTML("beforeend", divs);
 }
 // Grille continue : les jours s'enchaînent d'un mois à l'autre (seul le tout 1er jour est calé sur son jour de semaine).
-async function paintCal() {
-  const first = calMonths[0], last = calMonths[calMonths.length - 1];
-  const lastEnd = new Date(last.getFullYear(), last.getMonth() + 1, 0);
-  const r = await window.olympus.chronosList(isoD(first.getFullYear(), first.getMonth(), 1), isoD(lastEnd.getFullYear(), lastEnd.getMonth(), lastEnd.getDate()));
-  chronosEvents = r.ok ? r.events : [];
+// Rendu SYNCHRONE depuis les événements déjà en mémoire — aucun réseau ici : indispensable
+// pour que la compensation de scroll du défilement infini se fasse dans la même frame
+// (le moindre await entre mesure et restauration = saut visuel, bug signalé).
+function paintCalDOM() {
   const nLanes = assignLanes(chronosEvents);
   const byDate = groupByDate(chronosEvents);
   const todayIso = todayIsoNow();
@@ -3854,7 +3854,41 @@ async function paintCal() {
   $("calScroll").innerHTML = `<div class="cal-flow"><div class="cal-days" id="calDays">${cells}</div><div class="cal-labels" id="calLabels"></div></div>`;
   positionCalMonths();
 }
+// Recharge les événements de toute la fenêtre de mois affichée. Un compteur de génération
+// écarte les réponses obsolètes (deux fetch concurrents qui reviendraient dans le désordre).
+let calFetchGen = 0;
+async function fetchCalEvents() {
+  const gen = ++calFetchGen;
+  const first = calMonths[0], last = calMonths[calMonths.length - 1];
+  const lastEnd = new Date(last.getFullYear(), last.getMonth() + 1, 0);
+  const r = await window.olympus.chronosList(isoD(first.getFullYear(), first.getMonth(), 1), isoD(lastEnd.getFullYear(), lastEnd.getMonth(), lastEnd.getDate()));
+  if (gen !== calFetchGen) return "stale";                  // une requête plus récente est partie
+  if (r.ok) chronosEvents = r.events;
+  return true;                                              // même en erreur réseau : on peint avec ce qu'on a
+}
+// Re-peint en conservant la position de lecture : on s'ancre sur la première cellule visible
+// (exact même si des événements arrivés entre-temps ont changé les hauteurs des cellules).
+function repaintKeepScroll() {
+  const el = $("calScroll");
+  const days = $("calDays");
+  let anchorDate = null, anchorOffset = 0;
+  if (days) {
+    const cells = days.querySelectorAll(".cal-cell[data-date]");
+    for (const c of cells) {
+      if (c.offsetTop + c.offsetHeight > el.scrollTop) { anchorDate = c.dataset.date; anchorOffset = c.offsetTop - el.scrollTop; break; }
+    }
+  }
+  paintCalDOM();
+  if (anchorDate) {
+    const c = $("calDays").querySelector(`[data-date="${anchorDate}"]`);
+    if (c) el.scrollTop = Math.max(0, c.offsetTop - anchorOffset);
+  }
+}
+// Renvoie false si une requête plus récente a pris le relais — dans ce cas on ne repeint PAS
+// (le rendu et le scroll appartiennent au flux le plus récent, sinon on écrase son travail).
+async function paintCal() { const st = await fetchCalEvents(); if (st === "stale") return false; paintCalDOM(); return true; }
 let calView = "month";                                     // month | week | day
+let calCenterNext = true;                                  // true = le prochain rendu Mois centre sur calDate
 async function renderChronos() {
   $("calDow").style.display = calView === "month" ? "" : "none";
   $("calScroll").dataset.view = calView;
@@ -3865,9 +3899,19 @@ async function renderChronos() {
 }
 async function renderMonthView() {
   const cur = new Date(calDate.getFullYear(), calDate.getMonth(), 1);
+  const gridExists = !!$("calDays");
+  const covered = calMonths.length && calMonths.some((mo) => monthKey(mo) === monthKey(cur));
+  if (gridExists && covered && !calCenterNext) {
+    // Rafraîchissement en place (après un enregistrement/coche d'événement) : on garde la
+    // position de lecture — avant, chaque save re-centrait sur le mois courant (saut signalé).
+    if (await fetchCalEvents() === "stale") return;
+    repaintKeepScroll();
+    return;
+  }
+  calCenterNext = false;
   calMonths = [-2, -1, 0, 1, 2].map((k) => new Date(cur.getFullYear(), cur.getMonth() + k, 1));
   $("calDow").innerHTML = DOW.map((d) => `<div class="cal-dow">${d}</div>`).join("");
-  await paintCal();
+  if (!await paintCal()) return;                            // rendu obsolète : un flux plus récent a repris la main
   const cell = $("calDays").querySelector(`[data-mstart="${monthKey(cur)}"]`);
   if (cell) $("calScroll").scrollTop = Math.max(0, cell.offsetTop - 30);
 }
@@ -3966,7 +4010,20 @@ $("calViews").onclick = (e) => {
   renderChronos();
 };
 // Scroll infini : ajoute les mois adjacents en approchant des bords (re-render + maintien de position)
-$("calScroll").addEventListener("scroll", async () => {
+// Scroll infini SANS saut : le nouveau mois est peint immédiatement (synchrone, avec les
+// événements déjà en mémoire) et la compensation de scroll se fait dans la même frame.
+// Les événements du mois ajouté arrivent ensuite en arrière-plan (repaint ancré sur la
+// cellule visible). Avant : un await réseau s'intercalait entre mesure et restauration du
+// scroll → tout défilement pendant l'attente était perdu (sauts signalés).
+let calFetchTimer = null;
+function calScheduleFetch() {
+  clearTimeout(calFetchTimer);
+  calFetchTimer = setTimeout(async () => {                // débounce : une seule requête même si on étend 3 mois d'affilée
+    const st = await fetchCalEvents();
+    if (st === true && calView === "month" && $("calDays")) repaintKeepScroll();
+  }, 250);
+}
+$("calScroll").addEventListener("scroll", () => {
   if (calView !== "month") return;                        // scroll infini : vue Mois uniquement
   const el = $("calScroll");
   if (calLoading) return;
@@ -3974,16 +4031,18 @@ $("calScroll").addEventListener("scroll", async () => {
     calLoading = true;
     const oldTop = el.scrollTop, oldH = el.scrollHeight;
     calMonths.unshift(new Date(calMonths[0].getFullYear(), calMonths[0].getMonth() - 1, 1));
-    await paintCal();
-    el.scrollTop = oldTop + (el.scrollHeight - oldH);
+    paintCalDOM();
+    el.scrollTop = oldTop + (el.scrollHeight - oldH);     // même frame → zéro saut
+    calScheduleFetch();
     calLoading = false;
   } else if (el.scrollTop + el.clientHeight > el.scrollHeight - 200) {
     calLoading = true;
     const oldTop = el.scrollTop;
     const lm = calMonths[calMonths.length - 1];
     calMonths.push(new Date(lm.getFullYear(), lm.getMonth() + 1, 1));
-    await paintCal();
+    paintCalDOM();
     el.scrollTop = oldTop;
+    calScheduleFetch();
     calLoading = false;
   }
 });
@@ -5169,30 +5228,21 @@ function arResumeTile(icon, label, value, sub, view) {
 }
 async function arViewApercu(box, b) {
   const ovKey = b.id + ":ov:" + arPeriod;
-  const [r, adsR, audR, inboxR] = await Promise.all([
-    arGet(ovKey, () => window.olympus.argosOverview(b.id, arPeriod)),
-    arGet(b.id + ":ads", () => window.olympus.argosAds(b.id)),
-    arGet(b.id + ":aud", () => window.olympus.argosAudience(b.id)),
-    arGet(b.id + ":inbox", () => window.olympus.argosInbox(b.id)),
+  // L'Aperçu ne bloque QUE sur sa donnée principale — les 3 tuiles résumé (Publicité/Audience/
+  // Inbox) arrivent en asynchrone et se remplissent à l'affichage, sinon la tuile la plus lente
+  // gelait tout l'écran sur "Chargement…" (lenteur signalée).
+  const tilesPromise = Promise.all([
+    arGet(b.id + ":ads", () => window.olympus.argosAds(b.id)).catch(() => null),
+    arGet(b.id + ":aud", () => window.olympus.argosAudience(b.id)).catch(() => null),
+    arGet(b.id + ":inbox", () => window.olympus.argosInbox(b.id)).catch(() => null),
   ]);
+  const r = await arGet(ovKey, () => window.olympus.argosOverview(b.id, arPeriod));
   if (!r.ok) { box.innerHTML = `<div class="ga-note">${escapeHtml(r.error)}</div>`; return; }
   const d = r.data;
   if (d.demo === false) arKickRefresh(ovKey, () => arView === "apercu" && arBrandOf()?.id === b.id, () => window.olympus.argosOverview(b.id, arPeriod, true));
   const per = `<div class="ga-period">${[[7, "7 j"], [30, "30 j"], [90, "90 j"]].map(([n, l]) => `<button class="ga-per${arPeriod === n ? " on" : ""}" data-per="${n}">${l}</button>`).join("")}</div>`;
   let html = arHead(b.name, `${arPeriod} derniers jours · ${Object.keys(b.networks || {}).length} réseau(x)`, per, d.demo !== false);
-  // ── Résumé multi-onglets : les points clés de Publicité / Audience / Inbox, en un clic ──
-  const eur = (n) => n.toLocaleString("fr-FR") + " €";
-  const tiles = [];
-  if (adsR.ok) tiles.push(arResumeTile("▸", "Publicité", eur(adsR.data.totals.spend), `ROAS ×${adsR.data.totals.roas} · ${adsR.data.campaigns.length} campagne(s)`, "ads"));
-  if (audR.ok && (audR.data.followerAge.length || audR.data.followerCountry.length)) {
-    const topAge = audR.data.followerAge[0], topCountry = audR.data.followerCountry[0];
-    tiles.push(arResumeTile("◐", "Audience", topAge ? topAge.label + " ans" : "—", topCountry ? `1ᵉʳ pays : ${topCountry.label}` : "", "audience"));
-  }
-  if (inboxR.ok) {
-    const convs = inboxR.conversations || []; const recent = convs.filter((c) => c.hoursAgo < 24).length;
-    tiles.push(arResumeTile("💬", "Inbox", String(convs.length), recent ? `${recent} dans les dernières 24h` : "aucune activité récente", "inbox"));
-  }
-  if (tiles.length) html += `<div class="ar-resume-row">${tiles.join("")}</div>`;
+  html += `<div class="ar-resume-row" id="arResumeRow" style="display:none;"></div>`;
   if (r.warning) html += `<div class="ar-alerts"><div class="ar-alert warn"><span class="ai">△</span><span>${escapeHtml(r.warning)}</span></div></div>`;
   if (d.alerts?.length) html += `<div class="ar-alerts">${d.alerts.map((a) => `<div class="ar-alert${a.type === "warn" ? " warn" : ""}"><span class="ai">${a.type === "warn" ? "△" : "◈"}</span><span>${escapeHtml(a.txt)}${a.type === "opportunity" ? ' <b style="cursor:pointer;" data-seize>Créer le post →</b>' : ""}</span></div>`).join("")}</div>`;
   html += `<div class="ga-cards">
@@ -5222,8 +5272,26 @@ async function arViewApercu(box, b) {
   box.innerHTML = html;
   box.querySelectorAll(".ga-per").forEach((bt) => bt.onclick = () => { arPeriod = +bt.dataset.per; arRenderView(); });
   box.querySelectorAll("[data-recycle]").forEach((bt) => bt.onclick = () => arComposer(b, { text: bt.dataset.recycle + " — (recyclé, à adapter)" }));
-  box.querySelectorAll("[data-gotoview]").forEach((el) => el.onclick = () => { arView = el.dataset.gotoview; arSideRender(); arRenderView(); });
   const sz = box.querySelector("[data-seize]"); if (sz) sz.onclick = () => arComposer(b, { text: "Idée : capitaliser sur la tendance vidéo courte de la semaine.\n\n[brouillon proposé par Argos — à retravailler]" });
+  // Les tuiles résumé arrivent quand elles sont prêtes — l'écran principal, lui, est déjà affiché.
+  tilesPromise.then(([adsR, audR, inboxR]) => {
+    const row = box.querySelector("#arResumeRow");
+    if (!row || arView !== "apercu" || arBrandOf()?.id !== b.id) return;
+    const eur = (n) => n.toLocaleString("fr-FR") + " €";
+    const tiles = [];
+    if (adsR?.ok) tiles.push(arResumeTile("▸", "Publicité", eur(adsR.data.totals.spend), `ROAS ×${adsR.data.totals.roas} · ${adsR.data.campaigns.length} campagne(s)`, "ads"));
+    if (audR?.ok && (audR.data.followerAge.length || audR.data.followerCountry.length)) {
+      const topAge = audR.data.followerAge[0], topCountry = audR.data.followerCountry[0];
+      tiles.push(arResumeTile("◐", "Audience", topAge ? topAge.label + " ans" : "—", topCountry ? `1ᵉʳ pays : ${topCountry.label}` : "", "audience"));
+    }
+    if (inboxR?.ok) {
+      const convs = inboxR.conversations || []; const recent = convs.filter((c) => c.hoursAgo < 24).length;
+      tiles.push(arResumeTile("💬", "Inbox", String(convs.length), recent ? `${recent} dans les dernières 24h` : "aucune activité récente", "inbox"));
+    }
+    if (!tiles.length) return;
+    row.innerHTML = tiles.join(""); row.style.display = "";
+    row.querySelectorAll("[data-gotoview]").forEach((el) => el.onclick = () => { arView = el.dataset.gotoview; arSideRender(); arRenderView(); });
+  });
 }
 
 // ── Audience : démographie réelle des abonnés + de l'audience engagée, répartition du
@@ -5744,6 +5812,7 @@ function arPaintClusters(box) {
 async function arSilentSyncCluster(brand) {
   if (!brand.id) return;
   await window.olympus.argosBrandSave({ id: brand.id, assets: brand.assets || [] });
+  arState = null; arInvalidate(brand.id); // Argos relit l'état, pas de vieux cache pour cette marque
 }
 function arWireClusters(box) {
   box.querySelectorAll(".ar-bucket-items .ar-chip[draggable]").forEach((chip) => {
@@ -5800,6 +5869,7 @@ function arWireClusters(box) {
     const idx = +btn.dataset.delcluster; const brand = arClusterBrands[idx];
     if (brand.id) { if (!confirm(`Supprimer « ${brand.name} » et tout son mapping ?`)) return; await window.olympus.argosBrandDelete(brand.id); }
     arClusterBrands.splice(idx, 1);
+    arState = null; arInvalidate(); // Argos doit re-lire la liste au prochain affichage
     arPaintClusters(box);
   });
   box.querySelectorAll("[data-savecluster]").forEach((btn) => btn.onclick = async () => {
@@ -5807,7 +5877,14 @@ function arWireClusters(box) {
     const m = box.querySelector(`[data-clustermsg="${idx}"]`);
     if (!brand.name || !brand.name.trim()) { m.className = "msg err"; m.textContent = "Nomme le client d'abord."; return; }
     const r = await window.olympus.argosBrandSave({ id: brand.id, name: brand.name.trim(), secteur: brand.secteur || "", networks: brand.networks || {}, assets: brand.assets || [], hidden: !!brand.hidden });
-    if (r.ok) { brand.id = r.brand.id; m.className = "msg ok"; m.textContent = "Enregistré ✓"; }
+    if (r.ok) {
+      brand.id = r.brand.id; m.className = "msg ok"; m.textContent = "Enregistré ✓";
+      // Sans ces invalidations, Argos affichait l'ANCIENNE liste jusqu'à un Cmd+R (bug signalé).
+      arState = null; arInvalidate(brand.id);
+      // La sauvegarde vide le cache de données de cette marque (mapping potentiellement changé)
+      // → on re-préchauffe tout de suite en tâche de fond pour que l'arrivée dans Argos soit chaude.
+      argosPrewarmAll();
+    }
     else { m.className = "msg err"; m.textContent = "Échec de l'enregistrement."; }
   });
 }
