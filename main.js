@@ -1579,7 +1579,7 @@ function argosState() {
     };
     argosSave(st);
   }
-  st.brands = st.brands || []; st.posts = st.posts || []; st.inboxReplies = st.inboxReplies || []; st.connections = st.connections || {}; st.providers = st.providers || {};
+  st.brands = st.brands || []; st.posts = st.posts || []; st.inboxReplies = st.inboxReplies || []; st.connections = st.connections || {}; st.providers = st.providers || {}; st.cache = st.cache || {};
   return st;
 }
 // Registre des plateformes + leurs API réelles (endpoints chargés depuis argos-apis.json,
@@ -1843,6 +1843,32 @@ function argosBrandIg(brand) {
 // publics de Page ; pas d'insights Facebook tant que read_insights n'est pas accordé).
 // Principe strict : ce qui n'est pas accessible reste à 0/vide plutôt qu'estimé — jamais de
 // chiffre inventé présenté comme réel.
+// ── Cache local "stale-while-revalidate" pour les marques mappées à un vrai compte Meta ──
+// Le premier chargement d'une marque reste réel (attend l'appel Meta), mais tout rechargement
+// suivant renvoie IMMÉDIATEMENT la dernière donnée connue et rafraîchit en tâche de fond —
+// l'utilisateur ne voit jamais l'attente réseau après la toute première fois. Marques en démo :
+// pas de cache, c'est déjà instantané (calcul local, aucun appel réseau).
+const ARGOS_CACHE_TTL = 15 * 60 * 1000; // 15 min
+async function argosCached(brandId, kind, extra, forceRefresh, hasRealSource, realFn, demoFn) {
+  const st = argosState(); const b = st.brands.find((x) => x.id === brandId);
+  if (!b) return { ok: false, error: "Marque inconnue." };
+  if (!hasRealSource(b)) return { ok: true, ...demoFn(b) };
+  const key = brandId + ":" + kind + (extra != null ? ":" + extra : "");
+  const cached = st.cache[key];
+  const fresh = cached && Date.now() - cached.fetchedAt < ARGOS_CACHE_TTL;
+  // realFn renvoie la forme COMPLÈTE à mettre en cache (ex: {data:...} ou {demo,conversations})
+  // — null si indisponible, auquel cas on retombe sur demoFn.
+  const doRefresh = async () => {
+    let result;
+    try { const real = await realFn(b); result = real || demoFn(b); }
+    catch (e) { result = { ...demoFn(b), warning: "Compte mappé mais l'appel réel a échoué (" + e.message + ") — données de démonstration affichées." }; }
+    const st2 = argosState(); st2.cache[key] = { ...result, fetchedAt: Date.now() }; argosSave(st2);
+    return result;
+  };
+  if (!forceRefresh && fresh) return { ok: true, ...cached };
+  if (!forceRefresh && cached) { doRefresh().catch(() => {}); return { ok: true, ...cached, stale: true }; }
+  return { ok: true, ...(await doRefresh()) };
+}
 async function argosRealOverview(brand, days) {
   const igCtx = argosBrandIg(brand);
   const fbCtx = argosBrandFbPage(brand);
@@ -1850,27 +1876,30 @@ async function argosRealOverview(brand, days) {
   const perNet = []; let followers = 0, published = 0, totalInteractions = 0;
   const topPosts = []; const byDayMap = new Map();
   const nowSec = Math.floor(Date.now() / 1000), sinceSec = nowSec - days * 86400;
-  if (igCtx) {
+  // Instagram et Facebook interrogés EN PARALLÈLE (Promise.all), ainsi que les insights des
+  // 4 posts vedettes entre eux — c'était strictement séquentiel avant, d'où la lenteur perçue.
+  const fetchIg = async () => {
+    if (!igCtx) return;
     try {
-      const acc = await argosApiCall("instagram", "ig_account", { fields: "username,followers_count,media_count" }, igCtx);
+      const [acc, reachIns, eng, media] = await Promise.all([
+        argosApiCall("instagram", "ig_account", { fields: "username,followers_count,media_count" }, igCtx),
+        argosApiCall("instagram", "ig_account_insights", { metric: "reach", period: "day", metric_type: "time_series", since: sinceSec, until: nowSec }, igCtx).catch(() => null),
+        argosApiCall("instagram", "ig_account_insights", { metric: "total_interactions", period: "day", metric_type: "total_value", since: sinceSec, until: nowSec }, igCtx).catch(() => null),
+        argosApiCall("instagram", "ig_media_list", { fields: "id,caption,timestamp,like_count,comments_count", limit: 25 }, igCtx).catch(() => null),
+      ]);
       followers += +(acc.followers_count || 0);
       const igNet = { network: "instagram", handle: "@" + (acc.username || ""), followers: +(acc.followers_count || 0), growth: 0, engagement: 0, posts: 0 };
       perNet.push(igNet);
-      try {
-        const reachIns = await argosApiCall("instagram", "ig_account_insights", { metric: "reach", period: "day", metric_type: "time_series", since: sinceSec, until: nowSec }, igCtx);
+      if (reachIns) {
         const series = (reachIns.data || []).find((d) => d.name === "reach");
         (series?.values || []).forEach((v) => { const d = (v.end_time || "").slice(0, 10); if (d) byDayMap.set(d, (byDayMap.get(d) || 0) + (v.value || 0)); });
-      } catch {}
-      try {
-        const eng = await argosApiCall("instagram", "ig_account_insights", { metric: "total_interactions", period: "day", metric_type: "total_value", since: sinceSec, until: nowSec }, igCtx);
-        totalInteractions += +(eng.data?.[0]?.total_value?.value || 0);
-      } catch {}
-      try {
-        const media = await argosApiCall("instagram", "ig_media_list", { fields: "id,caption,timestamp,like_count,comments_count", limit: 25 }, igCtx);
+      }
+      if (eng) totalInteractions += +(eng.data?.[0]?.total_value?.value || 0);
+      if (media) {
         const items = (media.data || []).filter((m) => !m.timestamp || new Date(m.timestamp).getTime() / 1000 >= sinceSec);
         igNet.posts = items.length; published += items.length;
         const top = items.slice().sort((a, b) => (b.like_count || 0) - (a.like_count || 0)).slice(0, 4);
-        for (const m of top) {
+        await Promise.all(top.map(async (m) => {
           const title = (m.caption || "Publication").replace(/\s+/g, " ").slice(0, 44) || "Publication";
           const date = (m.timestamp || "").slice(0, 10);
           try {
@@ -1879,25 +1908,29 @@ async function argosRealOverview(brand, days) {
             const r = val("reach"), ti = val("total_interactions");
             topPosts.push({ id: m.id, network: "instagram", title, reach: r, eng: r ? +((ti / r) * 100).toFixed(1) : 0, date });
           } catch { topPosts.push({ id: m.id, network: "instagram", title, reach: 0, eng: 0, date }); }
-        }
-      } catch {}
+        }));
+      }
     } catch (e) { /* Instagram indisponible (permission manquante ou autre) — on continue avec Facebook si dispo */ }
-  }
-  if (fbCtx) {
+  };
+  const fetchFb = async () => {
+    if (!fbCtx) return;
     try {
-      const info = await argosApiCall("facebook", "fb_page_basic", { fields: "name,fan_count,followers_count" }, fbCtx);
+      const [info, posts] = await Promise.all([
+        argosApiCall("facebook", "fb_page_basic", { fields: "name,fan_count,followers_count" }, fbCtx),
+        argosApiCall("facebook", "fb_page_posts", { fields: "id,message,created_time,permalink_url,likes.summary(true),comments.summary(true)", limit: 25 }, fbCtx).catch(() => null),
+      ]);
       followers += +(info.followers_count || info.fan_count || 0);
       const fbNet = { network: "facebook", handle: info.name || "", followers: +(info.followers_count || info.fan_count || 0), growth: 0, engagement: 0, posts: 0 };
       perNet.push(fbNet);
-      try {
-        const posts = await argosApiCall("facebook", "fb_page_posts", { fields: "id,message,created_time,permalink_url,likes.summary(true),comments.summary(true)", limit: 25 }, fbCtx);
+      if (posts) {
         const items = (posts.data || []).filter((p) => !p.created_time || new Date(p.created_time).getTime() / 1000 >= sinceSec);
         fbNet.posts = items.length; published += items.length;
         // Pas d'insights de Page (read_insights manquant) → pas de "reach" réel pour ces posts,
         // on les classe par interactions (likes+commentaires réels) sans jamais estimer une portée.
-      } catch {}
+      }
     } catch (e) { /* Facebook indisponible — n'empêche pas l'affichage des données Instagram déjà collectées */ }
-  }
+  };
+  await Promise.all([fetchIg(), fetchFb()]);
   const reach = [...byDayMap.values()].reduce((n, v) => n + v, 0);
   const engagement = reach ? +((totalInteractions / reach) * 100).toFixed(1) : 0;
   const igNet = perNet.find((n) => n.network === "instagram"); if (igNet) igNet.engagement = engagement;
@@ -1986,6 +2019,9 @@ ipcMain.handle("argos:brandSave", (_e, brand) => {
   const st = argosState();
   if (brand.id) { const i = st.brands.findIndex((b) => b.id === brand.id); if (i >= 0) st.brands[i] = { ...st.brands[i], ...brand }; }
   else { brand.id = "b" + randomUUID().replace(/-/g, "").slice(0, 12); st.brands.push(brand); }
+  // Le mapping Meta a peut-être changé (nouvelle Page/compte pub) — le cache précédent
+  // pourrait correspondre au MAUVAIS compte, on le vide pour cette marque.
+  if (brand.metaAssets) Object.keys(st.cache).forEach((k) => k.startsWith(brand.id + ":") && delete st.cache[k]);
   return { ok: argosSave(st), brand };
 });
 ipcMain.handle("argos:brandDelete", (_e, id) => {
@@ -1995,30 +2031,20 @@ ipcMain.handle("argos:brandDelete", (_e, id) => {
   st.inboxReplies = st.inboxReplies.filter((r) => r.brandId !== id); // pas de fuite de données client
   return { ok: argosSave(st) };
 });
-ipcMain.handle("argos:overview", async (_e, brandId, days) => {
-  const st = argosState(); const b = st.brands.find((x) => x.id === brandId);
-  if (!b) return { ok: false, error: "Marque inconnue." };
+ipcMain.handle("argos:overview", (_e, brandId, days, forceRefresh) => {
   const d = Math.max(7, Math.min(90, days || 30));
-  if (b.metaAssets && b.metaAssets.pageId) {
-    try { const real = await argosRealOverview(b, d); if (real) return { ok: true, data: real }; }
-    catch (e) { return { ok: true, data: argosDemoOverview(b, d), warning: "Compte mappé mais l'appel réel a échoué (" + e.message + ") — données de démonstration affichées." }; }
-  }
-  return { ok: true, data: argosDemoOverview(b, d) };
+  return argosCached(brandId, "ov", d, forceRefresh, (b) => !!(b.metaAssets && b.metaAssets.pageId),
+    async (b) => { const real = await argosRealOverview(b, d); return real ? { data: real } : null; },
+    (b) => ({ data: argosDemoOverview(b, d) }));
 });
-ipcMain.handle("argos:inbox", async (_e, brandId) => {
+ipcMain.handle("argos:inbox", async (_e, brandId, forceRefresh) => {
   const st = argosState(); const b = st.brands.find((x) => x.id === brandId);
   if (!b) return { ok: false, error: "Marque inconnue." };
-  if (b.metaAssets && b.metaAssets.pageId) {
-    try {
-      const real = await argosRealInbox(b);
-      if (real) return { ok: true, demo: false, conversations: real.conversations.map((c) => ({ ...c, replies: st.inboxReplies.filter((r) => r.convId === c.id) })) };
-    } catch (e) { /* repli silencieux sur la démo ci-dessous, avec avertissement */
-      const convs = argosDemoInbox(b).map((c) => ({ ...c, replies: st.inboxReplies.filter((r) => r.convId === c.id) }));
-      return { ok: true, demo: true, conversations: convs, warning: "Compte mappé mais l'appel réel a échoué (" + e.message + ") — conversations de démonstration affichées." };
-    }
-  }
-  const convs = argosDemoInbox(b).map((c) => ({ ...c, replies: st.inboxReplies.filter((r) => r.convId === c.id) }));
-  return { ok: true, demo: true, conversations: convs };
+  const mergeReplies = (convs) => (convs || []).map((c) => ({ ...c, replies: st.inboxReplies.filter((r) => r.convId === c.id) }));
+  const r = await argosCached(brandId, "inbox", null, forceRefresh, (bb) => !!(bb.metaAssets && bb.metaAssets.pageId),
+    async (bb) => { const real = await argosRealInbox(bb); return real ? { demo: false, conversations: real.conversations } : null; },
+    (bb) => ({ demo: true, conversations: argosDemoInbox(bb) }));
+  return { ...r, conversations: mergeReplies(r.conversations) };
 });
 ipcMain.handle("argos:inboxReply", (_e, brandId, convId, text) => {
   const st = argosState();
@@ -2036,14 +2062,10 @@ ipcMain.handle("argos:keywords", (_e, brandId, keywords) => {
   b.keywords = (keywords || []).map((k) => String(k).trim()).filter(Boolean).slice(0, 20);
   return { ok: argosSave(st), keywords: b.keywords };
 });
-ipcMain.handle("argos:ads", async (_e, brandId) => {
-  const st = argosState(); const b = st.brands.find((x) => x.id === brandId);
-  if (!b) return { ok: false, error: "Marque inconnue." };
-  if (b.metaAssets && b.metaAssets.adAccountId) {
-    try { const real = await argosRealAds(b); if (real) return { ok: true, data: real }; }
-    catch (e) { return { ok: true, data: argosDemoAds(b), warning: "Compte pub mappé mais l'appel réel a échoué (" + e.message + ") — données de démonstration affichées." }; }
-  }
-  return { ok: true, data: argosDemoAds(b) };
+ipcMain.handle("argos:ads", (_e, brandId, forceRefresh) => {
+  return argosCached(brandId, "ads", null, forceRefresh, (b) => !!(b.metaAssets && b.metaAssets.adAccountId),
+    async (b) => { const real = await argosRealAds(b); return real ? { data: real } : null; },
+    (b) => ({ data: argosDemoAds(b) }));
 });
 // Liste des Pages/comptes IG/comptes pub disponibles côté Meta — pour le mapping par marque.
 ipcMain.handle("argos:metaAssets", () => {

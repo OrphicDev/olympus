@@ -585,6 +585,8 @@
   .ar-stage::-webkit-scrollbar{display:none;}
   /* Bandeau démo */
   .ar-demo{display:inline-flex;align-items:center;gap:7px;font-size:11px;color:var(--dim);border:1px dashed var(--line2);border-radius:20px;padding:3px 11px;}
+  .ar-stale-note{display:inline-flex;align-items:center;font-size:11px;color:var(--dim);animation:ar-pulse 1.6s ease-in-out infinite;}
+  @keyframes ar-pulse{0%,100%{opacity:.5;}50%{opacity:1;}}
   .ar-demo b{color:var(--txt);font-weight:600;cursor:pointer;}
   .ar-demo b:hover{text-decoration:underline;}
   /* Santé + alertes */
@@ -2492,6 +2494,16 @@
           <div class="zprog" id="titanProg"><div class="bar"><i id="titanBar"></i></div><div class="ztext" id="titanText"></div></div>
           <div class="msg" id="titanMsg"></div>
         </div>
+        <div class="section">
+          <h3>Argos — Comptes réseaux</h3>
+          <p class="desc" style="margin-bottom:14px;">Gestion technique des connexions API (Meta, Google…) — réservé aux gérants. L'équipe utilise Argos sans jamais voir ces réglages.</p>
+          <div id="titanArgosConn"><div class="msg">Chargement…</div></div>
+        </div>
+        <div class="section">
+          <h3>Argos — Marques visibles</h3>
+          <p class="desc" style="margin-bottom:14px;">Choisis quelles marques apparaissent dans Argos pour toute l'équipe — décoche les clients qu'on ne gère plus, sans perdre leurs données.</p>
+          <div id="titanArgosBrands"><div class="msg">Chargement…</div></div>
+        </div>
       </section>
 
       <!-- ═══ PROFIL ═══ -->
@@ -2537,8 +2549,7 @@
           </div>
           <div class="conn-row">
             <div class="conn-ic">👁️</div>
-            <div style="flex:1"><div class="nm">Réseaux & Ads <span class="conn-dot off"></span></div><div class="meta">bientôt — Meta / Google Ads (Argos)</div></div>
-            <button class="btn sec" disabled>Connecter</button>
+            <div style="flex:1"><div class="nm">Réseaux & Ads (Argos) <span class="conn-dot off"></span></div><div class="meta">gérée par les gérants dans Titan — un seul compte partagé pour toute l'équipe</div></div>
           </div>
         </div>
 

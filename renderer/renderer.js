@@ -5040,7 +5040,6 @@ const AR_VIEWS = [
   { id: "ads", ic: "▸", label: "Publicité" },
   { id: "concurrence", ic: "⚖", label: "Concurrence" },
   { id: "rapport", ic: "▤", label: "Rapport" },
-  { id: "connexions", ic: "⌁", label: "Connexions" },
 ];
 const AR_NETS = {
   instagram: { ic: "📷", label: "Instagram" }, facebook: { ic: "👥", label: "Facebook" },
@@ -5053,16 +5052,28 @@ const arAgo = (h) => h < 1 ? "à l'instant" : h < 24 ? `il y a ${h} h` : `il y a
 const AR_DOW = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
 function arInvalidate(brandId) { Object.keys(arCache).forEach((k) => (!brandId || k.startsWith(brandId + ":")) && delete arCache[k]); }
 async function arGet(key, fn) { if (arCache[key] === undefined) arCache[key] = await fn(); return arCache[key]; }
+// Si main.js a renvoyé une donnée "stale" (rafraîchissement Meta lancé en tâche de fond),
+// on reprogramme automatiquement un nouvel affichage une fois ce rafraîchissement terminé —
+// l'utilisateur voit la dernière donnée connue tout de suite, puis ça se met à jour tout seul.
+function arScheduleStaleRefresh(r, key, cb) {
+  if (!r.stale) return "";
+  setTimeout(() => { delete arCache[key]; cb(); }, 7000);
+  return ` <span class="ar-stale-note" title="Actualisation des données réelles en cours…">⟳ actualisation…</span>`;
+}
 
+// Une marque masquée depuis Titan (client qu'on ne gère plus) n'apparaît nulle part dans
+// Argos, mais reste en base (mapping Meta conservé) — juste décochée dans Titan pour revenir.
+function arVisibleBrands() { return ((arState && arState.brands) || []).filter((b) => !b.hidden); }
 async function renderArgos() {
   if (!arState) { const r = await window.olympus.argosState(); if (r.ok) arState = r; }
   if (!arState) { $("arStage").innerHTML = '<div class="ga-note">Argos indisponible.</div>'; return; }
-  if (!arBrand && arState.brands.length) arBrand = arState.brands[0].id;
+  const visible = arVisibleBrands();
+  if ((!arBrand || !visible.find((b) => b.id === arBrand)) && visible.length) arBrand = visible[0].id;
   arSideRender();
   arRenderView();
 }
 function arSideRender() {
-  const brands = (arState && arState.brands) || [];
+  const brands = arVisibleBrands();
   $("arBrands").innerHTML = brands.map((b) => `
     <div class="ar-brand${arBrand === b.id ? " active" : ""}" data-brand="${b.id}">
       <div class="bv">${initialsOf(b.name)}</div>
@@ -5075,10 +5086,13 @@ function arSideRender() {
   document.querySelectorAll("#arBrands [data-editbrand]").forEach((el) => el.onclick = (e) => { e.stopPropagation(); const b = brands.find((x) => x.id === el.dataset.editbrand); if (b) arBrandModal(b); });
   document.querySelectorAll("#arViews .ir-folder").forEach((el) => el.onclick = () => { arView = el.dataset.arview; arSideRender(); arRenderView(); });
 }
-function arBrandOf() { return ((arState && arState.brands) || []).find((b) => b.id === arBrand) || null; }
+function arBrandOf() { return arVisibleBrands().find((b) => b.id === arBrand) || null; }
 function arConnected() { return Object.values((arState && arState.connections) || {}).some((c) => c.status === "connected"); }
 function arDemoBadge() {
-  return `<span class="ar-demo">◌ Données de démonstration — <b data-goconn>connecter les comptes</b></span>`;
+  // La gestion des connexions vit dans Titan (réservé aux gérants) — un salarié classic
+  // n'a rien à cliquer ici, juste l'info qu'il faut demander à un gérant.
+  if (currentRole === "super_admin") return `<span class="ar-demo">◌ Données de démonstration — <b data-goconn>connecter les comptes (Titan)</b></span>`;
+  return `<span class="ar-demo">◌ Données de démonstration — demande à un gérant de connecter les comptes</span>`;
 }
 // Pour les vues qui ne DEVIENDRONT jamais réelles via Meta (pas d'API dispo) — pas de CTA
 // "connecter les comptes" trompeur, juste une explication honnête.
@@ -5097,12 +5111,12 @@ function arHead(title, sub, extraHtml, isDemo = true) {
 }
 function arWireCommon(box) {
   const g = box.querySelector("[data-goconn]");
-  if (g) g.onclick = () => { arView = "connexions"; arSideRender(); arRenderView(); };
+  if (g) g.onclick = () => goTo("titan");
 }
 async function arRenderView() {
   const box = $("arStage");
   const b = arBrandOf();
-  if (arView !== "connexions" && !b) { box.innerHTML = `<div class="ga-note">Crée une marque pour commencer (bouton en bas de la colonne).</div>`; return; }
+  if (!b) { box.innerHTML = `<div class="ga-note">Crée une marque pour commencer (bouton en bas de la colonne).</div>`; return; }
   box.innerHTML = `<div class="ga-note">Chargement…</div>`;
   try {
     if (arView === "apercu") await arViewApercu(box, b);
@@ -5112,7 +5126,6 @@ async function arRenderView() {
     else if (arView === "ads") await arViewAds(box, b);
     else if (arView === "concurrence") await arViewConcurrence(box, b);
     else if (arView === "rapport") await arViewRapport(box, b);
-    else if (arView === "connexions") await arViewConnexions(box);
     mArrive(box);
   } catch (e) { box.innerHTML = `<div class="ga-note">Erreur : ${escapeHtml(e.message || String(e))}</div>`; }
   arWireCommon(box);
@@ -5120,10 +5133,12 @@ async function arRenderView() {
 
 // ── Aperçu : la console de la marque ──
 async function arViewApercu(box, b) {
-  const r = await arGet(b.id + ":ov:" + arPeriod, () => window.olympus.argosOverview(b.id, arPeriod));
+  const ovKey = b.id + ":ov:" + arPeriod;
+  const r = await arGet(ovKey, () => window.olympus.argosOverview(b.id, arPeriod));
   if (!r.ok) { box.innerHTML = `<div class="ga-note">${escapeHtml(r.error)}</div>`; return; }
   const d = r.data;
-  const per = `<div class="ga-period">${[[7, "7 j"], [30, "30 j"], [90, "90 j"]].map(([n, l]) => `<button class="ga-per${arPeriod === n ? " on" : ""}" data-per="${n}">${l}</button>`).join("")}</div>`;
+  const staleTag = arScheduleStaleRefresh(r, ovKey, () => { if (arView === "apercu" && arBrandOf()?.id === b.id) arRenderView(); });
+  const per = `<div class="ga-period">${[[7, "7 j"], [30, "30 j"], [90, "90 j"]].map(([n, l]) => `<button class="ga-per${arPeriod === n ? " on" : ""}" data-per="${n}">${l}</button>`).join("")}</div>${staleTag}`;
   let html = arHead(b.name, `${arPeriod} derniers jours · ${Object.keys(b.networks || {}).length} réseau(x)`, per, d.demo !== false);
   if (r.warning) html += `<div class="ar-alerts"><div class="ar-alert warn"><span class="ai">△</span><span>${escapeHtml(r.warning)}</span></div></div>`;
   if (d.alerts?.length) html += `<div class="ar-alerts">${d.alerts.map((a) => `<div class="ar-alert${a.type === "warn" ? " warn" : ""}"><span class="ai">${a.type === "warn" ? "△" : "◈"}</span><span>${escapeHtml(a.txt)}${a.type === "opportunity" ? ' <b style="cursor:pointer;" data-seize>Créer le post →</b>' : ""}</span></div>`).join("")}</div>`;
@@ -5281,13 +5296,15 @@ async function arComposer(b, post) {
 // ── Inbox unifiée ──
 let arConvSel = null;
 async function arViewInbox(box, b) {
-  const r = await arGet(b.id + ":inbox", () => window.olympus.argosInbox(b.id));
+  const inboxKey = b.id + ":inbox";
+  const r = await arGet(inboxKey, () => window.olympus.argosInbox(b.id));
   if (!r.ok) { box.innerHTML = `<div class="ga-note">${escapeHtml(r.error)}</div>`; return; }
+  const staleTag = arScheduleStaleRefresh(r, inboxKey, () => { if (arView === "inbox" && arBrandOf()?.id === b.id) arRenderView(); });
   const convs = r.conversations || [];
   if (!arConvSel || !convs.find((c) => c.id === arConvSel)) arConvSel = convs[0]?.id || null;
   const cur = convs.find((c) => c.id === arConvSel);
   const MACROS = ["Merci beaucoup ! 🙏", "On vous répond en DM 👌", "Oui, c'est disponible — le lien est en bio.", "Écris-nous à hello@… on s'en occupe !"];
-  let html = arHead("Inbox", "commentaires et messages privés, tous réseaux", "", r.demo !== false);
+  let html = arHead("Inbox", "commentaires et messages privés, tous réseaux", staleTag, r.demo !== false);
   if (r.warning) html += `<div class="ar-alerts"><div class="ar-alert warn"><span class="ai">△</span><span>${escapeHtml(r.warning)}</span></div></div>`;
   html += `<div class="ar-inbox">
     <div class="ar-convs">${convs.map((c) => `
@@ -5350,11 +5367,13 @@ async function arViewEcoute(box, b) {
 
 // ── Publicité ──
 async function arViewAds(box, b) {
-  const r = await arGet(b.id + ":ads", () => window.olympus.argosAds(b.id));
+  const adsKey = b.id + ":ads";
+  const r = await arGet(adsKey, () => window.olympus.argosAds(b.id));
   if (!r.ok) { box.innerHTML = `<div class="ga-note">${escapeHtml(r.error)}</div>`; return; }
   const d = r.data;
+  const staleTag = arScheduleStaleRefresh(r, adsKey, () => { if (arView === "ads" && arBrandOf()?.id === b.id) arRenderView(); });
   const eur = (n) => n.toLocaleString("fr-FR") + " €";
-  let html = arHead("Publicité", "campagnes Meta Ads et Google Ads", "", d.demo !== false);
+  let html = arHead("Publicité", "campagnes Meta Ads et Google Ads", staleTag, d.demo !== false);
   if (r.warning) html += `<div class="ar-alerts"><div class="ar-alert warn"><span class="ai">△</span><span>${escapeHtml(r.warning)}</span></div></div>`;
   if (!d.campaigns.length) html += `<div class="ga-note">${d.demo === false ? "Aucune campagne active sur les 30 derniers jours pour ce compte." : ""}</div>`;
   html += `<div class="ga-cards">
@@ -5479,15 +5498,15 @@ const AR_PROVIDER_KEYS = {
 const AR_PROV_LABEL = { meta: "Meta", google: "Google" };
 const AR_CONNECTABLE = new Set(["meta"]); // fournisseurs dont le flux OAuth est actif
 // ── Connexions : regroupées par fournisseur (une app développeur → plusieurs surfaces) ──
-async function arViewConnexions(box) {
+// ══════════ TITAN — Argos : connexions API (réservé aux gérants) ══════════
+async function renderTitanArgosConn() {
+  const box = $("titanArgosConn");
   arState = null; const st = await window.olympus.argosState(); if (st.ok) arState = st;
   const conns = Object.values(arState.connections || {});
   // Regroupe les surfaces par fournisseur
   const groups = {};
   conns.forEach((c) => { (groups[c.provider] = groups[c.provider] || []).push(c); });
-  let html = arHead("Connexions", "une app développeur par fournisseur, puis autorisation OAuth", "", false);
-  html += `<div class="ga-note" style="margin-bottom:16px;">On renseigne les <b>clés de l'app développeur</b> une fois par fournisseur, puis on clique <b>Connecter un compte</b> : le navigateur s'ouvre, tu autorises, et Argos bascule de la démo aux <b>vraies données</b> (jeton chiffré localement, jamais partagé).</div>`;
-  html += `<div class="ar-conns">`;
+  let html = `<div class="ar-conns">`;
   for (const [prov, surfaces] of Object.entries(groups)) {
     const keyFields = AR_PROVIDER_KEYS[prov] || [{ k: "app_id", label: "App ID", secret: false }, { k: "app_secret", label: "App Secret", secret: true }];
     const hasKeys = surfaces[0].hasKeys;
@@ -5524,7 +5543,7 @@ async function arViewConnexions(box) {
     const m = box.querySelector(`[data-keymsg="${prov}"]`);
     m.className = "msg " + (r.ok ? "ok" : "err");
     m.textContent = r.ok ? "Clés chiffrées et enregistrées." : (r.error || "Échec.");
-    if (r.ok) { arState = null; await arRenderView(); }
+    if (r.ok) { arState = null; await renderTitanArgosConn(); }
   });
   box.querySelectorAll("[data-connect]").forEach((el) => el.onclick = async () => {
     const prov = el.dataset.connect; const m = box.querySelector(`[data-connmsg="${prov}"]`);
@@ -5535,13 +5554,13 @@ async function arViewConnexions(box) {
     if (r.ok) {
       m.className = "msg ok";
       m.textContent = el.dataset.mode === "instagram" ? `Instagram connecté : ${r.summary.ig} compte(s) — les vraies données Aperçu/Inbox vont s'activer pour les marques mappées.` : `Connecté : ${r.summary.pages} page(s), ${r.summary.ig} compte(s) Instagram, ${r.summary.ads} compte(s) pub.`;
-      arState = null; arInvalidate(); setTimeout(() => arRenderView(), 1400);
+      arState = null; arInvalidate(); setTimeout(() => renderTitanArgosConn(), 1400);
     } else { m.className = "msg err"; m.textContent = r.error || "Échec de la connexion."; }
   });
   box.querySelectorAll("[data-disc]").forEach((el) => el.onclick = async () => {
     const prov = el.dataset.disc; const surfaces = (arState.connections ? Object.values(arState.connections).filter((s) => s.provider === prov) : []);
     for (const s of surfaces) await window.olympus.argosConnDisconnect(s.id);
-    arState = null; arInvalidate(); await renderArgos();
+    arState = null; arInvalidate(); await renderTitanArgosConn();
   });
   box.querySelectorAll("[data-docs]").forEach((el) => el.onclick = async () => {
     const id = el.dataset.docs; const db = box.querySelector(`[data-docbox="${id}"]`);
@@ -5556,6 +5575,31 @@ async function arViewConnexions(box) {
       ${(s.endpoints || []).length > 8 ? `<div class="dim">+ ${(s.endpoints || []).length - 8} autres endpoints documentés</div>` : ""}`;
   });
 }
+
+// ══════════ TITAN — Argos : marques visibles dans l'app (réservé aux gérants) ══════════
+async function renderTitanArgosBrands() {
+  const box = $("titanArgosBrands");
+  const st = await window.olympus.argosState();
+  if (!st.ok) { box.innerHTML = `<div class="msg err">${escapeHtml(st.error || "Échec du chargement.")}</div>`; return; }
+  const brands = st.brands || [];
+  if (!brands.length) { box.innerHTML = `<div class="msg">Aucune marque pour l'instant — crée-les depuis Argos.</div>`; return; }
+  box.innerHTML = brands.map((b) => {
+    const visible = !b.hidden;
+    return `<div class="env-row"><div class="st ${visible ? "ok" : ""}">${visible ? "●" : "○"}</div>
+      <div style="flex:1"><div class="nm">${escapeHtml(b.name)}</div><div class="meta">${escapeHtml(b.secteur || "—")}${b.metaAssets?.pageId ? " · Meta relié" : " · non relié"}</div></div>
+      <label style="display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--muted);cursor:pointer;">
+        <input type="checkbox" data-brandvis="${b.id}" ${visible ? "checked" : ""}> Visible dans Argos
+      </label>
+    </div>`;
+  }).join("");
+  box.querySelectorAll("[data-brandvis]").forEach((cb) => cb.onchange = async () => {
+    await window.olympus.argosBrandSave({ id: cb.dataset.brandvis, hidden: !cb.checked });
+    arState = null; // force le rechargement de la liste côté Argos au prochain affichage
+    const row = cb.closest(".env-row"); const dot = row.querySelector(".st");
+    dot.textContent = cb.checked ? "●" : "○"; dot.className = "st" + (cb.checked ? " ok" : "");
+  });
+}
+document.querySelector('.nav-item[data-page="titan"]').addEventListener("click", () => { renderTitanArgosConn(); renderTitanArgosBrands(); });
 
 // ── Nouvelle marque ──
 function arBrandModal(brand) {
