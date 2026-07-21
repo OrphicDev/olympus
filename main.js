@@ -1985,7 +1985,7 @@ ipcMain.handle("argos:state", () => {
 ipcMain.handle("argos:brandSave", (_e, brand) => {
   const st = argosState();
   if (brand.id) { const i = st.brands.findIndex((b) => b.id === brand.id); if (i >= 0) st.brands[i] = { ...st.brands[i], ...brand }; }
-  else { brand.id = "b" + Date.now().toString(36); st.brands.push(brand); }
+  else { brand.id = "b" + randomUUID().replace(/-/g, "").slice(0, 12); st.brands.push(brand); }
   return { ok: argosSave(st), brand };
 });
 ipcMain.handle("argos:brandDelete", (_e, id) => {
@@ -2022,7 +2022,7 @@ ipcMain.handle("argos:inbox", async (_e, brandId) => {
 });
 ipcMain.handle("argos:inboxReply", (_e, brandId, convId, text) => {
   const st = argosState();
-  st.inboxReplies.push({ id: "r" + Date.now().toString(36), brandId, convId, text: String(text || "").slice(0, 2000), at: new Date().toISOString(), pending: true });
+  st.inboxReplies.push({ id: "r" + randomUUID().replace(/-/g, "").slice(0, 12), brandId, convId, text: String(text || "").slice(0, 2000), at: new Date().toISOString(), pending: true });
   return { ok: argosSave(st), pending: true };
 });
 ipcMain.handle("argos:listening", (_e, brandId) => {
@@ -2101,7 +2101,7 @@ ipcMain.handle("argos:postSave", async (_e, post) => {
     }
   }
   if (post.id) { const i = st.posts.findIndex((p) => p.id === post.id); if (i >= 0) st.posts[i] = { ...st.posts[i], ...post, fbPublish: publishResult }; }
-  else { post.id = "p" + Date.now().toString(36); post.createdAt = new Date().toISOString(); post.fbPublish = publishResult; st.posts.push(post); }
+  else { post.id = "p" + randomUUID().replace(/-/g, "").slice(0, 12); post.createdAt = new Date().toISOString(); post.fbPublish = publishResult; st.posts.push(post); }
   return { ok: argosSave(st), post, publishResult };
 });
 ipcMain.handle("argos:postDelete", (_e, id) => {
