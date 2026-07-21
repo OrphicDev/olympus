@@ -1795,10 +1795,17 @@ function argosDemoAds(brand) {
   const demoSplit = AGE_B.flatMap((age) => ["female", "male"].map((gender) => ({ age, gender, spend: Math.round(rng() * totSpend * 0.15), impressions: Math.round(rng() * 20000) }))).sort((a, b) => b.spend - a.spend);
   return { demo: true, campaigns, totals: { spend: totSpend, conversions: totConv, roas: wRoas }, platformSplit, demoSplit };
 }
+// Modèle générique multi-réseaux : brand.assets = [{network, id, label}]. Une marque peut
+// combiner des actifs de plusieurs réseaux (Facebook, Instagram, Meta Ads, et demain Google/
+// TikTok/etc.) — chaque réseau est résolu indépendamment, ce qui permet par exemple de ne
+// suivre QUE l'Instagram d'un client sans sa Page, ou l'inverse.
+function argosBrandAsset(brand, network) {
+  return (brand.assets || []).find((a) => a.network === network)?.id || null;
+}
 // Vraies données Meta Ads pour une marque mappée à un compte publicitaire (act_{id}).
 // Renvoie EXACTEMENT la forme d'argosDemoAds — le renderer n'a rien à changer pour l'afficher.
 async function argosRealAds(brand) {
-  const adId = brand.metaAssets && brand.metaAssets.adAccountId;
+  const adId = argosBrandAsset(brand, "meta_ads");
   if (!adId) return null;
   const ov = { ad_account_id: adId };
   const [camp, ins, platformBd, demoBd] = await Promise.all([
@@ -1843,7 +1850,7 @@ async function argosRealAds(brand) {
 // Résout la Page mappée à une marque (jeton "général" — scopes Pages/Ads).
 function argosBrandFbPage(brand) {
   const st = argosState();
-  const pageId = brand.metaAssets && brand.metaAssets.pageId;
+  const pageId = argosBrandAsset(brand, "facebook");
   if (!pageId) return null;
   const pages = (st.providers.meta && st.providers.meta.assets && st.providers.meta.assets.pages) || [];
   const p = pages.find((x) => x.id === pageId);
@@ -1853,7 +1860,7 @@ function argosBrandFbPage(brand) {
 // obtenu via la connexion "mode instagram" séparée). null tant que cette connexion n'a pas été faite.
 function argosBrandIg(brand) {
   const st = argosState();
-  const pageId = brand.metaAssets && brand.metaAssets.pageId;
+  const pageId = argosBrandAsset(brand, "instagram");
   if (!pageId) return null;
   // Depuis que la configuration Meta unique porte les permissions instagram_*, le jeton de la
   // connexion générale (assets.pages) suffit — plus besoin de la connexion Instagram séparée.
@@ -2110,11 +2117,12 @@ ipcMain.handle("argos:state", () => {
 ipcMain.handle("argos:brandSave", (_e, brand) => {
   const st = argosState();
   if (brand.id) { const i = st.brands.findIndex((b) => b.id === brand.id); if (i >= 0) st.brands[i] = { ...st.brands[i], ...brand }; }
-  // Masquée par défaut — un gérant doit explicitement la rendre visible depuis Titan.
-  else { brand.id = "b" + randomUUID().replace(/-/g, "").slice(0, 12); if (brand.hidden === undefined) brand.hidden = true; st.brands.push(brand); }
-  // Le mapping Meta a peut-être changé (nouvelle Page/compte pub) — le cache précédent
-  // pourrait correspondre au MAUVAIS compte, on le vide pour cette marque.
-  if (brand.metaAssets) Object.keys(st.cache).forEach((k) => k.startsWith(brand.id + ":") && delete st.cache[k]);
+  // Un cluster créé via le glisser-déposer de Titan est un choix délibéré du gérant — il
+  // s'affiche automatiquement dans Argos (visible par défaut), décochable ensuite depuis Titan.
+  else { brand.id = "b" + randomUUID().replace(/-/g, "").slice(0, 12); if (brand.hidden === undefined) brand.hidden = false; st.brands.push(brand); }
+  // Le mapping réseaux a peut-être changé — le cache précédent pourrait correspondre au
+  // MAUVAIS compte, on le vide pour cette marque.
+  if (brand.assets) Object.keys(st.cache).forEach((k) => k.startsWith(brand.id + ":") && delete st.cache[k]);
   return { ok: argosSave(st), brand };
 });
 ipcMain.handle("argos:brandDelete", (_e, id) => {
@@ -2126,7 +2134,7 @@ ipcMain.handle("argos:brandDelete", (_e, id) => {
 });
 ipcMain.handle("argos:overview", (_e, brandId, days, forceRefresh) => {
   const d = Math.max(7, Math.min(90, days || 30));
-  return argosCached(brandId, "ov", d, forceRefresh, (b) => !!(b.metaAssets && b.metaAssets.pageId),
+  return argosCached(brandId, "ov", d, forceRefresh, (b) => !!(argosBrandAsset(b, "facebook") || argosBrandAsset(b, "instagram")),
     async (b) => { const real = await argosRealOverview(b, d); return real ? { data: real } : null; },
     (b) => ({ data: argosDemoOverview(b, d) }));
 });
@@ -2134,7 +2142,7 @@ ipcMain.handle("argos:inbox", async (_e, brandId, forceRefresh) => {
   const st = argosState(); const b = st.brands.find((x) => x.id === brandId);
   if (!b) return { ok: false, error: "Marque inconnue." };
   const mergeReplies = (convs) => (convs || []).map((c) => ({ ...c, replies: st.inboxReplies.filter((r) => r.convId === c.id) }));
-  const r = await argosCached(brandId, "inbox", null, forceRefresh, (bb) => !!(bb.metaAssets && bb.metaAssets.pageId),
+  const r = await argosCached(brandId, "inbox", null, forceRefresh, (bb) => !!(argosBrandAsset(bb, "facebook") || argosBrandAsset(bb, "instagram")),
     async (bb) => { const real = await argosRealInbox(bb); return real ? { demo: false, conversations: real.conversations } : null; },
     (bb) => ({ demo: true, conversations: argosDemoInbox(bb) }));
   return { ...r, conversations: mergeReplies(r.conversations) };
@@ -2156,25 +2164,32 @@ ipcMain.handle("argos:keywords", (_e, brandId, keywords) => {
   return { ok: argosSave(st), keywords: b.keywords };
 });
 ipcMain.handle("argos:ads", (_e, brandId, forceRefresh) => {
-  return argosCached(brandId, "ads", null, forceRefresh, (b) => !!(b.metaAssets && b.metaAssets.adAccountId),
+  return argosCached(brandId, "ads", null, forceRefresh, (b) => !!argosBrandAsset(b, "meta_ads"),
     async (b) => { const real = await argosRealAds(b); return real ? { data: real } : null; },
     (b) => ({ data: argosDemoAds(b) }));
 });
 ipcMain.handle("argos:audience", (_e, brandId, forceRefresh) => {
-  return argosCached(brandId, "aud", null, forceRefresh, (b) => !!(b.metaAssets && b.metaAssets.pageId),
+  return argosCached(brandId, "aud", null, forceRefresh, (b) => !!argosBrandAsset(b, "instagram"),
     async (b) => { const real = await argosRealAudience(b); return real ? { data: real } : null; },
     (b) => ({ data: argosDemoAudience(b) }));
 });
-// Liste des Pages/comptes IG/comptes pub disponibles côté Meta — pour le mapping par marque.
-ipcMain.handle("argos:metaAssets", () => {
+// Buckets d'actifs disponibles PAR RÉSEAU, pour le glisser-déposer dans Titan — structure
+// générique prête à recevoir Google/TikTok/LinkedIn/X dès qu'ils seront connectés (buckets
+// vides en attendant, mais déjà là pour ne pas avoir à retoucher l'UI plus tard).
+ipcMain.handle("argos:networkBuckets", () => {
   const st = argosState();
   const assets = (st.providers.meta && st.providers.meta.assets) || { pages: [], adAccounts: [] };
-  return {
-    ok: true,
-    connected: !!(st.connections.facebook || st.connections.instagram || st.connections.meta_ads),
-    pages: (assets.pages || []).map((p) => ({ id: p.id, name: p.name, ig_user_id: p.ig_user_id || null, ig_username: p.ig_username || null })),
-    adAccounts: (assets.adAccounts || []).map((a) => ({ id: a.id, name: a.name })),
-  };
+  const buckets = [
+    { network: "facebook", label: "Facebook", icon: "👥", connected: !!st.connections.facebook, items: (assets.pages || []).map((p) => ({ id: p.id, label: p.name })) },
+    { network: "instagram", label: "Instagram", icon: "📷", connected: !!st.connections.instagram, items: (assets.pages || []).filter((p) => p.ig_user_id).map((p) => ({ id: p.id, label: "@" + p.ig_username })) },
+    { network: "meta_ads", label: "Meta Ads", icon: "📣", connected: !!st.connections.meta_ads, items: (assets.adAccounts || []).map((a) => ({ id: a.id, label: a.name })) },
+    { network: "google_ads", label: "Google Ads", icon: "🔎", connected: false, items: [] },
+    { network: "google_business", label: "Google Business", icon: "📍", connected: false, items: [] },
+    { network: "tiktok", label: "TikTok", icon: "🎵", connected: false, items: [] },
+    { network: "linkedin", label: "LinkedIn", icon: "💼", connected: false, items: [] },
+    { network: "x", label: "X", icon: "𝕏", connected: false, items: [] },
+  ];
+  return { ok: true, buckets };
 });
 ipcMain.handle("argos:competitors", (_e, brandId) => {
   const st = argosState(); const b = st.brands.find((x) => x.id === brandId);
@@ -2205,7 +2220,7 @@ ipcMain.handle("argos:postSave", async (_e, post) => {
   const alreadyPublished = existing && existing.fbPublish && existing.fbPublish.ok;
   let publishResult = existing ? existing.fbPublish || null : null;
   const b = st.brands.find((x) => x.id === post.brandId);
-  const shouldTryPublish = !alreadyPublished && post.status !== "draft" && b && b.metaAssets && b.metaAssets.pageId && (post.networks || []).includes("facebook");
+  const shouldTryPublish = !alreadyPublished && post.status !== "draft" && b && argosBrandAsset(b, "facebook") && (post.networks || []).includes("facebook");
   if (shouldTryPublish) {
     const fbCtx = argosBrandFbPage(b);
     if (fbCtx) {

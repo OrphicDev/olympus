@@ -145,7 +145,7 @@ contextBridge.exposeInMainWorld("olympus", {
   argosConnect: (platform, mode) => ipcRenderer.invoke("argos:connect", platform, mode),
   argosConnDisconnect: (platform) => ipcRenderer.invoke("argos:connDisconnect", platform),
   argosApiDocs: (platform) => ipcRenderer.invoke("argos:apiDocs", platform),
-  argosMetaAssets: () => ipcRenderer.invoke("argos:metaAssets"),
+  argosNetworkBuckets: () => ipcRenderer.invoke("argos:networkBuckets"),
   // Chronos — calendrier iCloud (CalDAV)
   appleStatus: () => ipcRenderer.invoke("apple:status"),
   appleConnect: (email, appPassword) => ipcRenderer.invoke("apple:connect", email, appPassword),

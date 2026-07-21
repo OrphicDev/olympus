@@ -5081,10 +5081,12 @@ async function argosPrewarmAll() {
   try {
     const st = await window.olympus.argosState();
     if (!st.ok) return;
-    const targets = (st.brands || []).filter((b) => !b.hidden && b.metaAssets && (b.metaAssets.pageId || b.metaAssets.adAccountId));
+    const netOf = (b, n) => (b.assets || []).some((a) => a.network === n);
+    const targets = (st.brands || []).filter((b) => !b.hidden && (b.assets || []).length);
     targets.forEach((b) => {
-      if (b.metaAssets.pageId) { window.olympus.argosOverview(b.id, 30).catch(() => {}); window.olympus.argosInbox(b.id).catch(() => {}); window.olympus.argosAudience(b.id).catch(() => {}); }
-      if (b.metaAssets.adAccountId) window.olympus.argosAds(b.id).catch(() => {});
+      if (netOf(b, "facebook") || netOf(b, "instagram")) { window.olympus.argosOverview(b.id, 30).catch(() => {}); window.olympus.argosInbox(b.id).catch(() => {}); }
+      if (netOf(b, "instagram")) window.olympus.argosAudience(b.id).catch(() => {});
+      if (netOf(b, "meta_ads")) window.olympus.argosAds(b.id).catch(() => {});
     });
   } catch {}
 }
@@ -5681,47 +5683,155 @@ async function renderTitanArgosConn() {
   });
 }
 
-// ══════════ TITAN — Argos : marques visibles dans l'app (réservé aux gérants) ══════════
-async function renderTitanArgosBrands() {
+// ══════════ TITAN — Argos : clusters clients par glisser-déposer (réservé aux gérants) ══════════
+// Un client = un bouquet d'actifs de N'IMPORTE QUEL réseau (Facebook, Instagram, Meta Ads,
+// et demain Google/TikTok/LinkedIn/X — buckets déjà prêts, vides tant que non connectés).
+// État de travail local : on glisse/renomme/retire librement, rien n'est persisté tant que
+// "Enregistrer" n'est pas cliqué sur la carte du client concerné — SAUF le retrait d'un actif
+// d'un client déjà existant (sauvegardé aussitôt en tâche de fond pour ne jamais désynchroniser
+// deux clients qui se disputeraient le même compte).
+let arClusterBuckets = null, arClusterBrands = null;
+function arClusterAssignedMap() {
+  const m = new Map();
+  (arClusterBrands || []).forEach((b) => (b.assets || []).forEach((a) => m.set(a.network + ":" + a.id, b.name)));
+  return m;
+}
+async function renderTitanArgosClusters() {
   const box = $("titanArgosBrands");
-  const st = await window.olympus.argosState();
-  if (!st.ok) { box.innerHTML = `<div class="msg err">${escapeHtml(st.error || "Échec du chargement.")}</div>`; return; }
-  const brands = st.brands || [];
-  if (!brands.length) { box.innerHTML = `<div class="msg">Aucune marque pour l'instant — crée-les depuis Argos.</div>`; return; }
-  box.innerHTML = brands.map((b) => {
-    const visible = !b.hidden;
-    return `<div class="env-row"><div class="st ${visible ? "ok" : ""}">${visible ? "●" : "○"}</div>
-      <div style="flex:1"><div class="nm">${escapeHtml(b.name)}</div><div class="meta">${escapeHtml(b.secteur || "—")}${b.metaAssets?.pageId ? " · Meta relié" : " · non relié"}</div></div>
-      <label style="display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--muted);cursor:pointer;">
-        <input type="checkbox" data-brandvis="${b.id}" ${visible ? "checked" : ""}> Visible dans Argos
-      </label>
+  box.innerHTML = `<div class="msg">Chargement…</div>`;
+  const [bucketsR, stateR] = await Promise.all([window.olympus.argosNetworkBuckets(), window.olympus.argosState()]);
+  if (!bucketsR.ok || !stateR.ok) { box.innerHTML = `<div class="msg err">${escapeHtml((stateR && stateR.error) || "Échec du chargement.")}</div>`; return; }
+  arClusterBuckets = bucketsR.buckets;
+  arClusterBrands = JSON.parse(JSON.stringify(stateR.brands || [])); // copie de travail, éditable librement
+  arPaintClusters(box);
+}
+function arPaintClusters(box) {
+  const assigned = arClusterAssignedMap();
+  const bucketsHtml = arClusterBuckets.map((bucket) => `
+    <div class="ar-bucket">
+      <div class="ar-bucket-h">${bucket.icon} ${escapeHtml(bucket.label)}${!bucket.connected && !bucket.items.length ? ' <span class="tag" style="font-size:9px;color:var(--dim);border:1px solid var(--line);border-radius:20px;padding:1px 7px;">pas encore connecté</span>' : ""}</div>
+      <div class="ar-bucket-items">
+        ${bucket.items.length ? bucket.items.map((item) => {
+          const owner = assigned.get(bucket.network + ":" + item.id);
+          return `<div class="ar-chip${owner ? " owned" : ""}" draggable="true" data-network="${bucket.network}" data-id="${escapeHtml(item.id)}" data-label="${escapeHtml(item.label)}" title="${owner ? "déjà dans « " + escapeHtml(owner) + " » — glisse pour réaffecter" : "glisse vers un client"}">${escapeHtml(item.label)}${owner ? ` <span class="ar-chip-owner">· ${escapeHtml(owner)}</span>` : ""}</div>`;
+        }).join("") : `<div class="ar-bucket-empty">Aucun compte</div>`}
+      </div>
+    </div>`).join("");
+  const clientsHtml = arClusterBrands.map((b, i) => `
+    <div class="ar-cluster-card">
+      <div class="ar-cluster-head">
+        <input class="ar-cluster-name" data-idx="${i}" value="${escapeHtml(b.name || "")}" placeholder="Nom du client">
+        <label class="ar-cluster-vis"><input type="checkbox" data-visidx="${i}" ${!b.hidden ? "checked" : ""}> Visible</label>
+        <button class="ga-ic" data-delcluster="${i}" title="Supprimer" style="width:26px;height:26px;font-size:12px;">✕</button>
+      </div>
+      <div class="ar-cluster-drop" data-dropidx="${i}">
+        ${(b.assets || []).length ? b.assets.map((a) => `<div class="ar-chip in-cluster" data-removeasset="${i}" data-network="${a.network}" data-id="${escapeHtml(a.id)}">${arNet(a.network).ic || ""} ${escapeHtml(a.label || a.id)} <span class="ar-chip-x">✕</span></div>`).join("") : `<div class="ar-cluster-empty">Glisse des comptes ici</div>`}
+      </div>
+      <div class="ar-cluster-actions">
+        <button class="cal-btn" data-savecluster="${i}" style="padding:6px 16px;font-size:12px;">Enregistrer</button>
+        <span class="msg" data-clustermsg="${i}"></span>
+      </div>
+    </div>`).join("");
+  box.innerHTML = `<div class="ar-buckets-row">${bucketsHtml}</div>
+    <div class="ar-clusters-row">${clientsHtml}
+      <div class="ar-cluster-card ar-cluster-new" id="arNewClusterCard">＋ Nouveau client</div>
     </div>`;
-  }).join("");
-  box.querySelectorAll("[data-brandvis]").forEach((cb) => cb.onchange = async () => {
-    await window.olympus.argosBrandSave({ id: cb.dataset.brandvis, hidden: !cb.checked });
-    arState = null; // force le rechargement de la liste côté Argos au prochain affichage
-    const row = cb.closest(".env-row"); const dot = row.querySelector(".st");
-    dot.textContent = cb.checked ? "●" : "○"; dot.className = "st" + (cb.checked ? " ok" : "");
+  arWireClusters(box);
+}
+// Persiste immédiatement le retrait d'un actif chez un client déjà sauvegardé (id existant) —
+// évite qu'un compte reste attribué à deux clients en même temps si l'autre carte n'est jamais
+// re-enregistrée.
+async function arSilentSyncCluster(brand) {
+  if (!brand.id) return;
+  await window.olympus.argosBrandSave({ id: brand.id, assets: brand.assets || [] });
+}
+function arWireClusters(box) {
+  box.querySelectorAll(".ar-bucket-items .ar-chip[draggable]").forEach((chip) => {
+    chip.addEventListener("dragstart", (e) => {
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", JSON.stringify({ network: chip.dataset.network, id: chip.dataset.id, label: chip.dataset.label }));
+    });
+  });
+  const reassign = async (data) => {
+    // Retire l'actif de tout client qui l'aurait déjà (et synchronise ce client s'il est déjà persisté)
+    for (const bb of arClusterBrands) {
+      const before = (bb.assets || []).length;
+      bb.assets = (bb.assets || []).filter((a) => !(a.network === data.network && a.id === data.id));
+      if (bb.assets.length !== before) await arSilentSyncCluster(bb);
+    }
+  };
+  box.querySelectorAll(".ar-cluster-drop").forEach((zone) => {
+    zone.addEventListener("dragover", (e) => { e.preventDefault(); zone.classList.add("drag-over"); });
+    zone.addEventListener("dragleave", () => zone.classList.remove("drag-over"));
+    zone.addEventListener("drop", async (e) => {
+      e.preventDefault(); zone.classList.remove("drag-over");
+      let data; try { data = JSON.parse(e.dataTransfer.getData("text/plain")); } catch { return; }
+      await reassign(data);
+      arClusterBrands[+zone.dataset.dropidx].assets.push(data);
+      arPaintClusters(box);
+    });
+  });
+  const newCard = box.querySelector("#arNewClusterCard");
+  newCard.addEventListener("dragover", (e) => e.preventDefault());
+  newCard.addEventListener("drop", async (e) => {
+    e.preventDefault();
+    let data; try { data = JSON.parse(e.dataTransfer.getData("text/plain")); } catch { data = null; }
+    const name = await arMiniInput(box, "Nom du nouveau client");
+    if (!name) return;
+    if (data) await reassign(data);
+    arClusterBrands.push({ name, secteur: "", networks: {}, assets: data ? [data] : [], hidden: false });
+    arPaintClusters(box);
+  });
+  newCard.addEventListener("click", async () => {
+    const name = await arMiniInput(box, "Nom du nouveau client");
+    if (!name) return;
+    arClusterBrands.push({ name, secteur: "", networks: {}, assets: [], hidden: false });
+    arPaintClusters(box);
+  });
+  box.querySelectorAll("[data-removeasset]").forEach((chip) => chip.onclick = () => {
+    const idx = +chip.dataset.removeasset;
+    const brand = arClusterBrands[idx];
+    brand.assets = (brand.assets || []).filter((a) => !(a.network === chip.dataset.network && a.id === chip.dataset.id));
+    arPaintClusters(box);
+  });
+  box.querySelectorAll(".ar-cluster-name").forEach((inp) => inp.oninput = () => { arClusterBrands[+inp.dataset.idx].name = inp.value; });
+  box.querySelectorAll("[data-visidx]").forEach((cb) => cb.onchange = () => { arClusterBrands[+cb.dataset.visidx].hidden = !cb.checked; });
+  box.querySelectorAll("[data-delcluster]").forEach((btn) => btn.onclick = async () => {
+    const idx = +btn.dataset.delcluster; const brand = arClusterBrands[idx];
+    if (brand.id) { if (!confirm(`Supprimer « ${brand.name} » et tout son mapping ?`)) return; await window.olympus.argosBrandDelete(brand.id); }
+    arClusterBrands.splice(idx, 1);
+    arPaintClusters(box);
+  });
+  box.querySelectorAll("[data-savecluster]").forEach((btn) => btn.onclick = async () => {
+    const idx = +btn.dataset.savecluster; const brand = arClusterBrands[idx];
+    const m = box.querySelector(`[data-clustermsg="${idx}"]`);
+    if (!brand.name || !brand.name.trim()) { m.className = "msg err"; m.textContent = "Nomme le client d'abord."; return; }
+    const r = await window.olympus.argosBrandSave({ id: brand.id, name: brand.name.trim(), secteur: brand.secteur || "", networks: brand.networks || {}, assets: brand.assets || [], hidden: !!brand.hidden });
+    if (r.ok) { brand.id = r.brand.id; m.className = "msg ok"; m.textContent = "Enregistré ✓"; }
+    else { m.className = "msg err"; m.textContent = "Échec de l'enregistrement."; }
   });
 }
-document.querySelector('.nav-item[data-page="titan"]').addEventListener("click", () => { renderTitanArgosConn(); renderTitanArgosBrands(); });
+document.querySelector('.nav-item[data-page="titan"]').addEventListener("click", () => { renderTitanArgosConn(); renderTitanArgosClusters(); });
 
 // ── Nouvelle marque ──
+// Édition légère (nom/secteur/identifiants d'affichage) — le rattachement aux vrais comptes
+// réseaux (Facebook, Instagram, Ads, Google…) se fait désormais par glisser-déposer dans
+// Titan → Argos — Clients, réservé aux gérants.
 function arBrandModal(brand) {
   brand = brand || {};
   const ov = document.createElement("div"); ov.className = "modal-overlay show";
   const nets = ["instagram", "facebook", "tiktok", "linkedin", "x", "youtube"];
-  const ma = brand.metaAssets || {};
+  const assetCount = (brand.assets || []).length;
   ov.innerHTML = `<div class="modal-panel" style="width:520px;">
-    <div class="modal-head"><h2>${brand.id ? "Modifier la marque" : "Nouvelle marque"}</h2><button class="modal-x" data-x>✕</button></div>
+    <div class="modal-head"><h2>${brand.id ? "Modifier le client" : "Nouveau client"}</h2><button class="modal-x" data-x>✕</button></div>
     <div class="modal-body">
-      <div class="auth-field"><label>Nom</label><input class="auth-input" id="arBrName" value="${escapeHtml(brand.name || "")}" placeholder="Nom du client / de la marque"></div>
+      <div class="auth-field"><label>Nom</label><input class="auth-input" id="arBrName" value="${escapeHtml(brand.name || "")}" placeholder="Nom du client"></div>
       <div class="auth-field"><label>Secteur</label><input class="auth-input" id="arBrSect" value="${escapeHtml(brand.secteur || "")}" placeholder="mode, hôtellerie, restaurant…"></div>
-      <div class="mq-label" style="margin-top:6px;">Comptes (laisser vide si absent du réseau)</div>
+      <div class="mq-label" style="margin-top:6px;">Identifiants affichés (facultatif — juste pour l'affichage)</div>
       ${nets.map((n) => `<div class="auth-field" style="margin-top:6px;"><label>${arNet(n).ic} ${arNet(n).label}</label><input class="auth-input" data-brnet="${n}" value="${escapeHtml((brand.networks || {})[n] || "")}" placeholder="@compte"></div>`).join("")}
-      <div id="arBrMetaBox"></div>
+      <div class="ga-note" style="margin-top:14px;">${assetCount ? `${assetCount} compte(s) réseau relié(s)` : "Aucun compte réseau relié"} — pour connecter les vrais comptes (Facebook, Instagram, Ads…), utilise <b>Titan → Argos — Clients</b> (glisser-déposer, réservé aux gérants).</div>
       <div class="pg-actrow" style="margin-top:14px;">
-        <button class="cal-btn primary" id="arBrSave">${brand.id ? "Enregistrer" : "Créer la marque"}</button>
+        <button class="cal-btn primary" id="arBrSave">${brand.id ? "Enregistrer" : "Créer le client"}</button>
         ${brand.id ? '<button class="btn sec" id="arBrDel" style="color:#e0868f;">Supprimer</button>' : ""}
       </div>
     </div>
@@ -5730,38 +5840,12 @@ function arBrandModal(brand) {
   const close = () => ov.remove();
   ov.querySelector("[data-x]").onclick = close;
   ov.onclick = (e) => { if (e.target === ov) close(); };
-  // Section "comptes Meta" : quelle Page/quel compte pub cette marque utilise réellement,
-  // parmi tous ceux accessibles au compte Meta de l'agence — chargée après ouverture (async).
-  if (arConnected()) {
-    const metaBox = ov.querySelector("#arBrMetaBox");
-    metaBox.innerHTML = `<div class="ga-note" style="margin-top:10px;">Chargement des comptes Meta…</div>`;
-    window.olympus.argosMetaAssets().then((r) => {
-      if (!r.ok || (!r.pages.length && !r.adAccounts.length)) { metaBox.innerHTML = ""; return; }
-      metaBox.innerHTML = `
-        <div class="mq-label" style="margin-top:14px;">Comptes Meta réels (données live plutôt que démo)</div>
-        <div class="auth-field" style="margin-top:6px;"><label>Page Facebook / Instagram</label>
-          <select class="auth-input" id="arBrPage">
-            <option value="">— aucune (rester en démo) —</option>
-            ${r.pages.map((p) => `<option value="${p.id}"${ma.pageId === p.id ? " selected" : ""}>${escapeHtml(p.name)}${p.ig_username ? " — @" + escapeHtml(p.ig_username) : " (pas d'Instagram lié)"}</option>`).join("")}
-          </select>
-        </div>
-        <div class="auth-field" style="margin-top:6px;"><label>Compte publicitaire</label>
-          <select class="auth-input" id="arBrAdAccount">
-            <option value="">— aucun (rester en démo) —</option>
-            ${r.adAccounts.map((a) => `<option value="${a.id}"${ma.adAccountId === a.id ? " selected" : ""}>${escapeHtml(a.name)}</option>`).join("")}
-          </select>
-        </div>`;
-    });
-  }
   ov.querySelector("#arBrSave").onclick = async () => {
     const name = ov.querySelector("#arBrName").value.trim();
     if (!name) return;
     const networks = {};
     ov.querySelectorAll("[data-brnet]").forEach((i) => { if (i.value.trim()) networks[i.dataset.brnet] = i.value.trim(); });
-    const pageSel = ov.querySelector("#arBrPage"), adSel = ov.querySelector("#arBrAdAccount");
-    // Si la liste Meta n'a pas fini de charger, on garde le mapping existant plutôt que l'écraser à null.
-    const metaAssets = (pageSel || adSel) ? { pageId: pageSel && pageSel.value ? pageSel.value : null, adAccountId: adSel && adSel.value ? adSel.value : null } : ma;
-    const r = await window.olympus.argosBrandSave({ id: brand.id, name, secteur: ov.querySelector("#arBrSect").value.trim(), networks, metaAssets });
+    const r = await window.olympus.argosBrandSave({ id: brand.id, name, secteur: ov.querySelector("#arBrSect").value.trim(), networks });
     arState = null; if (r.ok && r.brand) arBrand = r.brand.id; arInvalidate();
     close(); renderArgos();
   };
