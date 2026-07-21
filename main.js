@@ -2076,12 +2076,33 @@ ipcMain.handle("argos:posts", (_e, brandId) => {
   const st = argosState();
   return { ok: true, posts: st.posts.filter((p) => p.brandId === brandId).sort((a, b2) => (a.date + (a.time || "")).localeCompare(b2.date + (b2.time || ""))) };
 });
-ipcMain.handle("argos:postSave", (_e, post) => {
+// Publie réellement sur Facebook si la marque a une Page mappée et que "facebook" est coché.
+// scheduled_publish_time permet une PROGRAMMATION NATIVE côté Facebook (10 min à 30 jours) —
+// Instagram ne le permet pas côté API, cette fonction ne concerne donc que Facebook pour l'instant.
+ipcMain.handle("argos:postSave", async (_e, post) => {
   const st = argosState();
-  if (post.id) { const i = st.posts.findIndex((p) => p.id === post.id); if (i >= 0) st.posts[i] = { ...st.posts[i], ...post }; }
-  else { post.id = "p" + Date.now().toString(36); post.createdAt = new Date().toISOString(); st.posts.push(post); }
-  // À la connexion : la publication réelle passera par argosApiCall (content_publish / posts / etc.)
-  return { ok: argosSave(st), post };
+  const existing = post.id ? st.posts.find((p) => p.id === post.id) : null;
+  const alreadyPublished = existing && existing.fbPublish && existing.fbPublish.ok;
+  let publishResult = existing ? existing.fbPublish || null : null;
+  const b = st.brands.find((x) => x.id === post.brandId);
+  const shouldTryPublish = !alreadyPublished && post.status !== "draft" && b && b.metaAssets && b.metaAssets.pageId && (post.networks || []).includes("facebook");
+  if (shouldTryPublish) {
+    const fbCtx = argosBrandFbPage(b);
+    if (fbCtx) {
+      try {
+        const nowSec = Math.floor(Date.now() / 1000);
+        const scheduleSec = post.date ? Math.floor(new Date(`${post.date}T${post.time || "12:00"}:00`).getTime() / 1000) : null;
+        const willSchedule = !!(scheduleSec && scheduleSec > nowSec + 600 && scheduleSec < nowSec + 30 * 86400);
+        const params = { message: post.text };
+        if (willSchedule) { params.published = "false"; params.scheduled_publish_time = scheduleSec; }
+        const r = await argosApiCall("facebook", "fb_publish_post", params, fbCtx);
+        publishResult = { ok: true, page_post_id: r.id, scheduled: willSchedule, at: new Date().toISOString() };
+      } catch (e) { publishResult = { ok: false, error: e.message, at: new Date().toISOString() }; }
+    }
+  }
+  if (post.id) { const i = st.posts.findIndex((p) => p.id === post.id); if (i >= 0) st.posts[i] = { ...st.posts[i], ...post, fbPublish: publishResult }; }
+  else { post.id = "p" + Date.now().toString(36); post.createdAt = new Date().toISOString(); post.fbPublish = publishResult; st.posts.push(post); }
+  return { ok: argosSave(st), post, publishResult };
 });
 ipcMain.handle("argos:postDelete", (_e, id) => {
   const st = argosState(); st.posts = st.posts.filter((p) => p.id !== id); return { ok: argosSave(st) };

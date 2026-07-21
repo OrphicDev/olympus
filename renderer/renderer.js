@@ -5179,7 +5179,7 @@ async function arViewPublication(box, b) {
   const upcoming = posts.filter((p) => p.date >= todayIso);
   html += `<div class="ga-subhead">File d'attente <span>· ${upcoming.length} programmé(s)</span></div>`;
   html += upcoming.length
-    ? pgPanel("À publier", upcoming.slice(0, 12).map((p) => `<div class="ga-tr"><span class="ga-tl">${(p.networks || []).map((n) => arNet(n).ic).join(" ")} ${escapeHtml((p.text || "").slice(0, 60))}</span><span class="ga-tv">${p.date.slice(8, 10)}/${p.date.slice(5, 7)}${p.time ? " · " + p.time : ""}</span><button class="ga-ic" data-post="${p.id}" title="Modifier">✎</button><button class="ga-ic" data-delpost="${p.id}" title="Supprimer">✕</button></div>`).join(""))
+    ? pgPanel("À publier", upcoming.slice(0, 12).map((p) => `<div class="ga-tr"><span class="ga-tl">${(p.networks || []).map((n) => arNet(n).ic).join(" ")} ${escapeHtml((p.text || "").slice(0, 60))}${p.fbPublish?.ok ? ` <span style="color:var(--ok);font-size:10.5px;">· ${p.fbPublish.scheduled ? "programmé sur Facebook" : "publié sur Facebook"}</span>` : p.fbPublish && !p.fbPublish.ok ? ` <span style="color:#e0868f;font-size:10.5px;">· échec Facebook</span>` : ""}</span><span class="ga-tv">${p.date.slice(8, 10)}/${p.date.slice(5, 7)}${p.time ? " · " + p.time : ""}</span><button class="ga-ic" data-post="${p.id}" title="Modifier">✎</button><button class="ga-ic" data-delpost="${p.id}" title="Supprimer">✕</button></div>`).join(""))
     : `<div class="ga-note">Rien en file d'attente. Les posts programmés partiront automatiquement une fois les comptes connectés — en attendant, ils restent planifiés ici.</div>`;
   box.innerHTML = html;
   $("arNewPost").onclick = () => arComposer(b);
@@ -5258,7 +5258,19 @@ async function arComposer(b, post) {
   const save = async (status) => {
     const text = ov.querySelector("#arCompText").value.trim();
     if (!text) { const m = ov.querySelector("#arCompMsg"); m.className = "msg err"; m.textContent = "Écris le message d'abord."; return; }
-    await window.olympus.argosPostSave({ id: post.id, brandId: b.id, text, networks: [...sel], date: ov.querySelector("#arCompDate").value, time: ov.querySelector("#arCompTime").value || null, status });
+    const r = await window.olympus.argosPostSave({ id: post.id, brandId: b.id, text, networks: [...sel], date: ov.querySelector("#arCompDate").value, time: ov.querySelector("#arCompTime").value || null, status });
+    const pr = r.publishResult, m = ov.querySelector("#arCompMsg");
+    if (pr && pr.ok) {
+      m.className = "msg ok";
+      m.textContent = pr.scheduled ? "Programmé nativement sur Facebook ✓" : "Publié sur Facebook ✓";
+      setTimeout(() => { close(); if (arView === "publication") arRenderView(); }, 1600);
+      return;
+    }
+    if (pr && !pr.ok) {
+      m.className = "msg err";
+      m.textContent = "Facebook a refusé la publication (" + pr.error + ") — gardé en file d'attente locale, tu peux réessayer.";
+      return;
+    }
     close(); if (arView === "publication") arRenderView();
   };
   ov.querySelector("#arCompSave").onclick = () => save("scheduled");
