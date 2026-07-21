@@ -1829,9 +1829,15 @@ function argosBrandIg(brand) {
   const st = argosState();
   const pageId = brand.metaAssets && brand.metaAssets.pageId;
   if (!pageId) return null;
+  // Depuis que la configuration Meta unique porte les permissions instagram_*, le jeton de la
+  // connexion générale (assets.pages) suffit — plus besoin de la connexion Instagram séparée.
+  const pages = (st.providers.meta && st.providers.meta.assets && st.providers.meta.assets.pages) || [];
+  const p = pages.find((x) => x.id === pageId);
+  if (p && p.ig_user_id) return { ig_user_id: p.ig_user_id, page_id: p.id, access_token: p.token };
+  // Repli : connexion Instagram dédiée si elle existe encore (ancien flux, compat descendante).
   const igPages = (st.providers.meta && st.providers.meta.igAssets && st.providers.meta.igAssets.pages) || [];
-  const p = igPages.find((x) => x.id === pageId);
-  return p && p.ig_user_id ? { ig_user_id: p.ig_user_id, page_id: p.id, access_token: p.token } : null;
+  const pi = igPages.find((x) => x.id === pageId);
+  return pi && pi.ig_user_id ? { ig_user_id: pi.ig_user_id, page_id: pi.id, access_token: pi.token } : null;
 }
 // Vraies données Aperçu — Instagram (si la connexion dédiée existe) + Facebook (posts + champs
 // publics de Page ; pas d'insights Facebook tant que read_insights n'est pas accordé).
