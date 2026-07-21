@@ -5777,7 +5777,10 @@ const AR_PROVIDER_KEYS = {
   google: [{ k: "client_id", label: "Client ID", secret: false }, { k: "client_secret", label: "Client secret", secret: true }, { k: "developer_token", label: "Developer token (Ads)", secret: true }],
 };
 const AR_PROV_LABEL = { meta: "Meta", google: "Google" };
-const AR_CONNECTABLE = new Set(["meta"]); // fournisseurs dont le flux OAuth est actif
+const AR_CONNECTABLE = new Set(["meta", "google"]); // fournisseurs dont le flux OAuth est actif
+// Surface utilisée pour déclencher la connexion OAuth d'un fournisseur (n'importe laquelle du
+// groupe convient — le connect les branche toutes d'un coup).
+const AR_CONNECT_SURFACE = { meta: "facebook", google: "google_analytics" };
 // ── Connexions : regroupées par fournisseur (une app développeur → plusieurs surfaces) ──
 // ══════════ TITAN — Argos : connexions API (réservé aux gérants) ══════════
 async function renderTitanArgosConn() {
@@ -5801,7 +5804,7 @@ async function renderTitanArgosConn() {
       </div>
       <div class="act">
         <button class="btn sec" data-keys="${prov}" style="padding:6px 14px;font-size:12px;">${hasKeys ? "Modifier les clés" : "Renseigner les clés"}</button>
-        ${connectable && hasKeys ? `<button class="cal-btn" data-connect="${prov}" data-surface="facebook" style="padding:6px 16px;font-size:12px;">${anyConnected ? "Reconnecter (Pages + Ads)" : "Connecter un compte"}</button>` : ""}
+        ${connectable && hasKeys ? `<button class="cal-btn" data-connect="${prov}" data-surface="${AR_CONNECT_SURFACE[prov] || surfaces[0].id}" style="padding:6px 16px;font-size:12px;">${anyConnected ? "Reconnecter" : "Connecter un compte"}</button>` : ""}
         ${connectable && surfaces[0].hasInstagramConfig ? `<button class="cal-btn" data-connect="${prov}" data-surface="instagram" data-mode="instagram" style="padding:6px 16px;font-size:12px;background:linear-gradient(135deg,#f58529,#dd2a7b,#8134af,#515bd4);">${surfaces.find((s) => s.id === "instagram")?.igScoped ? "Reconnecter Instagram" : "Connecter Instagram"}</button>` : ""}
         <button class="btn sec" data-docs="${surfaces[0].id}" style="padding:6px 14px;font-size:12px;">Voir l'API</button>
         ${anyConnected ? `<button class="btn sec" data-disc="${prov}" style="padding:6px 14px;font-size:12px;">Déconnecter</button>` : ""}
@@ -5834,8 +5837,13 @@ async function renderTitanArgosConn() {
     el.disabled = false; el.textContent = label;
     if (r.ok) {
       m.className = "msg ok";
-      m.textContent = el.dataset.mode === "instagram" ? `Instagram connecté : ${r.summary.ig} compte(s) — les vraies données Aperçu/Inbox vont s'activer pour les marques mappées.` : `Connecté : ${r.summary.pages} page(s), ${r.summary.ig} compte(s) Instagram, ${r.summary.ads} compte(s) pub.`;
-      arState = null; arInvalidate(); setTimeout(() => renderTitanArgosConn(), 1400);
+      const s = r.summary || {};
+      if (el.dataset.connect === "google") {
+        m.textContent = `Google connecté${s.email ? " (" + s.email + ")" : ""} : ${s.ga} propriété(s) Analytics, ${s.sc} site(s) Search Console, ${s.ads} compte(s) Ads, ${s.biz} établissement(s) Business.` + ((s.notes && s.notes.length) ? " ⚠ " + s.notes.join(" · ") : "");
+      } else {
+        m.textContent = el.dataset.mode === "instagram" ? `Instagram connecté : ${s.ig} compte(s) — les vraies données Aperçu/Inbox vont s'activer pour les marques mappées.` : `Connecté : ${s.pages} page(s), ${s.ig} compte(s) Instagram, ${s.ads} compte(s) pub.`;
+      }
+      arState = null; arInvalidate(); setTimeout(() => renderTitanArgosConn(), 1800);
     } else { m.className = "msg err"; m.textContent = r.error || "Échec de la connexion."; }
   });
   box.querySelectorAll("[data-disc]").forEach((el) => el.onclick = async () => {

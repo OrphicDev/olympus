@@ -1652,6 +1652,9 @@ const ARGOS_PLATFORMS = [
   { id: "youtube", label: "YouTube", icon: "▶️", api: "YouTube Data + Analytics API" },
   { id: "meta_ads", label: "Meta Ads", icon: "📣", api: "Meta Marketing API" },
   { id: "google_ads", label: "Google Ads", icon: "🔎", api: "Google Ads API" },
+  { id: "google_analytics", label: "Google Analytics", icon: "📈", api: "Analytics Data API (GA4)" },
+  { id: "search_console", label: "Search Console", icon: "🔍", api: "Search Console API" },
+  { id: "google_business", label: "Google Business", icon: "📍", api: "Business Profile API" },
 ];
 // Une "app développeur" (fournisseur) peut couvrir plusieurs surfaces : une seule app Meta
 // donne Instagram + Facebook + Meta Ads. Les clés sont stockées par fournisseur, pas par surface.
@@ -1670,6 +1673,21 @@ const ARGOS_PROVIDERS = {
     //   Instagram acct: instagram_business_basic, instagram_business_manage_insights,
     //                   instagram_business_manage_comments, instagram_business_content_publish
     //   Ad account    : ads_read, ads_management (ou business_management pour lister les comptes pub)
+  },
+  google: {
+    label: "Google",
+    // Un seul login Google (compte agence) couvre les 4 produits Argos ET Drive (Atlas).
+    surfaces: ["google_analytics", "search_console", "google_ads", "google_business"],
+    authUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+    tokenUrl: "https://oauth2.googleapis.com/token",
+    scopes: [
+      "openid", "email", "profile",
+      "https://www.googleapis.com/auth/analytics.readonly",   // GA4 (lecture)
+      "https://www.googleapis.com/auth/webmasters.readonly",  // Search Console
+      "https://www.googleapis.com/auth/adwords",              // Google Ads
+      "https://www.googleapis.com/auth/business.manage",      // Business Profile (avis, insights)
+      "https://www.googleapis.com/auth/drive",                // Drive (Atlas)
+    ],
   },
 };
 function argosProviderOf(platform) {
@@ -1734,6 +1752,91 @@ async function argosMetaConnect(appId, appSecret, configId) {
   let adAccounts = [];
   try { const ad = await argosJson(`https://graph.facebook.com/${V}/me/adaccounts?fields=name,account_id&access_token=${encodeURIComponent(userToken)}`); adAccounts = (ad.j.data || []).map((a) => ({ id: a.account_id, name: a.name })); } catch {}
   return { userToken, expiresIn, pages, adAccounts };
+}
+// ── Google (Analytics GA4 + Search Console + Ads + Business Profile + Drive) ──
+// Un seul flux OAuth "Desktop app" (loopback) avec accès hors-ligne → refresh_token stocké
+// (chiffré) : Google renvoie des access_token courts (~1h), régénérés à la demande.
+async function googleTokenPost(params) {
+  const r = await timedFetch(ARGOS_PROVIDERS.google.tokenUrl, {
+    method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams(params).toString(),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error("Google token " + r.status + " : " + (j.error_description || j.error || ""));
+  return j;
+}
+// Renvoie un access_token Google valide, en le rafraîchissant si expiré (marge 60 s).
+async function argosGoogleAccessToken() {
+  const st = argosState();
+  const g = st.providers.google;
+  if (!g || !g.refresh_token) { const e = new Error("Google non connecté."); e.notConnected = true; throw e; }
+  if (g.access_token && g.token_expiry && Date.now() < g.token_expiry - 60000) return argosDecSecret(g.access_token);
+  const j = await googleTokenPost({ grant_type: "refresh_token", refresh_token: argosDecSecret(g.refresh_token), client_id: g.client_id, client_secret: argosDecSecret(g.client_secret) });
+  const st2 = argosState();
+  st2.providers.google = { ...st2.providers.google, access_token: argosEncSecret(j.access_token), token_expiry: Date.now() + (j.expires_in || 3600) * 1000 };
+  argosSave(st2);
+  return j.access_token;
+}
+// GET JSON authentifié Google (Bearer). `dev` = developer-token (Google Ads uniquement).
+async function argosGoogleGet(url, extraHeaders = {}) {
+  const token = await argosGoogleAccessToken();
+  const r = await timedFetch(url, { headers: { Authorization: `Bearer ${token}`, ...extraHeaders } });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(`Google ${r.status} : ${JSON.stringify(j).slice(0, 160)}`);
+  return j;
+}
+// Découverte des actifs accessibles au compte agence (best-effort : chaque produit peut
+// échouer indépendamment, ex. Ads sans developer token approuvé ou Business non allowlisté).
+async function argosGoogleDiscover() {
+  const st = argosState();
+  const devToken = st.providers.google.developer_token ? argosDecSecret(st.providers.google.developer_token) : null;
+  const assets = { analytics: [], searchConsole: [], googleAds: [], business: [] };
+  // GA4 : comptes + propriétés
+  try {
+    const r = await argosGoogleGet("https://analyticsadmin.googleapis.com/v1beta/accountSummaries?pageSize=200");
+    for (const acc of (r.accountSummaries || [])) for (const p of (acc.propertySummaries || []))
+      assets.analytics.push({ id: p.property, label: (p.displayName || p.property) + (acc.displayName ? " · " + acc.displayName : "") });
+  } catch (e) { assets.analyticsError = e.message; }
+  // Search Console : sites vérifiés
+  try {
+    const r = await argosGoogleGet("https://www.googleapis.com/webmasters/v3/sites");
+    for (const s of (r.siteEntry || [])) if (s.permissionLevel !== "siteUnverifiedUser") assets.searchConsole.push({ id: s.siteUrl, label: s.siteUrl });
+  } catch (e) { assets.searchConsoleError = e.message; }
+  // Google Ads : comptes accessibles (nécessite le developer token)
+  if (devToken) {
+    try {
+      const r = await argosGoogleGet("https://googleads.googleapis.com/v18/customers:listAccessibleCustomers", { "developer-token": devToken });
+      for (const rn of (r.resourceNames || [])) { const id = rn.split("/")[1]; assets.googleAds.push({ id, label: id }); }
+    } catch (e) { assets.googleAdsError = e.message; }
+  }
+  // Business Profile : comptes puis établissements
+  try {
+    const r = await argosGoogleGet("https://mybusinessaccountmanagement.googleapis.com/v1/accounts");
+    for (const acc of (r.accounts || []).slice(0, 5)) {
+      try {
+        const locs = await argosGoogleGet(`https://mybusinessbusinessinformation.googleapis.com/v1/${acc.name}/locations?readMask=name,title&pageSize=100`);
+        for (const l of (locs.locations || [])) assets.business.push({ id: l.name, label: l.title || l.name });
+      } catch {}
+    }
+  } catch (e) { assets.businessError = e.message; }
+  return assets;
+}
+// Connexion Google complète : OAuth loopback (offline) → refresh_token → découverte des actifs.
+async function argosGoogleConnect(clientId, clientSecret) {
+  const redirect = `http://localhost:${ARGOS_OAUTH_PORT}/callback`;
+  const state = randomUUID();
+  const authUrl = ARGOS_PROVIDERS.google.authUrl + "?" + new URLSearchParams({
+    client_id: clientId, redirect_uri: redirect, response_type: "code",
+    scope: ARGOS_PROVIDERS.google.scopes.join(" "),
+    access_type: "offline", prompt: "consent", include_granted_scopes: "true",
+  }).toString();
+  const code = await argosLoopbackAuth(authUrl, state);
+  const tok = await googleTokenPost({ grant_type: "authorization_code", code, client_id: clientId, client_secret: clientSecret, redirect_uri: redirect });
+  if (!tok.refresh_token) throw new Error("Google n'a pas renvoyé de refresh_token — révoque l'accès dans ton compte Google puis reconnecte (prompt=consent requis).");
+  // Email du compte (via userinfo)
+  let email = null;
+  try { const ui = await timedFetch("https://openidconnect.googleapis.com/v1/userinfo", { headers: { Authorization: `Bearer ${tok.access_token}` } }); email = (await ui.json()).email; } catch {}
+  return { refresh_token: tok.refresh_token, access_token: tok.access_token, expires_in: tok.expires_in || 3600, email };
 }
 let _argosApis = null;
 function argosApis() {
@@ -2241,12 +2344,15 @@ ipcMain.handle("argos:audience", (_e, brandId, forceRefresh) => {
 ipcMain.handle("argos:networkBuckets", () => {
   const st = argosState();
   const assets = (st.providers.meta && st.providers.meta.assets) || { pages: [], adAccounts: [] };
+  const g = (st.providers.google && st.providers.google.assets) || {};
   const buckets = [
     { network: "facebook", label: "Facebook", icon: "👥", connected: !!st.connections.facebook, items: (assets.pages || []).map((p) => ({ id: p.id, label: p.name })) },
     { network: "instagram", label: "Instagram", icon: "📷", connected: !!st.connections.instagram, items: (assets.pages || []).filter((p) => p.ig_user_id).map((p) => ({ id: p.id, label: "@" + p.ig_username })) },
     { network: "meta_ads", label: "Meta Ads", icon: "📣", connected: !!st.connections.meta_ads, items: (assets.adAccounts || []).map((a) => ({ id: a.id, label: a.name })) },
-    { network: "google_ads", label: "Google Ads", icon: "🔎", connected: false, items: [] },
-    { network: "google_business", label: "Google Business", icon: "📍", connected: false, items: [] },
+    { network: "google_analytics", label: "Google Analytics", icon: "📈", connected: !!st.connections.google_analytics, items: (g.analytics || []).map((x) => ({ id: x.id, label: x.label })) },
+    { network: "search_console", label: "Search Console", icon: "🔍", connected: !!st.connections.search_console, items: (g.searchConsole || []).map((x) => ({ id: x.id, label: x.label })) },
+    { network: "google_ads", label: "Google Ads", icon: "🔎", connected: !!st.connections.google_ads, items: (g.googleAds || []).map((x) => ({ id: x.id, label: x.label })) },
+    { network: "google_business", label: "Google Business", icon: "📍", connected: !!st.connections.google_business, items: (g.business || []).map((x) => ({ id: x.id, label: x.label })) },
     { network: "tiktok", label: "TikTok", icon: "🎵", connected: false, items: [] },
     { network: "linkedin", label: "LinkedIn", icon: "💼", connected: false, items: [] },
     { network: "x", label: "X", icon: "𝕏", connected: false, items: [] },
@@ -2332,6 +2438,25 @@ ipcMain.handle("argos:connect", async (_e, platform, mode) => {
   const st = argosState();
   const pk = st.providers[provider] || {};
   try {
+    if (provider === "google") {
+      const clientId = pk.client_id, clientSecret = argosDecSecret(pk.client_secret);
+      if (!clientId || !clientSecret) return { ok: false, error: "Renseigne d'abord le Client ID et le Client secret Google." };
+      const r = await argosGoogleConnect(clientId, clientSecret);
+      // Refresh token stocké AVANT la découverte (qui l'utilise pour rafraîchir l'access token).
+      const stG = argosState();
+      stG.providers.google = { ...(stG.providers.google || {}), refresh_token: argosEncSecret(r.refresh_token), access_token: argosEncSecret(r.access_token), token_expiry: Date.now() + r.expires_in * 1000, account_email: r.email || null, connected_at: new Date().toISOString() };
+      argosSave(stG);
+      const assets = await argosGoogleDiscover();
+      const stG2 = argosState();
+      stG2.providers.google = { ...(stG2.providers.google || {}), assets };
+      const mark = (surface, items, account) => { if (items.length) stG2.connections[surface] = { provider: "google", status: "connected", account: account + (items.length > 1 ? ` (+${items.length - 1})` : "") }; };
+      mark("google_analytics", assets.analytics, assets.analytics[0]?.label || "");
+      mark("search_console", assets.searchConsole, assets.searchConsole[0]?.label || "");
+      mark("google_ads", assets.googleAds, assets.googleAds[0]?.label || "");
+      mark("google_business", assets.business, assets.business[0]?.label || "");
+      argosSave(stG2);
+      return { ok: true, summary: { ga: assets.analytics.length, sc: assets.searchConsole.length, ads: assets.googleAds.length, biz: assets.business.length, email: r.email, notes: [assets.googleAdsError && "Ads : " + assets.googleAdsError, assets.businessError && "Business : " + assets.businessError].filter(Boolean) } };
+    }
     if (provider === "meta" && mode === "instagram") {
       const appId = pk.app_id, appSecret = argosDecSecret(pk.app_secret), configId = pk.config_id_instagram;
       if (!appId || !appSecret) return { ok: false, error: "Renseigne d'abord l'App ID et le secret Meta." };
