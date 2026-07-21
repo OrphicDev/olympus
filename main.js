@@ -1730,7 +1730,8 @@ function argosDemoOverview(brand, days) {
   const alerts = [];
   if (rng() > 0.5) alerts.push({ type: "opportunity", txt: "Le format vidéo court surperforme de 2,3× ce mois-ci — un créneau à saisir cette semaine." });
   if (rng() > 0.65) alerts.push({ type: "warn", txt: "Engagement en baisse sur " + (nets[0] || "instagram") + " depuis 6 jours — varier les hooks." });
-  return { demo: true, days, followers: totF, reach, engagement, published: perNet.reduce((n, x) => n + x.posts, 0), byDay, perNet, topPosts, health, alerts };
+  const fbInsights = nets.includes("facebook") ? { postEngagements: Math.round(rng() * 400), pageViews: Math.round(rng() * 900), newFollows: Math.round(rng() * 60) } : null;
+  return { demo: true, days, followers: totF, reach, engagement, published: perNet.reduce((n, x) => n + x.posts, 0), byDay, perNet, topPosts, health, alerts, fbInsights };
 }
 function argosDemoInbox(brand) {
   const rng = argosRng(brand.id + ":inbox");
@@ -1993,12 +1994,16 @@ async function argosRealOverview(brand, days) {
       }
     } catch (e) { /* Instagram indisponible (permission manquante ou autre) — on continue avec Facebook si dispo */ }
   };
+  // Métriques de Page confirmées valides en v25 (page_impressions_unique/page_reach/page_fans
+  // sont dépréciées et renvoient une erreur — testé en direct le 21/07).
+  let fbInsights = null;
   const fetchFb = async () => {
     if (!fbCtx) return;
     try {
-      const [info, posts] = await Promise.all([
+      const [info, posts, pageIns] = await Promise.all([
         argosApiCall("facebook", "fb_page_basic", { fields: "name,fan_count,followers_count" }, fbCtx),
         argosApiCall("facebook", "fb_page_posts", { fields: "id,message,created_time,permalink_url,likes.summary(true),comments.summary(true)", limit: 25 }, fbCtx).catch(() => null),
+        argosApiCall("facebook", "fb_page_insights", { metric: "page_post_engagements,page_views_total,page_follows", period: "day", since: sinceSec, until: nowSec }, fbCtx).catch(() => null),
       ]);
       followers += +(info.followers_count || info.fan_count || 0);
       const fbNet = { network: "facebook", handle: info.name || "", followers: +(info.followers_count || info.fan_count || 0), growth: 0, engagement: 0, posts: 0 };
@@ -2006,8 +2011,14 @@ async function argosRealOverview(brand, days) {
       if (posts) {
         const items = (posts.data || []).filter((p) => !p.created_time || new Date(p.created_time).getTime() / 1000 >= sinceSec);
         fbNet.posts = items.length; published += items.length;
-        // Pas d'insights de Page (read_insights manquant) → pas de "reach" réel pour ces posts,
-        // on les classe par interactions (likes+commentaires réels) sans jamais estimer une portée.
+      }
+      if (pageIns) {
+        const sum = (name) => ((pageIns.data || []).find((d) => d.name === name)?.values || []).reduce((n, v) => n + (+v.value || 0), 0);
+        const postEngagements = sum("page_post_engagements"), pageViews = sum("page_views_total"), newFollows = sum("page_follows");
+        fbInsights = { postEngagements, pageViews, newFollows };
+        // page_post_engagements n'est pas une portée mais une vraie mesure d'engagement Page —
+        // on l'utilise pour un % d'engagement Facebook honnête plutôt que de laisser 0.
+        if (fbNet.posts) fbNet.engagement = +((postEngagements / Math.max(1, fbNet.followers)) * 100).toFixed(2);
       }
     } catch (e) { /* Facebook indisponible — n'empêche pas l'affichage des données Instagram déjà collectées */ }
   };
@@ -2017,7 +2028,7 @@ async function argosRealOverview(brand, days) {
   const igNet = perNet.find((n) => n.network === "instagram"); if (igNet) igNet.engagement = engagement;
   const byDay = [...byDayMap.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, r]) => ({ date, reach: r, eng: 0 }));
   topPosts.sort((a, b) => b.reach - a.reach);
-  return { demo: false, days, followers, reach, engagement, published, byDay, perNet, topPosts, health: null, alerts: [] };
+  return { demo: false, days, followers, reach, engagement, published, byDay, perNet, topPosts, health: null, alerts: [], fbInsights };
 }
 // Vraies données Inbox — commentaires Facebook (réels, pages_read_engagement suffit) + DM/commentaires
 // Instagram si la connexion dédiée existe. Pas de messagerie Facebook (scope non demandé à l'app).

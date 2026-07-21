@@ -1295,6 +1295,17 @@
   .ga-per.on{background:var(--panel);color:var(--txt);box-shadow:var(--neu);}
   .ga-ic{width:34px;height:34px;border:1px solid var(--line);background:var(--bg2);color:var(--muted);border-radius:9px;cursor:pointer;font-size:15px;line-height:1;transition:color .12s,border-color .12s;}
   .ga-ic:hover{color:var(--txt);border-color:var(--accent2);}
+  /* Résumé multi-onglets en haut d'Aperçu — vignettes cliquables vers Publicité/Audience/Inbox */
+  .ar-resume-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-bottom:16px;}
+  .ar-resume-tile{display:flex;align-items:center;gap:11px;border:1px solid var(--line);border-radius:12px;background:var(--card);padding:12px 14px;cursor:pointer;transition:border-color .12s,transform .1s;}
+  .ar-resume-tile:hover{border-color:var(--accent2);}
+  .ar-resume-tile:active{transform:translateY(1px);}
+  .ar-resume-tile .rt-ic{width:30px;height:30px;border-radius:9px;background:var(--card2);display:grid;place-items:center;font-size:14px;flex-shrink:0;}
+  .ar-resume-tile .rt-body{flex:1;min-width:0;}
+  .ar-resume-tile .rt-label{font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);}
+  .ar-resume-tile .rt-value{font-size:16px;font-weight:650;color:var(--txt);margin-top:1px;}
+  .ar-resume-tile .rt-sub{font-size:11px;color:var(--muted);margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .ar-resume-tile .rt-arrow{color:var(--dim);font-size:14px;flex-shrink:0;}
   .ga-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:16px;}
   .ga-card{border:1px solid var(--line);border-radius:14px;background:var(--bg2);padding:16px 18px;display:flex;flex-direction:column;gap:8px;}
   .ga-card-l{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);}

@@ -5157,14 +5157,40 @@ async function arRenderView() {
 }
 
 // ── Aperçu : la console de la marque ──
+// Vignette cliquable du résumé multi-onglets — fait le pont vers la vue détaillée.
+function arResumeTile(icon, label, value, sub, view) {
+  return `<div class="ar-resume-tile" data-gotoview="${view}">
+    <div class="rt-ic">${icon}</div>
+    <div class="rt-body"><div class="rt-label">${escapeHtml(label)}</div><div class="rt-value">${value}</div>${sub ? `<div class="rt-sub">${escapeHtml(sub)}</div>` : ""}</div>
+    <div class="rt-arrow">→</div>
+  </div>`;
+}
 async function arViewApercu(box, b) {
   const ovKey = b.id + ":ov:" + arPeriod;
-  const r = await arGet(ovKey, () => window.olympus.argosOverview(b.id, arPeriod));
+  const [r, adsR, audR, inboxR] = await Promise.all([
+    arGet(ovKey, () => window.olympus.argosOverview(b.id, arPeriod)),
+    arGet(b.id + ":ads", () => window.olympus.argosAds(b.id)),
+    arGet(b.id + ":aud", () => window.olympus.argosAudience(b.id)),
+    arGet(b.id + ":inbox", () => window.olympus.argosInbox(b.id)),
+  ]);
   if (!r.ok) { box.innerHTML = `<div class="ga-note">${escapeHtml(r.error)}</div>`; return; }
   const d = r.data;
   if (d.demo === false) arKickRefresh(ovKey, () => arView === "apercu" && arBrandOf()?.id === b.id, () => window.olympus.argosOverview(b.id, arPeriod, true));
   const per = `<div class="ga-period">${[[7, "7 j"], [30, "30 j"], [90, "90 j"]].map(([n, l]) => `<button class="ga-per${arPeriod === n ? " on" : ""}" data-per="${n}">${l}</button>`).join("")}</div>`;
   let html = arHead(b.name, `${arPeriod} derniers jours · ${Object.keys(b.networks || {}).length} réseau(x)`, per, d.demo !== false);
+  // ── Résumé multi-onglets : les points clés de Publicité / Audience / Inbox, en un clic ──
+  const eur = (n) => n.toLocaleString("fr-FR") + " €";
+  const tiles = [];
+  if (adsR.ok) tiles.push(arResumeTile("▸", "Publicité", eur(adsR.data.totals.spend), `ROAS ×${adsR.data.totals.roas} · ${adsR.data.campaigns.length} campagne(s)`, "ads"));
+  if (audR.ok && (audR.data.followerAge.length || audR.data.followerCountry.length)) {
+    const topAge = audR.data.followerAge[0], topCountry = audR.data.followerCountry[0];
+    tiles.push(arResumeTile("◐", "Audience", topAge ? topAge.label + " ans" : "—", topCountry ? `1ᵉʳ pays : ${topCountry.label}` : "", "audience"));
+  }
+  if (inboxR.ok) {
+    const convs = inboxR.conversations || []; const recent = convs.filter((c) => c.hoursAgo < 24).length;
+    tiles.push(arResumeTile("💬", "Inbox", String(convs.length), recent ? `${recent} dans les dernières 24h` : "aucune activité récente", "inbox"));
+  }
+  if (tiles.length) html += `<div class="ar-resume-row">${tiles.join("")}</div>`;
   if (r.warning) html += `<div class="ar-alerts"><div class="ar-alert warn"><span class="ai">△</span><span>${escapeHtml(r.warning)}</span></div></div>`;
   if (d.alerts?.length) html += `<div class="ar-alerts">${d.alerts.map((a) => `<div class="ar-alert${a.type === "warn" ? " warn" : ""}"><span class="ai">${a.type === "warn" ? "△" : "◈"}</span><span>${escapeHtml(a.txt)}${a.type === "opportunity" ? ' <b style="cursor:pointer;" data-seize>Créer le post →</b>' : ""}</span></div>`).join("")}</div>`;
   html += `<div class="ga-cards">
@@ -5178,6 +5204,13 @@ async function arViewApercu(box, b) {
   html += pgPanel("Abonnés par réseau", pgDonut(d.perNet.map((n) => ({ label: arNet(n.network).label, value: n.followers, icon: arNet(n.network).ic })), { centerLabel: "abonnés" }));
   html += pgPanel("Engagement par réseau", pgBreak(d.perNet.map((n) => ({ label: arNet(n.network).label, value: n.engagement, icon: arNet(n.network).ic })), { color: "#8fd6a6" }));
   html += `</div>`;
+  if (d.fbInsights) {
+    html += pgPanel("Activité de la Page Facebook", `<div class="ga-cards" style="margin:0;">
+      ${pgScore("Interactions sur les posts", pgFmtN(d.fbInsights.postEngagements), "", `sur ${arPeriod} jours`)}
+      ${pgScore("Vues de la Page", pgFmtN(d.fbInsights.pageViews))}
+      ${pgScore("Nouveaux abonnés", pgFmtN(d.fbInsights.newFollows))}
+    </div>`);
+  }
   html += pgPanel("Posts les plus performants", d.topPosts.map((p) => `
     <div class="ga-tr"><span class="ga-tl">${arNet(p.network).ic} ${escapeHtml(p.title)}</span>
       <span class="ga-tbar"><span class="ga-tbar-f" style="width:${Math.round(p.reach / (d.topPosts[0].reach || 1) * 100)}%"></span></span>
@@ -5187,6 +5220,7 @@ async function arViewApercu(box, b) {
   box.innerHTML = html;
   box.querySelectorAll(".ga-per").forEach((bt) => bt.onclick = () => { arPeriod = +bt.dataset.per; arRenderView(); });
   box.querySelectorAll("[data-recycle]").forEach((bt) => bt.onclick = () => arComposer(b, { text: bt.dataset.recycle + " — (recyclé, à adapter)" }));
+  box.querySelectorAll("[data-gotoview]").forEach((el) => el.onclick = () => { arView = el.dataset.gotoview; arSideRender(); arRenderView(); });
   const sz = box.querySelector("[data-seize]"); if (sz) sz.onclick = () => arComposer(b, { text: "Idée : capitaliser sur la tendance vidéo courte de la semaine.\n\n[brouillon proposé par Argos — à retravailler]" });
 }
 
