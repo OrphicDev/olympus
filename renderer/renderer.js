@@ -5117,13 +5117,14 @@ async function arViewApercu(box, b) {
   if (!r.ok) { box.innerHTML = `<div class="ga-note">${escapeHtml(r.error)}</div>`; return; }
   const d = r.data;
   const per = `<div class="ga-period">${[[7, "7 j"], [30, "30 j"], [90, "90 j"]].map(([n, l]) => `<button class="ga-per${arPeriod === n ? " on" : ""}" data-per="${n}">${l}</button>`).join("")}</div>`;
-  let html = arHead(b.name, `${arPeriod} derniers jours · ${Object.keys(b.networks || {}).length} réseau(x)`, per);
+  let html = arHead(b.name, `${arPeriod} derniers jours · ${Object.keys(b.networks || {}).length} réseau(x)`, per, d.demo !== false);
+  if (r.warning) html += `<div class="ar-alerts"><div class="ar-alert warn"><span class="ai">△</span><span>${escapeHtml(r.warning)}</span></div></div>`;
   if (d.alerts?.length) html += `<div class="ar-alerts">${d.alerts.map((a) => `<div class="ar-alert${a.type === "warn" ? " warn" : ""}"><span class="ai">${a.type === "warn" ? "△" : "◈"}</span><span>${escapeHtml(a.txt)}${a.type === "opportunity" ? ' <b style="cursor:pointer;" data-seize>Créer le post →</b>' : ""}</span></div>`).join("")}</div>`;
   html += `<div class="ga-cards">
     ${pgScore("Abonnés cumulés", pgFmtN(d.followers))}
     ${pgScore("Portée", pgFmtN(d.reach), "", `sur ${arPeriod} jours`)}
     ${pgScore("Engagement moyen", d.engagement + " %")}
-    ${pgScore("Santé de présence", `${d.health}<span class="ga-unit">/100</span>`)}
+    ${d.health != null ? pgScore("Santé de présence", `${d.health}<span class="ga-unit">/100</span>`) : pgScore("Santé de présence", "—", "", "pas de score sur données réelles")}
   </div>`;
   html += pgPanel("Portée par jour", pgAreaChart((d.byDay || []).map((x) => ({ label: pgDayLabel(x.date), value: x.reach }))));
   html += `<div class="ga-breaks">`;
@@ -5267,7 +5268,8 @@ async function arViewInbox(box, b) {
   if (!arConvSel || !convs.find((c) => c.id === arConvSel)) arConvSel = convs[0]?.id || null;
   const cur = convs.find((c) => c.id === arConvSel);
   const MACROS = ["Merci beaucoup ! 🙏", "On vous répond en DM 👌", "Oui, c'est disponible — le lien est en bio.", "Écris-nous à hello@… on s'en occupe !"];
-  let html = arHead("Inbox", "commentaires et messages privés, tous réseaux");
+  let html = arHead("Inbox", "commentaires et messages privés, tous réseaux", "", r.demo !== false);
+  if (r.warning) html += `<div class="ar-alerts"><div class="ar-alert warn"><span class="ai">△</span><span>${escapeHtml(r.warning)}</span></div></div>`;
   html += `<div class="ar-inbox">
     <div class="ar-convs">${convs.map((c) => `
       <div class="ar-conv${c.id === arConvSel ? " active" : ""}" data-conv="${c.id}">
@@ -5279,7 +5281,7 @@ async function arViewInbox(box, b) {
       <div class="ar-th-head">${arNet(cur.network).ic} ${escapeHtml(cur.from)} <span style="color:var(--dim);font-weight:400;font-size:11px;">· ${cur.kind === "dm" ? "message privé" : "commentaire"} ${arNet(cur.network).label}</span></div>
       <div class="ar-th-msgs">
         <div class="ar-bubble them">${escapeHtml(cur.text)}<div class="bt">${arAgo(cur.hoursAgo)}</div></div>
-        ${(cur.replies || []).map((rp) => `<div class="ar-bubble me">${escapeHtml(rp.text)}<div class="bt">${rp.pending ? "sera envoyé à la connexion du compte" : ""}</div></div>`).join("")}
+        ${(cur.replies || []).map((rp) => `<div class="ar-bubble me">${escapeHtml(rp.text)}<div class="bt">${rp.pending ? (r.demo === false ? "brouillon local — pas encore publié sur " + arNet(cur.network).label : "sera envoyé à la connexion du compte") : ""}</div></div>`).join("")}
       </div>
       <div class="ar-replyrow"><input class="mood-in" id="arReplyIn" placeholder="Répondre à ${escapeHtml(cur.from)}…"><button class="cal-btn primary" id="arReplyBtn">Répondre</button></div>
       <div class="ar-macros">${MACROS.map((m) => `<button class="mq-chip" data-macro="${escapeHtml(m)}">${escapeHtml(m)}</button>`).join("")}</div>
@@ -5452,7 +5454,7 @@ function arReportPdfHTML(b, d, a, lines) {
 
 // Champs de clés + libellés par fournisseur (une app peut couvrir plusieurs surfaces)
 const AR_PROVIDER_KEYS = {
-  meta: [{ k: "app_id", label: "App ID Meta", secret: false }, { k: "app_secret", label: "Clé secrète Meta", secret: true }, { k: "config_id", label: "Configuration ID (Facebook Login for Business)", secret: false }],
+  meta: [{ k: "app_id", label: "App ID Meta", secret: false }, { k: "app_secret", label: "Clé secrète Meta", secret: true }, { k: "config_id", label: "Configuration ID (Pages + Ads — variante General)", secret: false }, { k: "config_id_instagram", label: "Configuration ID Instagram (variante Instagram Graph API)", secret: false }],
   google: [{ k: "client_id", label: "Client ID", secret: false }, { k: "client_secret", label: "Client secret", secret: true }, { k: "developer_token", label: "Developer token (Ads)", secret: true }],
 };
 const AR_PROV_LABEL = { meta: "Meta", google: "Google" };
@@ -5476,11 +5478,12 @@ async function arViewConnexions(box) {
       <div class="ch"><span class="ic">${surfaces.map((s) => s.icon).join(" ")}</span><span class="n">${escapeHtml(AR_PROV_LABEL[prov] || surfaces.map((s) => s.label).join(" · "))}</span>${connectable ? "" : '<span class="tag" style="font-size:9px;color:var(--dim);border:1px solid var(--line);border-radius:20px;padding:2px 8px;">bientôt</span>'}</div>
       <div class="api">${surfaces.map((s) => s.icon + " " + s.label).join("  ·  ")}</div>
       <div class="ar-surfaces">
-        ${surfaces.map((s) => `<div class="ar-surf ${s.status === "connected" ? "on" : ""}"><span class="dot"></span>${s.label}${s.status === "connected" ? " — " + escapeHtml(s.account || "connecté") : ""}</div>`).join("")}
+        ${surfaces.map((s) => `<div class="ar-surf ${s.status === "connected" ? "on" : ""}"><span class="dot"></span>${s.label}${s.status === "connected" ? " — " + escapeHtml(s.account || "connecté") : ""}${s.id === "instagram" && s.status === "connected" ? (s.igScoped ? ' <span style="color:var(--ok);">· données réelles actives</span>' : ' <span style="color:var(--dim);">· connecté mais pas encore de permissions Instagram (voir « Connecter Instagram » ci-dessous)</span>') : ""}</div>`).join("")}
       </div>
       <div class="act">
         <button class="btn sec" data-keys="${prov}" style="padding:6px 14px;font-size:12px;">${hasKeys ? "Modifier les clés" : "Renseigner les clés"}</button>
-        ${connectable && hasKeys ? `<button class="cal-btn" data-connect="${prov}" data-surface="${surfaces[0].id}" style="padding:6px 16px;font-size:12px;">${anyConnected ? "Reconnecter" : "Connecter un compte"}</button>` : ""}
+        ${connectable && hasKeys ? `<button class="cal-btn" data-connect="${prov}" data-surface="facebook" style="padding:6px 16px;font-size:12px;">${anyConnected ? "Reconnecter (Pages + Ads)" : "Connecter un compte"}</button>` : ""}
+        ${connectable && surfaces[0].hasInstagramConfig ? `<button class="cal-btn" data-connect="${prov}" data-surface="instagram" data-mode="instagram" style="padding:6px 16px;font-size:12px;background:linear-gradient(135deg,#f58529,#dd2a7b,#8134af,#515bd4);">${surfaces.find((s) => s.id === "instagram")?.igScoped ? "Reconnecter Instagram" : "Connecter Instagram"}</button>` : ""}
         <button class="btn sec" data-docs="${surfaces[0].id}" style="padding:6px 14px;font-size:12px;">Voir l'API</button>
         ${anyConnected ? `<button class="btn sec" data-disc="${prov}" style="padding:6px 14px;font-size:12px;">Déconnecter</button>` : ""}
         <span class="msg" data-connmsg="${prov}"></span>
@@ -5508,11 +5511,11 @@ async function arViewConnexions(box) {
     const prov = el.dataset.connect; const m = box.querySelector(`[data-connmsg="${prov}"]`);
     el.disabled = true; const label = el.textContent; el.textContent = "En attente…";
     m.className = "msg"; m.textContent = "Le navigateur s'ouvre — autorise l'accès puis reviens ici.";
-    const r = await window.olympus.argosConnect(el.dataset.surface);
+    const r = await window.olympus.argosConnect(el.dataset.surface, el.dataset.mode);
     el.disabled = false; el.textContent = label;
     if (r.ok) {
       m.className = "msg ok";
-      m.textContent = `Connecté : ${r.summary.pages} page(s), ${r.summary.ig} compte(s) Instagram, ${r.summary.ads} compte(s) pub.`;
+      m.textContent = el.dataset.mode === "instagram" ? `Instagram connecté : ${r.summary.ig} compte(s) — les vraies données Aperçu/Inbox vont s'activer pour les marques mappées.` : `Connecté : ${r.summary.pages} page(s), ${r.summary.ig} compte(s) Instagram, ${r.summary.ads} compte(s) pub.`;
       arState = null; arInvalidate(); setTimeout(() => arRenderView(), 1400);
     } else { m.className = "msg err"; m.textContent = r.error || "Échec de la connexion."; }
   });

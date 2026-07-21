@@ -2498,6 +2498,49 @@
             "report_run_id"
           ],
           "notes": "Puis GET /{report_run_id} (poller async_status jusqu'à 'Job Completed' + async_percent_completion=100), enfin GET /{report_run_id}/insights pour les résultats paginés. Obligatoire en pratique dès que la requête sync time-out (erreur 'reduce the amount of data')."
+        },
+        {
+          "id": "fb_page_comments",
+          "purpose": "[BLOC 2] Lire les commentaires réels dun post de Page (auteur, texte, date)",
+          "method": "GET",
+          "url_template": "https://graph.facebook.com/v25.0/{page_post_id}/comments",
+          "params": [
+            {
+              "name": "fields",
+              "required": true,
+              "example": "from,message,created_time,like_count"
+            },
+            {
+              "name": "limit",
+              "required": false,
+              "example": "25"
+            }
+          ],
+          "response_fields": [
+            "data[].from.name",
+            "data[].message",
+            "data[].created_time"
+          ],
+          "notes": "Requiert pages_read_engagement (déjà accordé). Pour répondre : POST {comment_id}/comments (pages_manage_engagement, pas encore accordé)."
+        },
+        {
+          "id": "fb_page_basic",
+          "purpose": "[BLOC 2] Champs de base dune Page : nom, fans, followers — sans read_insights",
+          "method": "GET",
+          "url_template": "https://graph.facebook.com/v25.0/{page_id}",
+          "params": [
+            {
+              "name": "fields",
+              "required": true,
+              "example": "name,fan_count,followers_count,link"
+            }
+          ],
+          "response_fields": [
+            "name",
+            "fan_count",
+            "followers_count"
+          ],
+          "notes": "Champs publics de la Page — lisibles avec pages_show_list/pages_read_engagement, pas besoin de read_insights."
         }
       ],
       "rate_limits": "Trois régimes distincts. 1) Graph API Pages/IG : Business Use Case (BUC) rate limits par paire app+page/compte — quota horaire glissant calculé sur l'usage (headers X-Business-Use-Case-Usage / X-App-Usage à parser ; ~4800 × nb utilisateurs engagés pour les apps en Advanced Access, ~200 calls/h/utilisateur en Standard). Erreurs code 4 (app), 17 (user), 32 (page), 613. 2) Publication IG : 100 posts API / 24h glissantes par compte IG (content_publishing_limit pour suivre). 3) Marketing API / Ads Insights : throttling propre via header x-fb-ads-insights-throttle et niveaux d'accès Marketing API (development ≈ très limité / standard) ; erreurs 17 & 613 fréquentes sur insights → utiliser les jobs async + backoff exponentiel. IG messaging : limites Messenger séparées (très élevées, par conversation).",

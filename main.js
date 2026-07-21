@@ -1814,6 +1814,138 @@ async function argosRealAds(brand) {
   const wRoas = totSpend ? +(campaigns.reduce((n, c) => n + c.roas * c.spend, 0) / totSpend).toFixed(1) : 0;
   return { demo: false, campaigns, totals: { spend: totSpend, conversions: totConv, roas: wRoas } };
 }
+// Résout la Page mappée à une marque (jeton "général" — scopes Pages/Ads).
+function argosBrandFbPage(brand) {
+  const st = argosState();
+  const pageId = brand.metaAssets && brand.metaAssets.pageId;
+  if (!pageId) return null;
+  const pages = (st.providers.meta && st.providers.meta.assets && st.providers.meta.assets.pages) || [];
+  const p = pages.find((x) => x.id === pageId);
+  return p ? { page_id: p.id, access_token: p.token } : null;
+}
+// Résout le compte Instagram mappé à une marque (jeton dédié — scopes instagram_business_*,
+// obtenu via la connexion "mode instagram" séparée). null tant que cette connexion n'a pas été faite.
+function argosBrandIg(brand) {
+  const st = argosState();
+  const pageId = brand.metaAssets && brand.metaAssets.pageId;
+  if (!pageId) return null;
+  const igPages = (st.providers.meta && st.providers.meta.igAssets && st.providers.meta.igAssets.pages) || [];
+  const p = igPages.find((x) => x.id === pageId);
+  return p && p.ig_user_id ? { ig_user_id: p.ig_user_id, page_id: p.id, access_token: p.token } : null;
+}
+// Vraies données Aperçu — Instagram (si la connexion dédiée existe) + Facebook (posts + champs
+// publics de Page ; pas d'insights Facebook tant que read_insights n'est pas accordé).
+// Principe strict : ce qui n'est pas accessible reste à 0/vide plutôt qu'estimé — jamais de
+// chiffre inventé présenté comme réel.
+async function argosRealOverview(brand, days) {
+  const igCtx = argosBrandIg(brand);
+  const fbCtx = argosBrandFbPage(brand);
+  if (!igCtx && !fbCtx) return null;
+  const perNet = []; let followers = 0, published = 0, totalInteractions = 0;
+  const topPosts = []; const byDayMap = new Map();
+  const nowSec = Math.floor(Date.now() / 1000), sinceSec = nowSec - days * 86400;
+  if (igCtx) {
+    try {
+      const acc = await argosApiCall("instagram", "ig_account", { fields: "username,followers_count,media_count" }, igCtx);
+      followers += +(acc.followers_count || 0);
+      const igNet = { network: "instagram", handle: "@" + (acc.username || ""), followers: +(acc.followers_count || 0), growth: 0, engagement: 0, posts: 0 };
+      perNet.push(igNet);
+      try {
+        const reachIns = await argosApiCall("instagram", "ig_account_insights", { metric: "reach", period: "day", metric_type: "time_series", since: sinceSec, until: nowSec }, igCtx);
+        const series = (reachIns.data || []).find((d) => d.name === "reach");
+        (series?.values || []).forEach((v) => { const d = (v.end_time || "").slice(0, 10); if (d) byDayMap.set(d, (byDayMap.get(d) || 0) + (v.value || 0)); });
+      } catch {}
+      try {
+        const eng = await argosApiCall("instagram", "ig_account_insights", { metric: "total_interactions", period: "day", metric_type: "total_value", since: sinceSec, until: nowSec }, igCtx);
+        totalInteractions += +(eng.data?.[0]?.total_value?.value || 0);
+      } catch {}
+      try {
+        const media = await argosApiCall("instagram", "ig_media_list", { fields: "id,caption,timestamp,like_count,comments_count", limit: 25 }, igCtx);
+        const items = (media.data || []).filter((m) => !m.timestamp || new Date(m.timestamp).getTime() / 1000 >= sinceSec);
+        igNet.posts = items.length; published += items.length;
+        const top = items.slice().sort((a, b) => (b.like_count || 0) - (a.like_count || 0)).slice(0, 4);
+        for (const m of top) {
+          const title = (m.caption || "Publication").replace(/\s+/g, " ").slice(0, 44) || "Publication";
+          const date = (m.timestamp || "").slice(0, 10);
+          try {
+            const ins = await argosApiCall("instagram", "ig_media_insights", { metric: "views,reach,total_interactions" }, { ...igCtx, ig_media_id: m.id });
+            const val = (name) => (ins.data || []).find((d) => d.name === name)?.values?.[0]?.value || 0;
+            const r = val("reach"), ti = val("total_interactions");
+            topPosts.push({ id: m.id, network: "instagram", title, reach: r, eng: r ? +((ti / r) * 100).toFixed(1) : 0, date });
+          } catch { topPosts.push({ id: m.id, network: "instagram", title, reach: 0, eng: 0, date }); }
+        }
+      } catch {}
+    } catch (e) { /* Instagram indisponible (permission manquante ou autre) — on continue avec Facebook si dispo */ }
+  }
+  if (fbCtx) {
+    try {
+      const info = await argosApiCall("facebook", "fb_page_basic", { fields: "name,fan_count,followers_count" }, fbCtx);
+      followers += +(info.followers_count || info.fan_count || 0);
+      const fbNet = { network: "facebook", handle: info.name || "", followers: +(info.followers_count || info.fan_count || 0), growth: 0, engagement: 0, posts: 0 };
+      perNet.push(fbNet);
+      try {
+        const posts = await argosApiCall("facebook", "fb_page_posts", { fields: "id,message,created_time,permalink_url,likes.summary(true),comments.summary(true)", limit: 25 }, fbCtx);
+        const items = (posts.data || []).filter((p) => !p.created_time || new Date(p.created_time).getTime() / 1000 >= sinceSec);
+        fbNet.posts = items.length; published += items.length;
+        // Pas d'insights de Page (read_insights manquant) → pas de "reach" réel pour ces posts,
+        // on les classe par interactions (likes+commentaires réels) sans jamais estimer une portée.
+      } catch {}
+    } catch (e) { /* Facebook indisponible — n'empêche pas l'affichage des données Instagram déjà collectées */ }
+  }
+  const reach = [...byDayMap.values()].reduce((n, v) => n + v, 0);
+  const engagement = reach ? +((totalInteractions / reach) * 100).toFixed(1) : 0;
+  const igNet = perNet.find((n) => n.network === "instagram"); if (igNet) igNet.engagement = engagement;
+  const byDay = [...byDayMap.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, r]) => ({ date, reach: r, eng: 0 }));
+  topPosts.sort((a, b) => b.reach - a.reach);
+  return { demo: false, days, followers, reach, engagement, published, byDay, perNet, topPosts, health: null, alerts: [] };
+}
+// Vraies données Inbox — commentaires Facebook (réels, pages_read_engagement suffit) + DM/commentaires
+// Instagram si la connexion dédiée existe. Pas de messagerie Facebook (scope non demandé à l'app).
+async function argosRealInbox(brand) {
+  const igCtx = argosBrandIg(brand);
+  const fbCtx = argosBrandFbPage(brand);
+  if (!igCtx && !fbCtx) return null;
+  const convs = [];
+  if (fbCtx) {
+    try {
+      const posts = await argosApiCall("facebook", "fb_page_posts", { fields: "id,message,permalink_url", limit: 10 }, fbCtx);
+      for (const p of (posts.data || []).slice(0, 8)) {
+        try {
+          const c = await argosApiCall("facebook", "fb_page_comments", { fields: "from,message,created_time", limit: 5 }, { ...fbCtx, page_post_id: p.id });
+          for (const cm of (c.data || [])) {
+            const hoursAgo = cm.created_time ? Math.max(0, Math.round((Date.now() - new Date(cm.created_time).getTime()) / 3600000)) : 0;
+            convs.push({ id: cm.id, network: "facebook", from: cm.from?.name || "Anonyme", kind: "commentaire", text: cm.message || "", hoursAgo, unread: false, replies: [] });
+          }
+        } catch {}
+      }
+    } catch {}
+  }
+  if (igCtx) {
+    try {
+      const media = await argosApiCall("instagram", "ig_media_list", { fields: "id", limit: 10 }, igCtx);
+      for (const m of (media.data || []).slice(0, 8)) {
+        try {
+          const c = await argosApiCall("instagram", "ig_comments", { fields: "id,text,username,timestamp" }, { ...igCtx, ig_media_id: m.id });
+          for (const cm of (c.data || [])) {
+            const hoursAgo = cm.timestamp ? Math.max(0, Math.round((Date.now() - new Date(cm.timestamp).getTime()) / 3600000)) : 0;
+            convs.push({ id: cm.id, network: "instagram", from: cm.username || "Compte Instagram", kind: "commentaire", text: cm.text || "", hoursAgo, unread: false, replies: [] });
+          }
+        } catch {}
+      }
+    } catch {}
+    try {
+      const dms = await argosApiCall("instagram", "ig_conversations", { platform: "instagram", fields: "participants,updated_time,messages{message,from,created_time}" }, igCtx);
+      for (const conv of (dms.data || [])) {
+        const lastMsg = (conv.messages?.data || [])[0];
+        if (!lastMsg) continue;
+        const hoursAgo = lastMsg.created_time ? Math.max(0, Math.round((Date.now() - new Date(lastMsg.created_time).getTime()) / 3600000)) : 0;
+        convs.push({ id: conv.id, network: "instagram", from: lastMsg.from?.username || lastMsg.from?.name || "Contact", kind: "dm", text: lastMsg.message || "", hoursAgo, unread: false, replies: [] });
+      }
+    } catch {}
+  }
+  convs.sort((a, b) => a.hoursAgo - b.hoursAgo);
+  return { demo: false, conversations: convs };
+}
 function argosDemoCompetitors(brand) {
   const rng = argosRng(brand.id + ":comp");
   const mine = argosDemoOverview(brand, 30);
@@ -1840,7 +1972,7 @@ ipcMain.handle("argos:state", () => {
     const prov = argosProviderOf(p.id);
     const pk = st.providers[prov] || {};
     // Ne renvoie JAMAIS de secret ni de jeton au renderer — uniquement des métadonnées.
-    connections[p.id] = { id: p.id, label: p.label, icon: p.icon, api: p.api, provider: prov, status: c.status || "disconnected", account: c.account || null, hasKeys: !!(pk.app_id || pk.client_id), expires_at: c.expires_at || pk.expires_at || null, docs: !!(argosApis().apis || []).find((a) => a.platform === p.id || (a.covers || []).includes(p.id)) };
+    connections[p.id] = { id: p.id, label: p.label, icon: p.icon, api: p.api, provider: prov, status: c.status || "disconnected", account: c.account || null, hasKeys: !!(pk.app_id || pk.client_id), hasInstagramConfig: !!pk.config_id_instagram, igScoped: c.scoped === "instagram", expires_at: c.expires_at || pk.expires_at || null, docs: !!(argosApis().apis || []).find((a) => a.platform === p.id || (a.covers || []).includes(p.id)) };
   }
   return { ok: true, brands: st.brands, connections };
 });
@@ -1857,15 +1989,28 @@ ipcMain.handle("argos:brandDelete", (_e, id) => {
   st.inboxReplies = st.inboxReplies.filter((r) => r.brandId !== id); // pas de fuite de données client
   return { ok: argosSave(st) };
 });
-ipcMain.handle("argos:overview", (_e, brandId, days) => {
+ipcMain.handle("argos:overview", async (_e, brandId, days) => {
   const st = argosState(); const b = st.brands.find((x) => x.id === brandId);
   if (!b) return { ok: false, error: "Marque inconnue." };
-  // Une fois connecté : agrégera argosApiCall("instagram","account_insights",…) etc.
-  return { ok: true, data: argosDemoOverview(b, Math.max(7, Math.min(90, days || 30))) };
+  const d = Math.max(7, Math.min(90, days || 30));
+  if (b.metaAssets && b.metaAssets.pageId) {
+    try { const real = await argosRealOverview(b, d); if (real) return { ok: true, data: real }; }
+    catch (e) { return { ok: true, data: argosDemoOverview(b, d), warning: "Compte mappé mais l'appel réel a échoué (" + e.message + ") — données de démonstration affichées." }; }
+  }
+  return { ok: true, data: argosDemoOverview(b, d) };
 });
-ipcMain.handle("argos:inbox", (_e, brandId) => {
+ipcMain.handle("argos:inbox", async (_e, brandId) => {
   const st = argosState(); const b = st.brands.find((x) => x.id === brandId);
   if (!b) return { ok: false, error: "Marque inconnue." };
+  if (b.metaAssets && b.metaAssets.pageId) {
+    try {
+      const real = await argosRealInbox(b);
+      if (real) return { ok: true, demo: false, conversations: real.conversations.map((c) => ({ ...c, replies: st.inboxReplies.filter((r) => r.convId === c.id) })) };
+    } catch (e) { /* repli silencieux sur la démo ci-dessous, avec avertissement */
+      const convs = argosDemoInbox(b).map((c) => ({ ...c, replies: st.inboxReplies.filter((r) => r.convId === c.id) }));
+      return { ok: true, demo: true, conversations: convs, warning: "Compte mappé mais l'appel réel a échoué (" + e.message + ") — conversations de démonstration affichées." };
+    }
+  }
   const convs = argosDemoInbox(b).map((c) => ({ ...c, replies: st.inboxReplies.filter((r) => r.convId === c.id) }));
   return { ok: true, demo: true, conversations: convs };
 });
@@ -1937,7 +2082,7 @@ ipcMain.handle("argos:postDelete", (_e, id) => {
 });
 // Seuls ces champs sont acceptés du renderer — jamais status/access_token (sinon on pourrait
 // forcer le chemin API réel sans OAuth). Les secrets sont chiffrés avant stockage.
-const ARGOS_KEY_FIELDS = { app_id: false, client_id: false, developer_token: true, app_secret: true, client_secret: true, login_customer_id: false, config_id: false };
+const ARGOS_KEY_FIELDS = { app_id: false, client_id: false, developer_token: true, app_secret: true, client_secret: true, login_customer_id: false, config_id: false, config_id_instagram: false };
 ipcMain.handle("argos:connSaveKeys", (_e, platform, keys) => {
   if (!ARGOS_PLATFORMS.some((p) => p.id === platform)) return { ok: false, error: "Plateforme inconnue." };
   const st = argosState();
@@ -1951,11 +2096,27 @@ ipcMain.handle("argos:connSaveKeys", (_e, platform, keys) => {
   return { ok: argosSave(st) };
 });
 // Lance le flux OAuth d'un fournisseur et connecte ses surfaces.
-ipcMain.handle("argos:connect", async (_e, platform) => {
+// mode "instagram" : connexion DÉDIÉE via la configuration "Instagram Graph API" — les Pages
+// autorisées ici portent des jetons avec les scopes instagram_business_* (stockés à part dans
+// providers.meta.igAssets), distincts des jetons Pages/Ads de la connexion générale.
+ipcMain.handle("argos:connect", async (_e, platform, mode) => {
   const provider = argosProviderOf(platform);
   const st = argosState();
   const pk = st.providers[provider] || {};
   try {
+    if (provider === "meta" && mode === "instagram") {
+      const appId = pk.app_id, appSecret = argosDecSecret(pk.app_secret), configId = pk.config_id_instagram;
+      if (!appId || !appSecret) return { ok: false, error: "Renseigne d'abord l'App ID et le secret Meta." };
+      if (!configId) return { ok: false, error: "Il manque le Configuration ID Instagram — crée-le dans Facebook Login for Business → Configurations (variante Instagram Graph API)." };
+      const r = await argosMetaConnect(appId, appSecret, configId);
+      const igPages = r.pages.filter((p) => p.ig_user_id).map((p) => ({ id: p.id, name: p.name, token: argosEncSecret(p.access_token), ig_user_id: p.ig_user_id, ig_username: p.ig_username }));
+      if (!igPages.length) return { ok: false, error: "Aucun compte Instagram professionnel trouvé (vérifie qu'il est relié à une Page)." };
+      st.providers.meta.igAssets = { pages: igPages };
+      const i0 = igPages[0];
+      st.connections.instagram = { provider: "meta", status: "connected", account: "@" + i0.ig_username + (igPages.length > 1 ? ` (+${igPages.length - 1})` : ""), access_token: i0.token, ig_user_id: i0.ig_user_id, scoped: "instagram" };
+      argosSave(st);
+      return { ok: true, summary: { pages: 0, ig: igPages.length, ads: 0 } };
+    }
     if (provider === "meta") {
       const appId = pk.app_id, appSecret = argosDecSecret(pk.app_secret), configId = pk.config_id;
       if (!appId || !appSecret) return { ok: false, error: "Renseigne d'abord l'App ID et le secret Meta." };
@@ -1969,7 +2130,8 @@ ipcMain.handle("argos:connect", async (_e, platform) => {
       // Surface Facebook : compte primaire = 1re Page (les autres restent dispo pour le mapping par marque)
       const p0 = pages[0];
       st.connections.facebook = { provider: "meta", status: "connected", account: p0.name + (pages.length > 1 ? ` (+${pages.length - 1})` : ""), access_token: p0.token, page_id: p0.id };
-      // Surface Instagram : 1re Page reliée à un compte IG pro
+      // Surface Instagram : 1re Page reliée à un compte IG pro (jeton "général" — sans les scopes
+      // instagram_business_*, insuffisant pour les vrais appels IG tant que le mode "instagram" n'a pas tourné).
       if (igPages.length) { const i0 = igPages[0]; st.connections.instagram = { provider: "meta", status: "connected", account: "@" + i0.ig_username + (igPages.length > 1 ? ` (+${igPages.length - 1})` : ""), access_token: i0.token, ig_user_id: i0.ig_user_id }; }
       // Surface Meta Ads : 1er compte publicitaire (utilise le jeton utilisateur)
       if (r.adAccounts.length) { const a0 = r.adAccounts[0]; st.connections.meta_ads = { provider: "meta", status: "connected", account: a0.name + (r.adAccounts.length > 1 ? ` (+${r.adAccounts.length - 1})` : ""), access_token: argosEncSecret(r.userToken), ad_account_id: a0.id }; }
