@@ -134,6 +134,7 @@ contextBridge.exposeInMainWorld("olympus", {
   argosListening: (brandId) => ipcRenderer.invoke("argos:listening", brandId),
   argosKeywords: (brandId, keywords) => ipcRenderer.invoke("argos:keywords", brandId, keywords),
   argosAds: (brandId, forceRefresh) => ipcRenderer.invoke("argos:ads", brandId, forceRefresh),
+  argosAudience: (brandId, forceRefresh) => ipcRenderer.invoke("argos:audience", brandId, forceRefresh),
   argosCompetitors: (brandId) => ipcRenderer.invoke("argos:competitors", brandId),
   argosCompetitorSave: (brandId, competitors) => ipcRenderer.invoke("argos:competitorSave", brandId, competitors),
   argosBestTimes: (brandId) => ipcRenderer.invoke("argos:bestTimes", brandId),

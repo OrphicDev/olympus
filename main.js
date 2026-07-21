@@ -1787,7 +1787,12 @@ function argosDemoAds(brand) {
   const totSpend = campaigns.reduce((n2, c) => n2 + c.spend, 0);
   const totConv = campaigns.reduce((n2, c) => n2 + c.conversions, 0);
   const wRoas = +(campaigns.reduce((n2, c) => n2 + c.roas * c.spend, 0) / (totSpend || 1)).toFixed(1);
-  return { demo: true, campaigns, totals: { spend: totSpend, conversions: totConv, roas: wRoas } };
+  const platformSplit = [
+    { platform: "instagram", spend: Math.round(totSpend * (0.55 + rng() * 0.2)), impressions: 0, clicks: 0 },
+  ]; platformSplit.push({ platform: "facebook", spend: Math.max(0, totSpend - platformSplit[0].spend), impressions: 0, clicks: 0 });
+  const AGE_B = ["18-24", "25-34", "35-44", "45-54", "55+"];
+  const demoSplit = AGE_B.flatMap((age) => ["female", "male"].map((gender) => ({ age, gender, spend: Math.round(rng() * totSpend * 0.15), impressions: Math.round(rng() * 20000) }))).sort((a, b) => b.spend - a.spend);
+  return { demo: true, campaigns, totals: { spend: totSpend, conversions: totConv, roas: wRoas }, platformSplit, demoSplit };
 }
 // Vraies données Meta Ads pour une marque mappée à un compte publicitaire (act_{id}).
 // Renvoie EXACTEMENT la forme d'argosDemoAds — le renderer n'a rien à changer pour l'afficher.
@@ -1795,9 +1800,11 @@ async function argosRealAds(brand) {
   const adId = brand.metaAssets && brand.metaAssets.adAccountId;
   if (!adId) return null;
   const ov = { ad_account_id: adId };
-  const [camp, ins] = await Promise.all([
+  const [camp, ins, platformBd, demoBd] = await Promise.all([
     argosApiCall("meta_ads", "ads_campaigns", { fields: "id,name,objective,effective_status,daily_budget,lifetime_budget" }, ov),
     argosApiCall("meta_ads", "ads_insights", { level: "campaign", fields: "campaign_id,campaign_name,spend,impressions,clicks,cpc,cpm,ctr,actions,purchase_roas", date_preset: "last_30d" }, ov),
+    argosApiCall("meta_ads", "ads_insights", { level: "campaign", fields: "spend,impressions,clicks", breakdowns: "publisher_platform", date_preset: "last_30d" }, ov).catch(() => null),
+    argosApiCall("meta_ads", "ads_insights", { level: "campaign", fields: "spend,impressions", breakdowns: "age,gender", date_preset: "last_30d" }, ov).catch(() => null),
   ]);
   const insByCamp = new Map((ins.data || []).map((i) => [i.campaign_id, i]));
   const campaigns = (camp.data || []).map((c) => {
@@ -1812,7 +1819,25 @@ async function argosRealAds(brand) {
   const totSpend = campaigns.reduce((n, c) => n + c.spend, 0);
   const totConv = campaigns.reduce((n, c) => n + c.conversions, 0);
   const wRoas = totSpend ? +(campaigns.reduce((n, c) => n + c.roas * c.spend, 0) / totSpend).toFixed(1) : 0;
-  return { demo: false, campaigns, totals: { spend: totSpend, conversions: totConv, roas: wRoas } };
+  // Répartition par plateforme (Instagram vs Facebook) — agrégée sur toutes les campagnes.
+  const platformMap = new Map();
+  for (const r of (platformBd?.data || [])) {
+    const k = r.publisher_platform || "autre";
+    const cur = platformMap.get(k) || { platform: k, spend: 0, impressions: 0, clicks: 0 };
+    cur.spend += +(r.spend || 0); cur.impressions += +(r.impressions || 0); cur.clicks += +(r.clicks || 0);
+    platformMap.set(k, cur);
+  }
+  const platformSplit = [...platformMap.values()].map((p) => ({ ...p, spend: Math.round(p.spend) })).sort((a, b) => b.spend - a.spend);
+  // Répartition démographique (âge × genre) — agrégée par tranche, genre ignoré si "unknown".
+  const demoMap = new Map();
+  for (const r of (demoBd?.data || [])) {
+    const k = (r.age || "?") + "·" + (r.gender || "?");
+    const cur = demoMap.get(k) || { age: r.age || "?", gender: r.gender || "?", spend: 0, impressions: 0 };
+    cur.spend += +(r.spend || 0); cur.impressions += +(r.impressions || 0);
+    demoMap.set(k, cur);
+  }
+  const demoSplit = [...demoMap.values()].map((d) => ({ ...d, spend: Math.round(d.spend) })).sort((a, b) => b.spend - a.spend);
+  return { demo: false, campaigns, totals: { spend: totSpend, conversions: totConv, roas: wRoas }, platformSplit, demoSplit };
 }
 // Résout la Page mappée à une marque (jeton "général" — scopes Pages/Ads).
 function argosBrandFbPage(brand) {
@@ -1838,6 +1863,62 @@ function argosBrandIg(brand) {
   const igPages = (st.providers.meta && st.providers.meta.igAssets && st.providers.meta.igAssets.pages) || [];
   const pi = igPages.find((x) => x.id === pageId);
   return pi && pi.ig_user_id ? { ig_user_id: pi.ig_user_id, page_id: pi.id, access_token: pi.token } : null;
+}
+// Extrait un breakdown démographique {age|gender|country|city} d'une réponse ig_account_insights.
+function argosParseDemoBreakdown(resp, metricName) {
+  const entry = (resp?.data || []).find((d) => d.name === metricName);
+  const results = entry?.total_value?.breakdowns?.[0]?.results || [];
+  return results.map((r) => ({ label: r.dimension_values[0], value: r.value })).sort((a, b) => b.value - a.value);
+}
+// Vraies données Audience — démographie des abonnés ET de l'audience engagée (âge/genre/pays/
+// ville), répartition de la portée par type de contenu (Post/Reel/Story/Pub), actions de profil.
+// Instagram uniquement : Facebook n'expose pas ces breakdowns avec nos permissions actuelles.
+async function argosRealAudience(brand) {
+  const igCtx = argosBrandIg(brand);
+  if (!igCtx) return null;
+  const call = (metric, extra) => argosApiCall("instagram", "ig_account_insights", { metric, period: "lifetime", metric_type: "total_value", timeframe: "last_30_days", ...extra }, igCtx).catch(() => null);
+  const [ageR, genderR, countryR, cityR, engAgeR, engGenderR, reachTypeR, actionsR] = await Promise.all([
+    call("follower_demographics", { breakdown: "age" }),
+    call("follower_demographics", { breakdown: "gender" }),
+    call("follower_demographics", { breakdown: "country" }),
+    call("follower_demographics", { breakdown: "city" }),
+    call("engaged_audience_demographics", { breakdown: "age", timeframe: "this_month" }),
+    call("engaged_audience_demographics", { breakdown: "gender", timeframe: "this_month" }),
+    argosApiCall("instagram", "ig_account_insights", { metric: "reach", period: "day", metric_type: "total_value", timeframe: "last_30_days", breakdown: "media_product_type" }, igCtx).catch(() => null),
+    argosApiCall("instagram", "ig_account_insights", { metric: "website_clicks,profile_links_taps,accounts_engaged", period: "day", metric_type: "total_value", timeframe: "last_30_days" }, igCtx).catch(() => null),
+  ]);
+  const followerAge = argosParseDemoBreakdown(ageR, "follower_demographics");
+  const followerGender = argosParseDemoBreakdown(genderR, "follower_demographics");
+  const followerCountry = argosParseDemoBreakdown(countryR, "follower_demographics").slice(0, 8);
+  const followerCity = argosParseDemoBreakdown(cityR, "follower_demographics").slice(0, 8);
+  if (!followerAge.length && !followerGender.length && !followerCountry.length) return null; // rien d'exploitable
+  const engagedAge = argosParseDemoBreakdown(engAgeR, "engaged_audience_demographics");
+  const engagedGender = argosParseDemoBreakdown(engGenderR, "engaged_audience_demographics");
+  const reachEntry = (reachTypeR?.data || []).find((d) => d.name === "reach");
+  const contentReach = (reachEntry?.total_value?.breakdowns?.[0]?.results || []).map((r) => ({ type: r.dimension_values[0], reach: r.value })).sort((a, b) => b.reach - a.reach);
+  const totalReachAllTypes = reachEntry?.total_value?.value || 0;
+  const val = (name) => (actionsR?.data || []).find((d) => d.name === name)?.total_value?.value || 0;
+  return { demo: false, followerAge, followerGender, followerCountry, followerCity, engagedAge, engagedGender, contentReach, totalReachAllTypes, actions: { websiteClicks: val("website_clicks"), profileLinksTaps: val("profile_links_taps"), accountsEngaged: val("accounts_engaged") } };
+}
+// Démo déterministe pour Audience — même principe que les autres générateurs (seedé par marque).
+function argosDemoAudience(brand) {
+  const rng = argosRng(brand.id + ":audience");
+  const buckets = ["13-17", "18-24", "25-34", "35-44", "45-54", "55-64", "65+"];
+  const total = 800 + Math.round(rng() * 3000);
+  const weights = buckets.map(() => rng()); const wsum = weights.reduce((a, b) => a + b, 0);
+  const followerAge = buckets.map((label, i) => ({ label, value: Math.round((weights[i] / wsum) * total) })).sort((a, b) => b.value - a.value);
+  const fem = Math.round(total * (0.35 + rng() * 0.35));
+  const followerGender = [{ label: "F", value: fem }, { label: "M", value: total - fem }];
+  const countries = ["FR", "MC", "IT", "GB", "US", "DE", "BE", "CH"];
+  const followerCountry = countries.slice(0, 5 + Math.floor(rng() * 3)).map((c) => ({ label: c, value: Math.round(rng() * total * 0.3) })).sort((a, b) => b.value - a.value);
+  const cities = ["Monaco", "Nice", "Paris", "London", "Milan", "Genève", "Cannes"];
+  const followerCity = cities.slice(0, 4 + Math.floor(rng() * 3)).map((c) => ({ label: c, value: Math.round(rng() * total * 0.2) })).sort((a, b) => b.value - a.value);
+  const engagedAge = followerAge.map((x) => ({ label: x.label, value: Math.round(x.value * (0.04 + rng() * 0.08)) }));
+  const engagedGender = followerGender.map((x) => ({ label: x.label, value: Math.round(x.value * (0.04 + rng() * 0.08)) }));
+  const types = ["POST", "REEL", "STORY", "CAROUSEL_CONTAINER", "AD"];
+  const contentReach = types.map((t) => ({ type: t, reach: Math.round(rng() * 3000) })).sort((a, b) => b.reach - a.reach);
+  const totalReachAllTypes = contentReach.reduce((n, x) => n + x.reach, 0);
+  return { demo: true, followerAge, followerGender, followerCountry, followerCity, engagedAge, engagedGender, contentReach, totalReachAllTypes, actions: { websiteClicks: Math.round(rng() * 200), profileLinksTaps: Math.round(rng() * 150), accountsEngaged: Math.round(rng() * 500) } };
 }
 // Vraies données Aperçu — Instagram (si la connexion dédiée existe) + Facebook (posts + champs
 // publics de Page ; pas d'insights Facebook tant que read_insights n'est pas accordé).
@@ -2067,6 +2148,11 @@ ipcMain.handle("argos:ads", (_e, brandId, forceRefresh) => {
   return argosCached(brandId, "ads", null, forceRefresh, (b) => !!(b.metaAssets && b.metaAssets.adAccountId),
     async (b) => { const real = await argosRealAds(b); return real ? { data: real } : null; },
     (b) => ({ data: argosDemoAds(b) }));
+});
+ipcMain.handle("argos:audience", (_e, brandId, forceRefresh) => {
+  return argosCached(brandId, "aud", null, forceRefresh, (b) => !!(b.metaAssets && b.metaAssets.pageId),
+    async (b) => { const real = await argosRealAudience(b); return real ? { data: real } : null; },
+    (b) => ({ data: argosDemoAudience(b) }));
 });
 // Liste des Pages/comptes IG/comptes pub disponibles côté Meta — pour le mapping par marque.
 ipcMain.handle("argos:metaAssets", () => {

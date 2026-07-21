@@ -5034,6 +5034,7 @@ let arState = null, arBrand = null, arView = "apercu", arPeriod = 30, arWeekOff 
 const arCache = {};
 const AR_VIEWS = [
   { id: "apercu", ic: "◎", label: "Aperçu" },
+  { id: "audience", ic: "◐", label: "Audience" },
   { id: "publication", ic: "🗓", label: "Publication" },
   { id: "inbox", ic: "💬", label: "Inbox" },
   { id: "ecoute", ic: "🜂", label: "Écoute" },
@@ -5082,7 +5083,7 @@ async function argosPrewarmAll() {
     if (!st.ok) return;
     const targets = (st.brands || []).filter((b) => !b.hidden && b.metaAssets && (b.metaAssets.pageId || b.metaAssets.adAccountId));
     targets.forEach((b) => {
-      if (b.metaAssets.pageId) { window.olympus.argosOverview(b.id, 30).catch(() => {}); window.olympus.argosInbox(b.id).catch(() => {}); }
+      if (b.metaAssets.pageId) { window.olympus.argosOverview(b.id, 30).catch(() => {}); window.olympus.argosInbox(b.id).catch(() => {}); window.olympus.argosAudience(b.id).catch(() => {}); }
       if (b.metaAssets.adAccountId) window.olympus.argosAds(b.id).catch(() => {});
     });
   } catch {}
@@ -5143,6 +5144,7 @@ async function arRenderView() {
   box.innerHTML = `<div class="ga-note">Chargement…</div>`;
   try {
     if (arView === "apercu") await arViewApercu(box, b);
+    else if (arView === "audience") await arViewAudience(box, b);
     else if (arView === "publication") await arViewPublication(box, b);
     else if (arView === "inbox") await arViewInbox(box, b);
     else if (arView === "ecoute") await arViewEcoute(box, b);
@@ -5186,6 +5188,42 @@ async function arViewApercu(box, b) {
   box.querySelectorAll(".ga-per").forEach((bt) => bt.onclick = () => { arPeriod = +bt.dataset.per; arRenderView(); });
   box.querySelectorAll("[data-recycle]").forEach((bt) => bt.onclick = () => arComposer(b, { text: bt.dataset.recycle + " — (recyclé, à adapter)" }));
   const sz = box.querySelector("[data-seize]"); if (sz) sz.onclick = () => arComposer(b, { text: "Idée : capitaliser sur la tendance vidéo courte de la semaine.\n\n[brouillon proposé par Argos — à retravailler]" });
+}
+
+// ── Audience : démographie réelle des abonnés + de l'audience engagée, répartition du
+// contenu, actions de profil. Instagram uniquement (Facebook n'expose pas ces breakdowns
+// avec nos permissions actuelles) — reste en démo pour une marque sans compte Instagram lié.
+const AR_CONTENT_LABEL = { POST: "Publications", REEL: "Reels", STORY: "Stories", CAROUSEL_CONTAINER: "Carrousels", AD: "Publicité" };
+async function arViewAudience(box, b) {
+  const audKey = b.id + ":aud";
+  const r = await arGet(audKey, () => window.olympus.argosAudience(b.id));
+  if (!r.ok) { box.innerHTML = `<div class="ga-note">${escapeHtml(r.error)}</div>`; return; }
+  const d = r.data;
+  if (d.demo === false) arKickRefresh(audKey, () => arView === "audience" && arBrandOf()?.id === b.id, () => window.olympus.argosAudience(b.id, true));
+  let html = arHead("Audience", "démographie réelle des abonnés Instagram", "", d.demo !== false);
+  html += `<div class="ga-cards">
+    ${pgScore("Clics vers le site", pgFmtN(d.actions.websiteClicks), "", "30 derniers jours")}
+    ${pgScore("Taps sur le profil", pgFmtN(d.actions.profileLinksTaps), "", "adresse, appel, email…")}
+    ${pgScore("Comptes engagés", pgFmtN(d.actions.accountsEngaged))}
+  </div>`;
+  html += pgPanel("Portée par type de contenu", d.contentReach.length
+    ? pgBreak(d.contentReach.map((c) => ({ label: AR_CONTENT_LABEL[c.type] || c.type, value: c.reach })), { color: "#8fd6a6" })
+    : `<div class="ga-note">Pas encore de contenu publié sur la période.</div>`);
+  html += `<div class="ga-breaks">`;
+  html += pgPanel("Abonnés — tranches d'âge", d.followerAge.length ? pgBreak(d.followerAge) : `<div class="ga-note">Pas assez d'abonnés pour une démographie fiable.</div>`);
+  html += pgPanel("Abonnés — genre", pgDonut(d.followerGender.map((g) => ({ label: g.label === "F" ? "Femmes" : g.label === "M" ? "Hommes" : g.label, value: g.value })), { centerLabel: "abonnés" }));
+  html += `</div>`;
+  html += `<div class="ga-breaks">`;
+  html += pgPanel("Abonnés — pays", d.followerCountry.length ? pgBreak(d.followerCountry, { color: "#7fb2e8" }) : `<div class="ga-note">—</div>`);
+  html += pgPanel("Abonnés — villes", d.followerCity.length ? pgBreak(d.followerCity, { color: "#c9a2e8" }) : `<div class="ga-note">—</div>`);
+  html += `</div>`;
+  if (d.engagedAge.length || d.engagedGender.length) {
+    html += `<div class="ga-breaks">`;
+    html += pgPanel("Audience engagée — âge", d.engagedAge.length ? pgBreak(d.engagedAge, { color: "#f6b26b" }) : `<div class="ga-note">—</div>`, "qui interagit vraiment, pas juste qui suit");
+    html += pgPanel("Audience engagée — genre", pgDonut(d.engagedGender.map((g) => ({ label: g.label === "F" ? "Femmes" : g.label === "M" ? "Hommes" : g.label, value: g.value })), { centerLabel: "engagés" }));
+    html += `</div>`;
+  }
+  box.innerHTML = html;
 }
 
 // ── Publication : semaine + composer ──
@@ -5414,6 +5452,16 @@ async function arViewAds(box, b) {
       </div>
       <div class="cv"><div class="b">${eur(c.spend)} / ${eur(c.budget)}</div><div class="s">ROAS ×${c.roas} · ${c.conversions} conv.</div></div>
     </div>`).join(""));
+  if (d.platformSplit?.length || d.demoSplit?.length) {
+    html += `<div class="ga-breaks">`;
+    html += pgPanel("Répartition par plateforme", d.platformSplit?.length
+      ? pgDonut(d.platformSplit.map((p) => ({ label: arNet(p.platform).label || p.platform, value: p.spend, icon: arNet(p.platform).ic })), { centerLabel: "dépensé" })
+      : `<div class="ga-note">—</div>`);
+    html += pgPanel("Répartition âge / genre", d.demoSplit?.length
+      ? pgBreak(d.demoSplit.slice(0, 8).map((x) => ({ label: `${x.age} · ${x.gender === "female" ? "F" : x.gender === "male" ? "H" : x.gender}`, value: x.spend })), { color: "#e0868f" })
+      : `<div class="ga-note">—</div>`);
+    html += `</div>`;
+  }
   box.innerHTML = html;
 }
 
