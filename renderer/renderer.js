@@ -5052,18 +5052,41 @@ const arAgo = (h) => h < 1 ? "à l'instant" : h < 24 ? `il y a ${h} h` : `il y a
 const AR_DOW = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
 function arInvalidate(brandId) { Object.keys(arCache).forEach((k) => (!brandId || k.startsWith(brandId + ":")) && delete arCache[k]); }
 async function arGet(key, fn) { if (arCache[key] === undefined) arCache[key] = await fn(); return arCache[key]; }
-// Si main.js a renvoyé une donnée "stale" (rafraîchissement Meta lancé en tâche de fond),
-// on reprogramme automatiquement un nouvel affichage une fois ce rafraîchissement terminé —
-// l'utilisateur voit la dernière donnée connue tout de suite, puis ça se met à jour tout seul.
-function arScheduleStaleRefresh(r, key, cb) {
-  if (!r.stale) return "";
-  setTimeout(() => { delete arCache[key]; cb(); }, 7000);
-  return ` <span class="ar-stale-note" title="Actualisation des données réelles en cours…">⟳ actualisation…</span>`;
+// À CHAQUE visite d'une vue mappée à un vrai compte, on affiche le cache tout de suite (instantané)
+// PUIS on relance un vrai appel Meta en tâche de fond (pas plus d'une fois toutes les 45s par clé,
+// pour ne pas marteler l'API si on navigue vite) — si la donnée a changé, on ré-affiche avec un
+// flash de mise à jour plutôt qu'un remplacement silencieux.
+const arLastRefresh = {};
+function arFlashStage() { const s = $("arStage"); if (!s) return; s.classList.remove("ar-flash"); void s.offsetWidth; s.classList.add("ar-flash"); }
+function arKickRefresh(key, stillHere, forceFetch) {
+  const now = Date.now();
+  if (arLastRefresh[key] && now - arLastRefresh[key] < 45000) return;
+  arLastRefresh[key] = now;
+  const before = JSON.stringify(arCache[key]);
+  forceFetch().then((fresh) => {
+    if (!fresh || JSON.stringify(fresh) === before) return;
+    arCache[key] = fresh;
+    if (stillHere()) { arFlashStage(); arRenderView(); }
+  }).catch(() => {});
 }
 
 // Une marque masquée depuis Titan (client qu'on ne gère plus) n'apparaît nulle part dans
 // Argos, mais reste en base (mapping Meta conservé) — juste décochée dans Titan pour revenir.
 function arVisibleBrands() { return ((arState && arState.brands) || []).filter((b) => !b.hidden); }
+// Précharge TOUTES les marques visibles/reliées dès la connexion à Olympus — le temps que
+// l'utilisateur navigue jusqu'à Argos, tout est déjà en cache (côté main.js) et s'affiche
+// instantanément. Ne bloque rien (fire-and-forget), n'affecte pas l'écran de connexion.
+async function argosPrewarmAll() {
+  try {
+    const st = await window.olympus.argosState();
+    if (!st.ok) return;
+    const targets = (st.brands || []).filter((b) => !b.hidden && b.metaAssets && (b.metaAssets.pageId || b.metaAssets.adAccountId));
+    targets.forEach((b) => {
+      if (b.metaAssets.pageId) { window.olympus.argosOverview(b.id, 30).catch(() => {}); window.olympus.argosInbox(b.id).catch(() => {}); }
+      if (b.metaAssets.adAccountId) window.olympus.argosAds(b.id).catch(() => {});
+    });
+  } catch {}
+}
 async function renderArgos() {
   if (!arState) { const r = await window.olympus.argosState(); if (r.ok) arState = r; }
   if (!arState) { $("arStage").innerHTML = '<div class="ga-note">Argos indisponible.</div>'; return; }
@@ -5137,8 +5160,8 @@ async function arViewApercu(box, b) {
   const r = await arGet(ovKey, () => window.olympus.argosOverview(b.id, arPeriod));
   if (!r.ok) { box.innerHTML = `<div class="ga-note">${escapeHtml(r.error)}</div>`; return; }
   const d = r.data;
-  const staleTag = arScheduleStaleRefresh(r, ovKey, () => { if (arView === "apercu" && arBrandOf()?.id === b.id) arRenderView(); });
-  const per = `<div class="ga-period">${[[7, "7 j"], [30, "30 j"], [90, "90 j"]].map(([n, l]) => `<button class="ga-per${arPeriod === n ? " on" : ""}" data-per="${n}">${l}</button>`).join("")}</div>${staleTag}`;
+  if (d.demo === false) arKickRefresh(ovKey, () => arView === "apercu" && arBrandOf()?.id === b.id, () => window.olympus.argosOverview(b.id, arPeriod, true));
+  const per = `<div class="ga-period">${[[7, "7 j"], [30, "30 j"], [90, "90 j"]].map(([n, l]) => `<button class="ga-per${arPeriod === n ? " on" : ""}" data-per="${n}">${l}</button>`).join("")}</div>`;
   let html = arHead(b.name, `${arPeriod} derniers jours · ${Object.keys(b.networks || {}).length} réseau(x)`, per, d.demo !== false);
   if (r.warning) html += `<div class="ar-alerts"><div class="ar-alert warn"><span class="ai">△</span><span>${escapeHtml(r.warning)}</span></div></div>`;
   if (d.alerts?.length) html += `<div class="ar-alerts">${d.alerts.map((a) => `<div class="ar-alert${a.type === "warn" ? " warn" : ""}"><span class="ai">${a.type === "warn" ? "△" : "◈"}</span><span>${escapeHtml(a.txt)}${a.type === "opportunity" ? ' <b style="cursor:pointer;" data-seize>Créer le post →</b>' : ""}</span></div>`).join("")}</div>`;
@@ -5299,12 +5322,12 @@ async function arViewInbox(box, b) {
   const inboxKey = b.id + ":inbox";
   const r = await arGet(inboxKey, () => window.olympus.argosInbox(b.id));
   if (!r.ok) { box.innerHTML = `<div class="ga-note">${escapeHtml(r.error)}</div>`; return; }
-  const staleTag = arScheduleStaleRefresh(r, inboxKey, () => { if (arView === "inbox" && arBrandOf()?.id === b.id) arRenderView(); });
+  if (r.demo === false) arKickRefresh(inboxKey, () => arView === "inbox" && arBrandOf()?.id === b.id, () => window.olympus.argosInbox(b.id, true));
   const convs = r.conversations || [];
   if (!arConvSel || !convs.find((c) => c.id === arConvSel)) arConvSel = convs[0]?.id || null;
   const cur = convs.find((c) => c.id === arConvSel);
   const MACROS = ["Merci beaucoup ! 🙏", "On vous répond en DM 👌", "Oui, c'est disponible — le lien est en bio.", "Écris-nous à hello@… on s'en occupe !"];
-  let html = arHead("Inbox", "commentaires et messages privés, tous réseaux", staleTag, r.demo !== false);
+  let html = arHead("Inbox", "commentaires et messages privés, tous réseaux", "", r.demo !== false);
   if (r.warning) html += `<div class="ar-alerts"><div class="ar-alert warn"><span class="ai">△</span><span>${escapeHtml(r.warning)}</span></div></div>`;
   html += `<div class="ar-inbox">
     <div class="ar-convs">${convs.map((c) => `
@@ -5371,9 +5394,9 @@ async function arViewAds(box, b) {
   const r = await arGet(adsKey, () => window.olympus.argosAds(b.id));
   if (!r.ok) { box.innerHTML = `<div class="ga-note">${escapeHtml(r.error)}</div>`; return; }
   const d = r.data;
-  const staleTag = arScheduleStaleRefresh(r, adsKey, () => { if (arView === "ads" && arBrandOf()?.id === b.id) arRenderView(); });
+  if (d.demo === false) arKickRefresh(adsKey, () => arView === "ads" && arBrandOf()?.id === b.id, () => window.olympus.argosAds(b.id, true));
   const eur = (n) => n.toLocaleString("fr-FR") + " €";
-  let html = arHead("Publicité", "campagnes Meta Ads et Google Ads", staleTag, d.demo !== false);
+  let html = arHead("Publicité", "campagnes Meta Ads et Google Ads", "", d.demo !== false);
   if (r.warning) html += `<div class="ar-alerts"><div class="ar-alert warn"><span class="ai">△</span><span>${escapeHtml(r.warning)}</span></div></div>`;
   if (!d.campaigns.length) html += `<div class="ga-note">${d.demo === false ? "Aucune campagne active sur les 30 derniers jours pour ce compte." : ""}</div>`;
   html += `<div class="ga-cards">
@@ -6099,7 +6122,7 @@ function enterHub(user) {
   $("profAvatar").textContent = initial;
   applyRole();
   wheelDate = new Date(); calSelected = isoD(wheelDate.getFullYear(), wheelDate.getMonth(), wheelDate.getDate()); // jour sélectionné = aujourd'hui
-  refreshLocks(); refreshEnv(); refreshTitan(); startChat(); renderChronos(); renderWheel(); startPresence(); refreshIris(); refreshClaude(); refreshConnections();
+  refreshLocks(); refreshEnv(); refreshTitan(); startChat(); renderChronos(); renderWheel(); startPresence(); refreshIris(); refreshClaude(); refreshConnections(); argosPrewarmAll();
   renderArgos(); renderAtlas(); renderApollon(); renderMnemosyne();   // pré-rendu des apps de l'espace de travail
   if (currentRole === "super_admin") refreshMembers();
   goTo("hermes");

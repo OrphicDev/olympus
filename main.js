@@ -2018,7 +2018,8 @@ ipcMain.handle("argos:state", () => {
 ipcMain.handle("argos:brandSave", (_e, brand) => {
   const st = argosState();
   if (brand.id) { const i = st.brands.findIndex((b) => b.id === brand.id); if (i >= 0) st.brands[i] = { ...st.brands[i], ...brand }; }
-  else { brand.id = "b" + randomUUID().replace(/-/g, "").slice(0, 12); st.brands.push(brand); }
+  // Masquée par défaut — un gérant doit explicitement la rendre visible depuis Titan.
+  else { brand.id = "b" + randomUUID().replace(/-/g, "").slice(0, 12); if (brand.hidden === undefined) brand.hidden = true; st.brands.push(brand); }
   // Le mapping Meta a peut-être changé (nouvelle Page/compte pub) — le cache précédent
   // pourrait correspondre au MAUVAIS compte, on le vide pour cette marque.
   if (brand.metaAssets) Object.keys(st.cache).forEach((k) => k.startsWith(brand.id + ":") && delete st.cache[k]);
