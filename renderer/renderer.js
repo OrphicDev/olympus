@@ -638,10 +638,12 @@ function pgTabHTML(tab, s) {
 
 // ══ Arborescence : canvas de nodes — pages flottantes, câbles = où chaque section emmène ══
 const pgArboCache = {};                       // par site : l'arborescence en cours d'édition
-let pgArboSaveT = null;
+// Un timer de debounce PAR SITE — avant, un timer global : programmer la sauvegarde du site B
+// annulait celle, encore en attente, du site A → modifications d'arborescence perdues.
+const pgArboSaveT = {};
 function pgArboSave(key) {
-  clearTimeout(pgArboSaveT);
-  pgArboSaveT = setTimeout(() => window.olympus.pegasusArboSave(key, pgArboCache[key]), 400);
+  clearTimeout(pgArboSaveT[key]);
+  pgArboSaveT[key] = setTimeout(() => window.olympus.pegasusArboSave(key, pgArboCache[key]), 400);
 }
 const pgArboId = () => "n" + Math.random().toString(36).slice(2, 8);
 const AB_COLORS = ["#e8c268", "#8fd6a6", "#7fb2e8", "#e0868f", "#c9a2e8", "#8fd6cf"];
@@ -1566,10 +1568,10 @@ function pgAbMaquetteModal(s, p, ro) {
 // Le dev peut générer le site QUAND il veut — étapes vides = résultat plus
 // éloigné de ses attentes, et il en est averti.
 const pgPlCache = {};
-let pgPlSaveT = null;
+const pgPlSaveT = {};                                        // idem : un debounce par site (pas de perte inter-site)
 function pgPlSave(key) {
-  clearTimeout(pgPlSaveT);
-  pgPlSaveT = setTimeout(() => window.olympus.pegasusPipelineSave(key, pgPlCache[key]), 400);
+  clearTimeout(pgPlSaveT[key]);
+  pgPlSaveT[key] = setTimeout(() => window.olympus.pegasusPipelineSave(key, pgPlCache[key]), 400);
 }
 const PL_ETAPES = [
   { id: "wireframe", titre: "Mise en place du wireframe", vue: "arbo", connect: "wire",
@@ -2010,10 +2012,10 @@ async function pgPipelineRender(s) {
 // typos et logo), versionné (socle « Site en ligne » toujours présent, lecture
 // seule), duplicable pour être modifié.
 const pgMoodCache = {};
-let pgMoodSaveT = null;
+const pgMoodSaveT = {};                                      // idem : un debounce par site (pas de perte inter-site)
 function pgMoodSave(key) {
-  clearTimeout(pgMoodSaveT);
-  pgMoodSaveT = setTimeout(() => window.olympus.pegasusMoodboardSave(key, pgMoodCache[key]), 400);
+  clearTimeout(pgMoodSaveT[key]);
+  pgMoodSaveT[key] = setTimeout(() => window.olympus.pegasusMoodboardSave(key, pgMoodCache[key]), 400);
 }
 const pgMoodBlank = () => ({ couleurs: [], typos: [], logo: "", notes: "", refs: [] });
 let pgMbBaselining = false;
@@ -3268,10 +3270,12 @@ $("titanInstallBtn").onclick = async () => {
 async function refreshMembers() {
   const r = await window.olympus.membersList();
   const list = $("membersList");
-  if (!r.ok) { list.innerHTML = `<div class="env-row"><div class="st miss">!</div><div><div class="nm">${r.error}</div></div></div>`; return; }
+  if (!r.ok) { list.innerHTML = `<div class="env-row"><div class="st miss">!</div><div><div class="nm">${escapeHtml(r.error || "")}</div></div></div>`; return; }
   if (!r.members.length) { list.innerHTML = '<div class="env-row"><div><div class="meta">Aucun membre.</div></div></div>'; return; }
   list.innerHTML = r.members.map((m) => {
-    const name = ((m.first_name || "") + " " + (m.last_name || "")).trim() || m.email;
+    // Données venues de Supabase → échappées partout (prénom/nom/email peuvent contenir < > " &).
+    const name = escapeHtml(((m.first_name || "") + " " + (m.last_name || "")).trim() || m.email);
+    const email = escapeHtml(m.email || "");
     const roleLabel = m.role === "super_admin" ? "super admin" : "classic";
     const mark = m.role === "super_admin" ? "★" : "•";
     const toggleRole = m.role === "super_admin" ? "classic" : "super_admin";
@@ -3279,11 +3283,11 @@ async function refreshMembers() {
     const actions = m.id === currentUserId
       ? '<span class="member-self">vous</span>'
       : `<div class="member-actions">
-           <button class="member-btn" data-act="role" data-id="${m.id}" data-role="${toggleRole}">${toggleLabel}</button>
-           <button class="member-btn" data-act="reset" data-id="${m.id}" data-name="${name}">Réinit. mdp</button>
-           <button class="member-btn danger" data-act="delete" data-id="${m.id}" data-name="${name}">Supprimer</button>
+           <button class="member-btn" data-act="role" data-id="${escapeHtml(m.id)}" data-role="${toggleRole}">${toggleLabel}</button>
+           <button class="member-btn" data-act="reset" data-id="${escapeHtml(m.id)}" data-name="${name}">Réinit. mdp</button>
+           <button class="member-btn danger" data-act="delete" data-id="${escapeHtml(m.id)}" data-name="${name}">Supprimer</button>
          </div>`;
-    return `<div class="env-row"><div class="st ${m.role === "super_admin" ? "ok" : ""}">${mark}</div><div style="flex:1"><div class="nm">${name}</div><div class="meta">${m.email} · ${roleLabel}</div></div>${actions}</div>`;
+    return `<div class="env-row"><div class="st ${m.role === "super_admin" ? "ok" : ""}">${mark}</div><div style="flex:1"><div class="nm">${name}</div><div class="meta">${email} · ${roleLabel}</div></div>${actions}</div>`;
   }).join("");
 }
 
@@ -3419,12 +3423,15 @@ function openConv(id) {
   $("hmHeadAv").textContent = c.kind === "channel" ? "◎" : initialsOf(c.name);
   $("hmHeadName").textContent = c.name;
   $("hmHeadSub").textContent = c.kind === "channel" ? c.sub : c.kind === "group" ? c.members.join(" · ") : (c.online ? "en ligne" : "hors ligne");
-  if (c.real) { $("chatMessages").innerHTML = ""; chatLastId = 0; chatTick(); }
+  if (c.real) { $("chatMessages").innerHTML = ""; chatLastId = 0; chatShownIds.clear(); chatTick(); }
   else renderFakeMsgs(c);
   renderConvList();
 }
+const chatShownIds = new Set();                              // ids déjà affichés → anti-doublon
 function appendMessage(m) {
   if (!hmCur || !hmCur.real) return;
+  if (m.id != null && chatShownIds.has(m.id)) return;        // course sendMsg ↔ poll : le même message n'apparaît qu'une fois
+  if (m.id != null) chatShownIds.add(m.id);
   const box = $("chatMessages");
   const mine = m.user_id === currentUserId;
   const near = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
@@ -3434,17 +3441,21 @@ function appendMessage(m) {
   box.appendChild(el);
   if (mine || near) box.scrollTop = box.scrollHeight;
 }
+let chatTicking = false;
 async function chatTick() {
-  if (!hmCur || !hmCur.real) return;
-  const r = await window.olympus.chatList(chatLastId);
-  if (r.ok && r.messages && r.messages.length) {
-    r.messages.forEach(appendMessage);
-    const last = r.messages[r.messages.length - 1];
-    chatLastId = last.id;
-    const team = hmConvs.find((c) => c.id === "team");
-    team.last = last.body; team.time = fmtTime(last.created_at);
-    renderConvList();
-  }
+  if (!hmCur || !hmCur.real || chatTicking) return;          // pas de ticks concurrents (chacun repartait du même chatLastId)
+  chatTicking = true;
+  try {
+    const r = await window.olympus.chatList(chatLastId);
+    if (!hmCur || !hmCur.real) return;                        // conversation changée pendant l'attente
+    if (r.ok && r.messages && r.messages.length) {
+      r.messages.forEach(appendMessage);
+      const last = r.messages[r.messages.length - 1];
+      if (last.id > chatLastId) chatLastId = last.id;
+      const team = hmConvs.find((c) => c.id === "team");
+      if (team) { team.last = last.body; team.time = fmtTime(last.created_at); renderConvList(); }
+    }
+  } finally { chatTicking = false; }
 }
 function startChat() {
   renderConvList();
@@ -3538,6 +3549,7 @@ async function openWaChat(jid, name) {
   $("hmHeadSub").textContent = "WhatsApp";
   $("chatMessages").innerHTML = `<div class="ga-note" style="margin:12px;">Chargement…</div>`;
   const r = await window.olympus.waMessages(jid);
+  if (hmWaCur !== jid) return;                                // l'utilisateur a ouvert une autre conversation entre-temps
   paintWaMsgs(r.messages || []);
   renderWa();
 }
@@ -3549,10 +3561,11 @@ function paintWaMsgs(msgs) {
 window.olympus.onWaEvent((d) => {
   if (d.type === "status") { if (hmMode === "wa") renderWa(); }
   else if (d.type === "chats") { if (hmMode === "wa") renderWa(); }
-  else if (d.type === "message" && d.jid === hmWaCur) { window.olympus.waMessages(hmWaCur).then((r) => paintWaMsgs(r.messages || [])); }
+  else if (d.type === "message" && d.jid === hmWaCur) { const jid = hmWaCur; window.olympus.waMessages(jid).then((r) => { if (hmWaCur === jid) paintWaMsgs(r.messages || []); }); }
 });
 // Joindre un fichier / média
 $("chatAttach").onclick = () => {
+  if (hmWaCur) { $("chatInput").placeholder = "Pièces jointes WhatsApp non prises en charge pour l'instant"; setTimeout(() => { $("chatInput").placeholder = "Écris un message…"; }, 2500); return; }
   if (!hmCur) return;
   const inp = document.createElement("input"); inp.type = "file";
   inp.onchange = () => {
@@ -3567,6 +3580,7 @@ $("chatAttach").onclick = () => {
 // Message vocal (démo) : clic = enregistre, re-clic = envoie
 let recStart = null;
 $("chatMic").onclick = () => {
+  if (hmWaCur) { $("chatInput").placeholder = "Messages vocaux WhatsApp non pris en charge pour l'instant"; setTimeout(() => { $("chatInput").placeholder = "Écris un message…"; }, 2500); return; }
   if (!hmCur) return;
   const btn = $("chatMic");
   if (!recStart) { recStart = Date.now(); btn.classList.add("rec"); $("chatInput").placeholder = "Enregistrement en cours… re-clique pour envoyer"; return; }
@@ -3652,15 +3666,26 @@ function drawWheel() {
   applyHover();
 }
 let agendaEvents = [];
+let wheelSeq = 0;
 async function renderWheel() {
   const d = wheelDate;
   drawWheel();
   syncGridToWheel();                         // la grille suit le jour de la roue
   $("agendaHead").textContent = DOW_FULL[d.getDay()] + " " + d.getDate() + " " + MONTHS[d.getMonth()];
   const iso = isoD(d.getFullYear(), d.getMonth(), d.getDate());
-  const r = await window.olympus.chronosList(iso, iso);
-  agendaEvents = (r.ok ? r.events : []).sort((a, b) => (a.time || "").localeCompare(b.time || ""));
+  // On sert D'ABORD l'agenda depuis les événements déjà en mémoire (chronosEvents) → l'agenda
+  // suit la roue instantanément, sans clignoter, même en scroll rapide.
+  agendaEvents = chronosEvents.filter((e) => e.date <= iso && (e.end_date || e.date) >= iso).sort((a, b) => (a.time || "").localeCompare(b.time || ""));
   $("agendaDay").innerHTML = agendaHoursHtml(agendaEvents);
+  // Puis on rafraîchit depuis le réseau, mais on ignore la réponse si la roue a bougé entre-temps
+  // (réponses hors-ordre en scroll rapide → l'agenda affichait le mauvais jour, bug signalé).
+  const seq = ++wheelSeq;
+  const r = await window.olympus.chronosList(iso, iso);
+  if (seq !== wheelSeq) return;
+  if (r.ok && !r.partial) {
+    agendaEvents = (r.events || []).sort((a, b) => (a.time || "").localeCompare(b.time || ""));
+    $("agendaDay").innerHTML = agendaHoursHtml(agendaEvents);
+  }
 }
 // Un événement dans l'agenda (pastille + heure + titre)
 function agItem(e) {
@@ -3692,7 +3717,13 @@ function highlightSelected() {
 }
 function syncGridToWheel() {
   calSelected = isoD(wheelDate.getFullYear(), wheelDate.getMonth(), wheelDate.getDate());
-  if (calView !== "month") { renderChronos(); return; }   // semaine/jour : suivent le jour sélectionné
+  if (calView !== "month") {
+    // Semaine/Jour : si le jour est déjà dans la bande, on se contente de re-surligner (pas de
+    // re-fetch ni de reset du pan). Sinon on reconstruit la bande autour du nouveau jour.
+    if (tlBuf.length && tlBuf.some((x) => isoOf(x) === calSelected)) { highlightSelected(); return; }
+    tlForceRebuild = true; renderChronos();
+    return;
+  }
   if (wheelDate.getFullYear() !== calDate.getFullYear() || wheelDate.getMonth() !== calDate.getMonth()) {
     calDate = new Date(wheelDate.getFullYear(), wheelDate.getMonth(), 1);
     calCenterNext = true;                    // navigation VOULUE → on centre sur le nouveau mois
@@ -3711,8 +3742,10 @@ function stepUnit(unit, dir) {
   const d = new Date(wheelDate);
   if (unit === "day") d.setDate(d.getDate() + dir);
   else if (unit === "week") d.setDate(d.getDate() + dir * 7);
-  else if (unit === "month") d.setMonth(d.getMonth() + dir);
-  else if (unit === "year") d.setFullYear(d.getFullYear() + dir);
+  // month/year : on borne le jour, sinon avancer d'un mois depuis un 31 débordait (31 janv →
+  // 3 mars) et depuis un 29 fév, +1 an sautait aussi un mois.
+  else if (unit === "month") { const day = d.getDate(); d.setDate(1); d.setMonth(d.getMonth() + dir); d.setDate(Math.min(day, new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate())); }
+  else if (unit === "year") { const day = d.getDate(); d.setDate(1); d.setFullYear(d.getFullYear() + dir); d.setDate(Math.min(day, new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate())); }
   wheelDate = d; renderWheel();
 }
 function applyHover() {
@@ -3863,7 +3896,9 @@ async function fetchCalEvents() {
   const lastEnd = new Date(last.getFullYear(), last.getMonth() + 1, 0);
   const r = await window.olympus.chronosList(isoD(first.getFullYear(), first.getMonth(), 1), isoD(lastEnd.getFullYear(), lastEnd.getMonth(), lastEnd.getDate()));
   if (gen !== calFetchGen) return "stale";                  // une requête plus récente est partie
-  if (r.ok) chronosEvents = r.events;
+  // partial:true = les événements internes ont échoué (seul iCloud a répondu) → on GARDE
+  // l'affichage précédent au lieu de peindre un calendrier presque vide.
+  if (r.ok && !r.partial) chronosEvents = r.events;
   return true;                                              // même en erreur réseau : on peint avec ce qu'on a
 }
 // Re-peint en conservant la position de lecture : on s'ancre sur la première cellule visible
@@ -3961,14 +3996,39 @@ function tlPaint() {
   const cols = tlBuf.map((x) => dayColCell(x, byDate, todayIso)).join("");
   $("calScroll").innerHTML = `<div class="cal-tl2 ${tlVis === 1 ? "day" : "week"}"><div class="tl-corner2"></div><div class="tl-headsclip"><div class="tl-heads" id="tlHeads" style="${strip}">${heads}</div></div><div class="tl-gutter2" style="height:${bodyH}px">${tlGutter()}</div><div class="tl-colsclip"><div class="tl-cols" id="tlCols" style="${strip};height:${bodyH}px">${cols}</div></div></div>`;
 }
+// Fusion sans doublon : chronos:list est une requête de CHEVAUCHEMENT, un événement multi-jours
+// à cheval sur la frontière d'une fenêtre est renvoyé par deux fetchs adjacents.
+function mergeEvents(base, extra) {
+  const seen = new Set(base.map((e) => String(e.id)));
+  return base.concat((extra || []).filter((e) => !seen.has(String(e.id))));
+}
+let tlGen = 0;
 async function renderTimeline(vis) {
   tlVis = vis;
+  // Rafraîchissement en place (save/coche/clic sur un jour déjà dans la bande) : on garde le pan
+  // et le scroll vertical au lieu de tout ré-ancrer sur wheelDate (sauts signalés en Semaine/Jour).
+  const iso = isoD(wheelDate.getFullYear(), wheelDate.getMonth(), wheelDate.getDate());
+  const inBuf = tlBuf.length && tlBuf.some((x) => isoOf(x) === iso);
+  if (inBuf && !tlForceRebuild) {
+    const gen = ++tlGen;
+    const r = await window.olympus.chronosList(isoOf(tlBuf[0]), isoOf(tlBuf[tlBuf.length - 1]));
+    if (gen !== tlGen) return;                                                      // une requête plus récente a pris la main
+    if (r.ok && !r.partial) chronosEvents = r.events;
+    const keepTop = $("calScroll").scrollTop;
+    tlPaint();
+    $("calScroll").scrollTop = keepTop;
+    highlightSelected();
+    return;
+  }
+  tlForceRebuild = false;
   const anchor = new Date(wheelDate), start = new Date(anchor);
   if (vis === 7) start.setDate(anchor.getDate() - ((anchor.getDay() + 6) % 7));    // lundi
   start.setDate(start.getDate() - vis);                                            // 1 fenêtre de marge avant
   const total = vis * 5;
   tlBuf = [...Array(total)].map((_, i) => { const d = new Date(start); d.setDate(start.getDate() + i); return d; });
+  const gen = ++tlGen;
   const r = await window.olympus.chronosList(isoOf(tlBuf[0]), isoOf(tlBuf[total - 1]));
+  if (gen !== tlGen) return;
   chronosEvents = r.ok ? r.events : [];
   computeHPX();
   tlColW = Math.max(100, Math.round(($("calScroll").clientWidth - 54 - 452) / vis));
@@ -3976,8 +4036,23 @@ async function renderTimeline(vis) {
   tlPaint();
   $("calScroll").scrollTop = earliestHour(chronosEvents) * HPX;
 }
-// Pan infini : ajoute des jours en approchant des bords de la bande.
-async function tlMaybeWindow() {
+let tlForceRebuild = false;
+// Pan infini SANS saut : la bande est étendue et repeinte IMMÉDIATEMENT (avec les événements
+// déjà en mémoire), puis les événements des nouveaux jours arrivent en tâche de fond (débounce)
+// et on repeint en conservant le pan. Avant : un await réseau s'intercalait entre le drag et le
+// repaint → le pan continuait dans le vide puis tout sautait au retour de la requête.
+let tlBgTimer = null;
+function tlScheduleBg(fromISO, toISO) {
+  clearTimeout(tlBgTimer);
+  tlBgTimer = setTimeout(async () => {
+    const gen = ++tlGen;
+    const r = await window.olympus.chronosList(fromISO, toISO);
+    if (gen !== tlGen || !r.ok || r.partial) return;
+    chronosEvents = mergeEvents(chronosEvents, r.events);
+    if (calView !== "month") tlPaint();
+  }, 200);
+}
+function tlMaybeWindow() {
   if (tlLoading || calView === "month") return;
   const clip = document.querySelector(".tl-colsclip"), clipW = clip ? clip.clientWidth : 400;
   const stripW = tlBuf.length * tlColW, add = tlVis * 2;
@@ -3985,20 +4060,18 @@ async function tlMaybeWindow() {
     tlLoading = true;
     const first = tlBuf[0];
     const days = [...Array(add)].map((_, i) => { const d = new Date(first); d.setDate(first.getDate() - add + i); return d; });
-    const r = await window.olympus.chronosList(isoOf(days[0]), isoOf(days[add - 1]));
-    chronosEvents = chronosEvents.concat(r.ok ? r.events : []);
     tlBuf = days.concat(tlBuf);
-    tlPan -= add * tlColW; calDragPan -= add * tlColW;       // garde la position visuelle
+    tlPan -= add * tlColW; calDragPan -= add * tlColW;       // garde la position visuelle (même frame)
     tlPaint();
+    tlScheduleBg(isoOf(days[0]), isoOf(days[add - 1]));
     tlLoading = false;
   } else if (tlPan < -(stripW - clipW) + tlColW) {           // proche de la fin → append
     tlLoading = true;
     const last = tlBuf[tlBuf.length - 1];
     const days = [...Array(add)].map((_, i) => { const d = new Date(last); d.setDate(last.getDate() + 1 + i); return d; });
-    const r = await window.olympus.chronosList(isoOf(days[0]), isoOf(days[add - 1]));
-    chronosEvents = chronosEvents.concat(r.ok ? r.events : []);
     tlBuf = tlBuf.concat(days);
     tlPaint();
+    tlScheduleBg(isoOf(days[0]), isoOf(days[add - 1]));
     tlLoading = false;
   }
 }
@@ -4142,6 +4215,14 @@ $("evDone").onclick = async () => {
   if (r.ok) { closeEventModal(); renderChronos(); renderWheel(); refreshRightbar(); }
 };
 document.querySelector('.nav-item[data-page="chronos"]').addEventListener("click", () => { renderChronos(); renderWheel(); });
+// Quand les événements iCloud arrivent en tâche de fond (stale-while-revalidate côté main),
+// on re-peint le calendrier en conservant la position de lecture — sans bloquer l'affichage.
+window.olympus.onChronosAppleRefreshed(() => {
+  if (!$("page-chronos").classList.contains("show")) return;
+  if (calView === "month") { fetchCalEvents().then((st) => { if (st === true) repaintKeepScroll(); }); }
+  else { tlForceRebuild = false; renderTimeline(tlVis); }
+  renderWheel();
+});
 
 // ══════════ COLONNE DROITE (infos) + présence ══════════
 let rbTimer = null;
@@ -4380,7 +4461,9 @@ function irStartSim() {
   if (irSimTimer) return;
   irSimTimer = setInterval(() => {
     if (!document.querySelector("#page-iris.show")) return;
-    const outs = irMails.filter((m) => m.dir !== "in" && !m.draft && !m.trash && m.events.length);
+    // Ne JAMAIS fabriquer de fausses ouvertures/lectures sur des mails RÉELS envoyés via Gmail
+    // (nm.real = envoi effectif) — la simulation ne touche que les mails de démonstration.
+    const outs = irMails.filter((m) => !m.real && m.dir !== "in" && !m.draft && !m.trash && m.events.length);
     if (!outs.length) return;
     const m = outs[Math.floor(Math.random() * outs.length)];
     let k = ["open", "open", "read", "dl"][Math.floor(Math.random() * 4)];
@@ -4619,7 +4702,7 @@ function renderIrList() {
     return `
     <div class="ir-row${irSel === m.id ? " active" : ""}${m.unread ? " unread" : ""}" data-mail="${m.id}" draggable="true">
       <div class="ir-av">${initialsOf(m.toName)}</div>
-      <div class="ir-main">
+      <div class="ir-rmain">
         <div class="ir-name">${escapeHtml(m.toName)}${irThreadOf(m).length > 1 ? `<span class="cl">(${irThreadOf(m).length})</span>` : ""}<span class="cl">${escapeHtml(m.client || "")}</span></div>
         <div class="ir-sub">${dots}${escapeHtml(m.subject)}</div>
         <div class="ir-prev">${escapeHtml(m.preview || "")}</div>
@@ -4635,7 +4718,7 @@ function irFillListGhosts() {
   const el = $("irList");
   if (!el || !el.clientHeight) return;                     // page masquée → rien à mesurer
   const limit = el.getBoundingClientRect().bottom + 30;
-  const G = '<div class="ir-row ghost"><div class="ir-av gav"></div><div class="ir-main"><div class="gline w1"></div><div class="gline" style="width:58%;"></div></div></div>';
+  const G = '<div class="ir-row ghost"><div class="ir-av gav"></div><div class="ir-rmain"><div class="gline w1"></div><div class="gline" style="width:58%;"></div></div></div>';
   for (let i = 0; i < 30 && el.lastElementChild && el.lastElementChild.getBoundingClientRect().bottom <= limit; i++) el.insertAdjacentHTML("beforeend", G);
 }
 function renderIrDetail(id) {
@@ -5068,7 +5151,7 @@ $("irSend").onclick = async () => {
   if (st.connected) { const r = await window.olympus.irisSend(d); sentReal = r.ok; if (!r.ok) { btn.disabled = false; btn.textContent = "Envoyer"; msg.className = "msg err"; msg.textContent = r.error; return; } }
   const now = new Date();
   const when = now.getDate() + " " + MON_ABBR[now.getMonth()] + " · " + now.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
-  const nm = { id: "m" + Date.now(), to: d.to, toName: d.toName || d.to, client: $("irClient").value.trim(), cc: $("irCc").value.split(",").map((x) => x.trim()).filter(Boolean), by: "Sacha", when, subject: d.subject, preview: d.body.replace(/^\s+/, "").slice(0, 90), body: d.body, atts: irAtts, events: [{ k: "sent", w: when }], labels: irReplyLabels ? irReplyLabels.slice() : [] };
+  const nm = { id: "m" + Date.now(), real: sentReal, to: d.to, toName: d.toName || d.to, client: $("irClient").value.trim(), cc: $("irCc").value.split(",").map((x) => x.trim()).filter(Boolean), by: "Sacha", when, subject: d.subject, preview: d.body.replace(/^\s+/, "").slice(0, 90), body: d.body, atts: irAtts, events: [{ k: "sent", w: when }], labels: irReplyLabels ? irReplyLabels.slice() : [] };
   irApplyCompCat(nm, d.to);                                // groupe choisi dans le header + règle auto pour la suite
   irMails.unshift(nm);
   irReplyLabels = null;
@@ -5198,23 +5281,29 @@ function arWireCommon(box) {
   const g = box.querySelector("[data-goconn]");
   if (g) g.onclick = () => goTo("titan");
 }
+// Jeton de rendu : une vue lente (appel Meta réel) qui se termine APRÈS un changement de vue
+// ou de marque ne doit pas écraser l'écran actuel. arRenderAlive() est vérifié par chaque vue
+// avant d'écrire box.innerHTML.
+let arRenderGen = 0;
+function arRenderAlive(tok) { return tok === arRenderGen; }
 async function arRenderView() {
   const box = $("arStage");
   const b = arBrandOf();
+  const tok = ++arRenderGen;
   if (!b) { box.innerHTML = `<div class="ga-note">Crée une marque pour commencer (bouton en bas de la colonne).</div>`; return; }
   box.innerHTML = `<div class="ga-note">Chargement…</div>`;
   try {
-    if (arView === "apercu") await arViewApercu(box, b);
-    else if (arView === "audience") await arViewAudience(box, b);
-    else if (arView === "publication") await arViewPublication(box, b);
-    else if (arView === "inbox") await arViewInbox(box, b);
-    else if (arView === "ecoute") await arViewEcoute(box, b);
-    else if (arView === "ads") await arViewAds(box, b);
-    else if (arView === "concurrence") await arViewConcurrence(box, b);
-    else if (arView === "rapport") await arViewRapport(box, b);
-    mArrive(box);
-  } catch (e) { box.innerHTML = `<div class="ga-note">Erreur : ${escapeHtml(e.message || String(e))}</div>`; }
-  arWireCommon(box);
+    if (arView === "apercu") await arViewApercu(box, b, tok);
+    else if (arView === "audience") await arViewAudience(box, b, tok);
+    else if (arView === "publication") await arViewPublication(box, b, tok);
+    else if (arView === "inbox") await arViewInbox(box, b, tok);
+    else if (arView === "ecoute") await arViewEcoute(box, b, tok);
+    else if (arView === "ads") await arViewAds(box, b, tok);
+    else if (arView === "concurrence") await arViewConcurrence(box, b, tok);
+    else if (arView === "rapport") await arViewRapport(box, b, tok);
+    if (arRenderAlive(tok)) mArrive(box);
+  } catch (e) { if (arRenderAlive(tok)) box.innerHTML = `<div class="ga-note">Erreur : ${escapeHtml(e.message || String(e))}</div>`; }
+  if (arRenderAlive(tok)) arWireCommon(box);
 }
 
 // ── Aperçu : la console de la marque ──
@@ -5226,7 +5315,7 @@ function arResumeTile(icon, label, value, sub, view) {
     <div class="rt-arrow">→</div>
   </div>`;
 }
-async function arViewApercu(box, b) {
+async function arViewApercu(box, b, tok) {
   const ovKey = b.id + ":ov:" + arPeriod;
   // L'Aperçu ne bloque QUE sur sa donnée principale — les 3 tuiles résumé (Publicité/Audience/
   // Inbox) arrivent en asynchrone et se remplissent à l'affichage, sinon la tuile la plus lente
@@ -5269,6 +5358,7 @@ async function arViewApercu(box, b) {
       <span class="ga-tv">${pgFmtN(p.reach)}<span class="ga-tpct">${p.eng} % eng.</span></span>
       <button class="ga-ic" data-recycle="${escapeHtml(p.title)}" title="Recycler ce post">↻</button>
     </div>`).join(""));
+  if (tok !== undefined && !arRenderAlive(tok)) return;
   box.innerHTML = html;
   box.querySelectorAll(".ga-per").forEach((bt) => bt.onclick = () => { arPeriod = +bt.dataset.per; arRenderView(); });
   box.querySelectorAll("[data-recycle]").forEach((bt) => bt.onclick = () => arComposer(b, { text: bt.dataset.recycle + " — (recyclé, à adapter)" }));
@@ -5298,7 +5388,7 @@ async function arViewApercu(box, b) {
 // contenu, actions de profil. Instagram uniquement (Facebook n'expose pas ces breakdowns
 // avec nos permissions actuelles) — reste en démo pour une marque sans compte Instagram lié.
 const AR_CONTENT_LABEL = { POST: "Publications", REEL: "Reels", STORY: "Stories", CAROUSEL_CONTAINER: "Carrousels", AD: "Publicité" };
-async function arViewAudience(box, b) {
+async function arViewAudience(box, b, tok) {
   const audKey = b.id + ":aud";
   const r = await arGet(audKey, () => window.olympus.argosAudience(b.id));
   if (!r.ok) { box.innerHTML = `<div class="ga-note">${escapeHtml(r.error)}</div>`; return; }
@@ -5327,11 +5417,12 @@ async function arViewAudience(box, b) {
     html += pgPanel("Audience engagée — genre", pgDonut(d.engagedGender.map((g) => ({ label: g.label === "F" ? "Femmes" : g.label === "M" ? "Hommes" : g.label, value: g.value })), { centerLabel: "engagés" }));
     html += `</div>`;
   }
+  if (tok !== undefined && !arRenderAlive(tok)) return;
   box.innerHTML = html;
 }
 
 // ── Publication : semaine + composer ──
-async function arViewPublication(box, b) {
+async function arViewPublication(box, b, tok) {
   const [pr, bt] = await Promise.all([
     window.olympus.argosPosts(b.id),
     arGet(b.id + ":times", () => window.olympus.argosBestTimes(b.id)),
@@ -5361,6 +5452,7 @@ async function arViewPublication(box, b) {
   html += upcoming.length
     ? pgPanel("À publier", upcoming.slice(0, 12).map((p) => `<div class="ga-tr"><span class="ga-tl">${(p.networks || []).map((n) => arNet(n).ic).join(" ")} ${escapeHtml((p.text || "").slice(0, 60))}${p.fbPublish?.ok ? ` <span style="color:var(--ok);font-size:10.5px;">· ${p.fbPublish.scheduled ? "programmé sur Facebook" : "publié sur Facebook"}</span>` : p.fbPublish && !p.fbPublish.ok ? ` <span style="color:#e0868f;font-size:10.5px;">· échec Facebook</span>` : ""}</span><span class="ga-tv">${p.date.slice(8, 10)}/${p.date.slice(5, 7)}${p.time ? " · " + p.time : ""}</span><button class="ga-ic" data-post="${p.id}" title="Modifier">✎</button><button class="ga-ic" data-delpost="${p.id}" title="Supprimer">✕</button></div>`).join(""))
     : `<div class="ga-note">Rien en file d'attente. Les posts programmés partiront automatiquement une fois les comptes connectés — en attendant, ils restent planifiés ici.</div>`;
+  if (tok !== undefined && !arRenderAlive(tok)) return;
   box.innerHTML = html;
   $("arNewPost").onclick = () => arComposer(b);
   $("arWkPrev").onclick = () => { arWeekOff--; arRenderView(); };
@@ -5435,20 +5527,29 @@ async function arComposer(b, post) {
     ov.querySelector("#arCompDate").value = isoD(d.getFullYear(), d.getMonth(), d.getDate());
     ov.querySelector("#arCompTime").value = String(top.hr).padStart(2, "0") + ":00";
   };
+  let saving = false;
   const save = async (status) => {
+    if (saving) return;                                       // anti double-clic : sinon 2 posts créés / 2 publications Facebook
     const text = ov.querySelector("#arCompText").value.trim();
     if (!text) { const m = ov.querySelector("#arCompMsg"); m.className = "msg err"; m.textContent = "Écris le message d'abord."; return; }
-    const r = await window.olympus.argosPostSave({ id: post.id, brandId: b.id, text, networks: [...sel], date: ov.querySelector("#arCompDate").value, time: ov.querySelector("#arCompTime").value || null, status });
+    saving = true;
+    const btnS = ov.querySelector("#arCompSave"), btnD = ov.querySelector("#arCompDraft");
+    btnS.disabled = true; btnD.disabled = true;
+    let r;
+    try { r = await window.olympus.argosPostSave({ id: post.id, brandId: b.id, text, networks: [...sel], date: ov.querySelector("#arCompDate").value, time: ov.querySelector("#arCompTime").value || null, status }); }
+    catch (e) { const m = ov.querySelector("#arCompMsg"); m.className = "msg err"; m.textContent = "Échec : " + (e.message || e); saving = false; btnS.disabled = false; btnD.disabled = false; return; }
+    if (r.post && r.post.id) post.id = r.post.id;              // devient une mise à jour (plus de re-création au prochain enregistrement)
     const pr = r.publishResult, m = ov.querySelector("#arCompMsg");
     if (pr && pr.ok) {
       m.className = "msg ok";
       m.textContent = pr.scheduled ? "Programmé nativement sur Facebook ✓" : "Publié sur Facebook ✓";
       setTimeout(() => { close(); if (arView === "publication") arRenderView(); }, 1600);
-      return;
+      return;                                                 // succès : on ne réactive pas (la modale se ferme)
     }
     if (pr && !pr.ok) {
       m.className = "msg err";
       m.textContent = "Facebook a refusé la publication (" + pr.error + ") — gardé en file d'attente locale, tu peux réessayer.";
+      saving = false; btnS.disabled = false; btnD.disabled = false;
       return;
     }
     close(); if (arView === "publication") arRenderView();
@@ -5460,7 +5561,7 @@ async function arComposer(b, post) {
 
 // ── Inbox unifiée ──
 let arConvSel = null;
-async function arViewInbox(box, b) {
+async function arViewInbox(box, b, tok) {
   const inboxKey = b.id + ":inbox";
   const r = await arGet(inboxKey, () => window.olympus.argosInbox(b.id));
   if (!r.ok) { box.innerHTML = `<div class="ga-note">${escapeHtml(r.error)}</div>`; return; }
@@ -5488,6 +5589,7 @@ async function arViewInbox(box, b) {
       <div class="ar-macros">${MACROS.map((m) => `<button class="mq-chip" data-macro="${escapeHtml(m)}">${escapeHtml(m)}</button>`).join("")}</div>
     ` : '<div class="ga-note" style="margin:14px;">Sélectionne une conversation.</div>'}</div>
   </div>`;
+  if (tok !== undefined && !arRenderAlive(tok)) return;
   box.innerHTML = html;
   box.querySelectorAll("[data-conv]").forEach((el) => el.onclick = () => { arConvSel = el.dataset.conv; arRenderView(); });
   box.querySelectorAll("[data-macro]").forEach((el) => el.onclick = () => { const i = $("arReplyIn"); i.value = el.dataset.macro; i.focus(); });
@@ -5501,7 +5603,7 @@ async function arViewInbox(box, b) {
 }
 
 // ── Écoute : mots-clés + mentions + sentiment ──
-async function arViewEcoute(box, b) {
+async function arViewEcoute(box, b, tok) {
   const r = await arGet(b.id + ":listen", () => window.olympus.argosListening(b.id));
   if (!r.ok) { box.innerHTML = `<div class="ga-note">${escapeHtml(r.error)}</div>`; return; }
   const d = r.data; const kws = r.keywords || [];
@@ -5523,6 +5625,7 @@ async function arViewEcoute(box, b) {
       <div class="mi"><div class="mt">${escapeHtml(m.text)}</div><div class="mm">${arNet(m.source).ic} ${escapeHtml(m.author)} · ${arAgo(m.hoursAgo)} · portée ~${pgFmtN(m.reach)}</div></div>
       <button class="btn sec" data-reply-mention style="padding:5px 12px;font-size:11.5px;">Répondre</button>
     </div>`).join("") || '<div class="dim">Aucune mention sur la période.</div>');
+  if (tok !== undefined && !arRenderAlive(tok)) return;
   box.innerHTML = html;
   const saveKws = async (list) => { await window.olympus.argosKeywords(b.id, list); arState = null; delete arCache[b.id + ":listen"]; await renderArgos(); };
   box.querySelectorAll("[data-delkw]").forEach((el) => el.onclick = () => { const l = kws.slice(); l.splice(+el.dataset.delkw, 1); saveKws(l); });
@@ -5531,7 +5634,7 @@ async function arViewEcoute(box, b) {
 }
 
 // ── Publicité ──
-async function arViewAds(box, b) {
+async function arViewAds(box, b, tok) {
   const adsKey = b.id + ":ads";
   const r = await arGet(adsKey, () => window.olympus.argosAds(b.id));
   if (!r.ok) { box.innerHTML = `<div class="ga-note">${escapeHtml(r.error)}</div>`; return; }
@@ -5566,11 +5669,12 @@ async function arViewAds(box, b) {
       : `<div class="ga-note">—</div>`);
     html += `</div>`;
   }
+  if (tok !== undefined && !arRenderAlive(tok)) return;
   box.innerHTML = html;
 }
 
 // ── Concurrence ──
-async function arViewConcurrence(box, b) {
+async function arViewConcurrence(box, b, tok) {
   const r = await arGet(b.id + ":comp", () => window.olympus.argosCompetitors(b.id));
   if (!r.ok) { box.innerHTML = `<div class="ga-note">${escapeHtml(r.error)}</div>`; return; }
   const rows = r.data.rows || [];
@@ -5586,6 +5690,7 @@ async function arViewConcurrence(box, b) {
     </div>`).join("")}`);
   const meIdx = rows.findIndex((x) => x.mine);
   if (meIdx >= 0) html += `<div class="ga-note" style="margin-top:12px;">${escapeHtml(b.name)} est <b>${meIdx + 1}ᵉ sur ${rows.length}</b> en abonnés dans son groupe de veille${meIdx > 0 ? " — l'engagement est le levier le plus rapide pour remonter" : " — position de leader à défendre"}.</div>`;
+  if (tok !== undefined && !arRenderAlive(tok)) return;
   box.innerHTML = html;
   $("arAddComp").onclick = async () => {
     const nm = await arMiniInput(box, "Nom du concurrent (ex : Sézane)");
@@ -5613,7 +5718,7 @@ function arMiniInput(box, label) {
 }
 
 // ── Rapport : narratif + export PDF ──
-async function arViewRapport(box, b) {
+async function arViewRapport(box, b, tok) {
   const [ov, ads, lst] = await Promise.all([
     arGet(b.id + ":ov:30", () => window.olympus.argosOverview(b.id, 30)),
     arGet(b.id + ":ads", () => window.olympus.argosAds(b.id)),
@@ -5638,6 +5743,7 @@ async function arViewRapport(box, b) {
   </div>`;
   html += pgPanel("Portée par jour", pgAreaChart((d.byDay || []).map((x) => ({ label: pgDayLabel(x.date), value: x.reach }))));
   html += pgPanel("Analyse", lines.map((x) => `<div class="ga-anz-l">${x}</div>`).join(""));
+  if (tok !== undefined && !arRenderAlive(tok)) return;
   box.innerHTML = html;
   $("arPdf").onclick = async (e) => {
     const btn = e.currentTarget; btn.disabled = true; btn.textContent = "Génération…";

@@ -87,15 +87,22 @@ function sh(cmd) {
 }
 
 // ── Détection de l'environnement (Node, Claude Code, WordPress local)
+// Mémoïsé pour la durée du process (l'env ne change pas entre deux checks) et les 3 shells de
+// login sont lancés EN PARALLÈLE — avant : 3 × ~8s en série à chaque entrée dans le hub.
+let _envCheck = null;
 ipcMain.handle("env:check", async () => {
-  const node = await sh("node -v");
-  const claude = await sh("command -v claude || (test -d ~/.claude && echo ok)");
-  const wpNow = await sh("command -v wp-now");
-  return {
+  if (_envCheck) return _envCheck;
+  const [node, claude, wpNow] = await Promise.all([
+    sh("node -v"),
+    sh("command -v claude || (test -d ~/.claude && echo ok)"),
+    sh("command -v wp-now"),
+  ]);
+  _envCheck = {
     node: { ok: !!node, detail: node || "non détecté" },
     claude: { ok: !!claude, detail: claude ? "installé" : "non détecté" },
     wp: { ok: !!wpNow, detail: wpNow ? "wp-now installé" : "non installé (optionnel)" },
   };
+  return _envCheck;
 });
 
 // ── Statut Pegasus (clé installée ?)
@@ -521,10 +528,17 @@ ipcMain.handle("zevs:install", async () => {
 // ══════════ TITAN (espace développeur — super admin) ══════════
 const TITAN = CFG.titan || {};
 
+// Écriture atomique (tmp + rename) : un crash pendant l'écriture ne peut pas tronquer le
+// fichier (sinon loadX retombe silencieusement sur {} et perd tous les réglages/la session).
+function writeJsonAtomic(path, obj, opts = {}) {
+  const tmp = path + ".tmp";
+  try { writeFileSync(tmp, JSON.stringify(obj, opts.pretty === false ? undefined : null, opts.pretty === false ? undefined : 2), opts.mode ? { mode: opts.mode } : undefined); renameSync(tmp, path); return true; }
+  catch (e) { console.error("[write] échec", path, ":", e.message); try { rmSync(tmp, { force: true }); } catch {} return false; }
+}
 // Réglages persistants d'Olympus (emplacement du workspace, etc.)
 function settingsPath() { return join(app.getPath("userData"), "olympus-settings.json"); }
 function loadSettings() { try { return JSON.parse(readFileSync(settingsPath(), "utf8")); } catch { return {}; } }
-function saveSettings(s) { try { writeFileSync(settingsPath(), JSON.stringify(s, null, 2)); } catch {} }
+function saveSettings(s) { writeJsonAtomic(settingsPath(), s); }
 
 function titanDest() { return loadSettings().titanDest || homedir(); }
 function titanWorkspace() { return join(titanDest(), TITAN.workspace || "Orphic-Dev"); }
@@ -697,14 +711,16 @@ async function adminCall(action, params = {}, useAuth = true) {
     });
   };
   let r = await send();
-  if (r.status === 403 && useAuth && (await refreshToken())) r = await send();
+  // 401 = JWT expiré (la passerelle des Edge Functions le renvoie, pas 403) : sans ça, tous les
+  // handlers Titan/membres échouaient après ~1h de session au lieu de rafraîchir le jeton.
+  if ((r.status === 401 || r.status === 403) && useAuth && (await refreshToken())) r = await send();
   return r.json().catch(() => ({ error: "Réponse invalide." }));
 }
 
 // Session persistante (jeton) — fichier local protégé.
 function sessionPath() { return join(app.getPath("userData"), "olympus-session.json"); }
 function loadSession() { try { return JSON.parse(readFileSync(sessionPath(), "utf8")); } catch { return null; } }
-function saveSession(s) { try { writeFileSync(sessionPath(), JSON.stringify(s), { mode: 0o600 }); } catch {} }
+function saveSession(s) { writeJsonAtomic(sessionPath(), s, { pretty: false, mode: 0o600 }); }
 function clearSession() { try { writeFileSync(sessionPath(), "{}", { mode: 0o600 }); } catch {} }
 
 ipcMain.handle("auth:session", () => {
@@ -809,12 +825,16 @@ ipcMain.handle("chat:send", async (_e, body) => {
 // ══════════ CHRONOS (calendrier / tâches) ══════════
 ipcMain.handle("chronos:list", async (_e, from, to) => {
   // chevauchement : date <= to ET (date >= from OU end_date >= from) → capture les events multi-jours
-  const r = await authedFetch(`/rest/v1/events?select=*&date=lte.${to}&or=(date.gte.${from},end_date.gte.${from})&order=date.asc,time.asc.nullsfirst`);
+  // Supabase et iCloud sont interrogés EN PARALLÈLE (avant : en série, latences additionnées).
+  const [r, apple] = await Promise.all([
+    authedFetch(`/rest/v1/events?select=*&date=lte.${to}&or=(date.gte.${from},end_date.gte.${from})&order=date.asc,time.asc.nullsfirst`),
+    loadSettings().appleEmail ? getAppleEvents(from, to).catch(() => []) : Promise.resolve([]),
+  ]);
   const internal = r.ok ? await r.json() : [];
-  let apple = [];
-  try { if (loadSettings().appleEmail) apple = await getAppleEvents(from, to); } catch {}
   if (!r.ok && !apple.length) return { ok: false, error: "Chronos indisponible." };
-  return { ok: true, events: [...internal, ...apple] };
+  // partial:true = les événements internes ont échoué mais on a du Apple — le renderer garde
+  // alors son affichage précédent au lieu de peindre un calendrier faussement vide.
+  return { ok: true, partial: !r.ok, events: [...internal, ...apple] };
 });
 // Champs autorisés d'un événement (le brief est fusionné dans l'événement).
 const EVENT_FIELDS = ["title", "date", "end_date", "time", "end_time", "category", "assignee", "notes",
@@ -971,10 +991,12 @@ async function fetchAppleRange(fromISO, toISO) {
   const nical = await import("node-ical");
   const parseICS = (nical.default || nical).sync.parseICS;
   const out = [];
-  for (const cal of cals) {
-    let objs;
-    try { objs = await client.fetchCalendarObjects({ calendar: { url: cal.url }, timeRange: { start: start.toISOString(), end: end.toISOString() } }); }
-    catch { continue; }
+  // Les calendriers sont interrogés EN PARALLÈLE — la version séquentielle multipliait la
+  // latence iCloud par le nombre de calendriers (5 chez Sacha) et figeait tout le calendrier.
+  const results = await Promise.all(cals.map((cal) =>
+    client.fetchCalendarObjects({ calendar: { url: cal.url }, timeRange: { start: start.toISOString(), end: end.toISOString() } })
+      .then((objs) => ({ cal, objs })).catch(() => ({ cal, objs: [] }))));
+  for (const { cal, objs } of results) {
     for (const o of (objs || [])) {
       if (!o.data) continue;
       let parsed; try { parsed = parseICS(o.data); } catch { continue; }
@@ -987,9 +1009,14 @@ async function fetchAppleRange(fromISO, toISO) {
             id: "apple:" + (ev.uid || key) + ":" + isoLocalD(sd),
             title: ev.summary || "(sans titre)",
             date: isoLocalD(sd),
-            end_date: allDay ? isoLocalD(new Date(ed.getTime() - 86400000)) : isoLocalD(ed),
+            // Journée entière : DTEND est exclusif → on recule d'UN JOUR CALENDAIRE (pas 24h en
+            // millisecondes : le jour du passage à l'heure d'été ne fait que 23h et -86400000
+            // retombait deux jours plus tôt, amputant le dernier jour de l'événement).
+            end_date: allDay ? isoLocalD(new Date(ed.getFullYear(), ed.getMonth(), ed.getDate() - 1)) : isoLocalD(ed),
             time: allDay ? null : hmD(sd),
-            end: allDay ? null : hmD(ed),
+            // "end_time" — la clé que lit tout le renderer. L'ancien nom "end" n'était lu nulle
+            // part : chaque rendez-vous iCloud s'affichait en bloc d'1h sans heure de fin.
+            end_time: allDay ? null : hmD(ed),
             category: "apple", all_day: allDay, source: "apple",
             location: ev.location || null, description: ev.description || null,
             cal_name: cal.name, cal_color: cal.color || null,
@@ -1002,7 +1029,20 @@ async function fetchAppleRange(fromISO, toISO) {
           let dates = [];
           try { dates = ev.rrule.between(start, end, true); } catch {}
           const durMs = ((ev.end ? ev.end.getTime() : ev.start.getTime()) - ev.start.getTime()) || 0;
-          for (const d of dates.slice(0, 80)) push(d, new Date(d.getTime() + durMs));
+          // Occurrences supprimées (EXDATE) et occurrences déplacées (RECURRENCE-ID) : sans ce
+          // filtre, un rendez-vous récurrent annulé un jour donné s'affichait quand même.
+          const exdates = new Set(Object.keys(ev.exdate || {}));
+          const overrides = ev.recurrences || {};
+          for (const d0 of dates.slice(0, 80)) {
+            // Compensation DST recommandée par node-ical : rrule.between renvoie des instants
+            // décalés d'1h de l'autre côté d'un changement d'heure.
+            const d = new Date(d0.getTime() + (d0.getTimezoneOffset() - ev.start.getTimezoneOffset()) * 60000);
+            const dayKey = d.toISOString().slice(0, 10);
+            if (exdates.has(dayKey)) continue;
+            const ov2 = overrides[dayKey];
+            if (ov2 && ov2.start) { push(ov2.start, ov2.end || new Date(ov2.start.getTime() + durMs)); continue; }
+            push(d, new Date(d.getTime() + durMs));
+          }
         } else {
           push(ev.start, ev.end || ev.start);
         }
@@ -1012,16 +1052,30 @@ async function fetchAppleRange(fromISO, toISO) {
   return out;
 }
 let appleEvCache = { events: [], from: null, to: null, at: 0 };
-function appleInvalidateCache() { appleEvCache = { events: [], from: null, to: null, at: 0 }; }
+let appleFetchInFlight = null;
+function appleInvalidateCache() { appleEvCache = { events: [], from: null, to: null, at: 0 }; appleFetchInFlight = null; }
+function appleNotifyRenderer() { try { const w = BrowserWindow.getAllWindows()[0]; if (w) w.webContents.send("chronos:appleRefreshed"); } catch {} }
+// Stale-while-revalidate (même principe que le cache Argos) : un cache périmé est servi
+// IMMÉDIATEMENT pendant qu'un refetch tourne en tâche de fond — avant, tout le calendrier se
+// figeait plusieurs secondes à chaque expiration du TTL (3 min) le temps de l'aller-retour iCloud.
 async function getAppleEvents(fromISO, toISO) {
   const now = Date.now();
-  const covered = appleEvCache.from && appleEvCache.from <= fromISO && appleEvCache.to >= toISO && (now - appleEvCache.at) < 180000;
-  if (!covered) {
+  const inWindow = appleEvCache.from && appleEvCache.from <= fromISO && appleEvCache.to >= toISO;
+  const fresh = inWindow && (now - appleEvCache.at) < 180000;
+  const slice = () => appleEvCache.events.filter((e) => e.date <= toISO && (e.end_date || e.date) >= fromISO);
+  const refetch = () => {
+    if (appleFetchInFlight) return appleFetchInFlight;      // dédup : un seul fetch CalDAV à la fois
     const wFrom = shiftISO(fromISO, -31), wTo = shiftISO(toISO, 62);
-    try { appleEvCache = { events: await fetchAppleRange(wFrom, wTo), from: wFrom, to: wTo, at: now }; }
-    catch { return []; }
-  }
-  return appleEvCache.events.filter((e) => e.date <= toISO && (e.end_date || e.date) >= fromISO);
+    appleFetchInFlight = fetchAppleRange(wFrom, wTo)
+      .then((events) => { appleEvCache = { events, from: wFrom, to: wTo, at: Date.now() }; })
+      .catch(() => {})                                      // échec : on GARDE l'ancien cache (les événements ne disparaissent pas)
+      .finally(() => { appleFetchInFlight = null; });
+    return appleFetchInFlight;
+  };
+  if (fresh) return slice();
+  if (inWindow) { refetch().then(appleNotifyRenderer); return slice(); } // périmé mais couvrant : stale tout de suite, refresh en fond
+  await refetch();                                          // hors fenêtre (navigation lointaine) : on doit attendre
+  return slice();
 }
 ipcMain.handle("apple:refresh", () => { appleInvalidateCache(); return { ok: true }; });
 
@@ -1483,8 +1537,13 @@ function waStoreMsg(m) {
   if (!c.name) c.name = waChatName(jid);
   waStore.chats.set(jid, c);
 }
-async function waConnect() {
-  if (waSock) return;
+let waConnecting = null;
+function waConnect() {
+  if (waSock) return Promise.resolve();
+  if (waConnecting) return waConnecting;                    // verrou synchrone : le garde `if (waSock)`
+  return waConnecting = waConnectInner().finally(() => { waConnecting = null; }); // était après les await → 2 sockets possibles
+}
+async function waConnectInner() {
   const baileys = await import("@whiskeysockets/baileys"); // Baileys 7 = ESM → import() dynamique
   const makeWASocket = baileys.default || baileys.makeWASocket;
   const { useMultiFileAuthState, DisconnectReason, Browsers } = baileys;
@@ -1647,7 +1706,15 @@ function argosLoopbackAuth(authUrl, expectedState) {
     setTimeout(() => finish(reject, new Error("Délai dépassé — la connexion a été annulée.")), 300000);
   });
 }
-async function argosJson(url) { const r = await fetch(url); const j = await r.json().catch(() => ({})); return { ok: r.ok, status: r.status, j }; }
+// fetch avec timeout (AbortController) — sans ça, un appel Graph API qui traîne bloquait le
+// handler IPC indéfiniment au lieu de retomber proprement sur le cache/la démo.
+async function timedFetch(url, opts = {}, timeoutMs = 20000) {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), timeoutMs);
+  try { return await fetch(url, { ...opts, signal: ctl.signal }); }
+  finally { clearTimeout(t); }
+}
+async function argosJson(url) { const r = await timedFetch(url); const j = await r.json().catch(() => ({})); return { ok: r.ok, status: r.status, j }; }
 // Connexion Meta complète : code → jeton court → jeton long → Pages + comptes IG + comptes pub.
 // configId : Configuration ID de "Facebook Login for Business" (obligatoire pour les apps créées
 // via le flux "use cases" — elles n'acceptent plus de scopes bruts dans l'URL d'autorisation).
@@ -1695,7 +1762,7 @@ async function argosApiCall(platform, endpointId, params = {}, overrides = {}) {
   for (const p of ep.params || []) if (params[p.name] != null) q.set(p.name, params[p.name]);
   if (!/\baccess_token\b/.test(url) && ep.method === "GET") q.set("access_token", token);
   if ([...q].length) url += (url.includes("?") ? "&" : "?") + q.toString();
-  const r = await fetch(url, { method: ep.method, headers: { Authorization: `Bearer ${token}` } });
+  const r = await timedFetch(url, { method: ep.method, headers: { Authorization: `Bearer ${token}` } });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(`${platform} ${r.status} : ${JSON.stringify(j).slice(0, 180)}`);
   return j;
@@ -2044,43 +2111,38 @@ async function argosRealInbox(brand) {
   const fbCtx = argosBrandFbPage(brand);
   if (!igCtx && !fbCtx) return null;
   const convs = [];
-  if (fbCtx) {
-    try {
-      const posts = await argosApiCall("facebook", "fb_page_posts", { fields: "id,message,permalink_url", limit: 10 }, fbCtx);
-      for (const p of (posts.data || []).slice(0, 8)) {
-        try {
-          const c = await argosApiCall("facebook", "fb_page_comments", { fields: "from,message,created_time", limit: 5 }, { ...fbCtx, page_post_id: p.id });
-          for (const cm of (c.data || [])) {
-            const hoursAgo = cm.created_time ? Math.max(0, Math.round((Date.now() - new Date(cm.created_time).getTime()) / 3600000)) : 0;
-            convs.push({ id: cm.id, network: "facebook", from: cm.from?.name || "Anonyme", kind: "commentaire", text: cm.message || "", hoursAgo, unread: false, replies: [] });
-          }
-        } catch {}
-      }
-    } catch {}
-  }
-  if (igCtx) {
-    try {
-      const media = await argosApiCall("instagram", "ig_media_list", { fields: "id", limit: 10 }, igCtx);
-      for (const m of (media.data || []).slice(0, 8)) {
-        try {
-          const c = await argosApiCall("instagram", "ig_comments", { fields: "id,text,username,timestamp" }, { ...igCtx, ig_media_id: m.id });
-          for (const cm of (c.data || [])) {
-            const hoursAgo = cm.timestamp ? Math.max(0, Math.round((Date.now() - new Date(cm.timestamp).getTime()) / 3600000)) : 0;
-            convs.push({ id: cm.id, network: "instagram", from: cm.username || "Compte Instagram", kind: "commentaire", text: cm.text || "", hoursAgo, unread: false, replies: [] });
-          }
-        } catch {}
-      }
-    } catch {}
-    try {
-      const dms = await argosApiCall("instagram", "ig_conversations", { platform: "instagram", fields: "participants,updated_time,messages{message,from,created_time}" }, igCtx);
-      for (const conv of (dms.data || [])) {
-        const lastMsg = (conv.messages?.data || [])[0];
-        if (!lastMsg) continue;
-        const hoursAgo = lastMsg.created_time ? Math.max(0, Math.round((Date.now() - new Date(lastMsg.created_time).getTime()) / 3600000)) : 0;
-        convs.push({ id: conv.id, network: "instagram", from: lastMsg.from?.username || lastMsg.from?.name || "Contact", kind: "dm", text: lastMsg.message || "", hoursAgo, unread: false, replies: [] });
-      }
-    } catch {}
-  }
+  const hoursSince = (t) => t ? Math.max(0, Math.round((Date.now() - new Date(t).getTime()) / 3600000)) : 0;
+  // Tout est parallélisé : les commentaires des 8 posts FB entre eux, ceux des 8 médias IG
+  // entre eux, et les 3 blocs (FB, IG commentaires, IG DM) ensemble — avant : ~17 appels Graph
+  // API strictement en série, cause directe de la lenteur de l'onglet Inbox.
+  const fbBlock = async () => {
+    if (!fbCtx) return;
+    const posts = await argosApiCall("facebook", "fb_page_posts", { fields: "id,message,permalink_url", limit: 10 }, fbCtx).catch(() => null);
+    if (!posts) return;
+    await Promise.all((posts.data || []).slice(0, 8).map((p) =>
+      argosApiCall("facebook", "fb_page_comments", { fields: "from,message,created_time", limit: 5 }, { ...fbCtx, page_post_id: p.id })
+        .then((c) => { for (const cm of (c.data || [])) convs.push({ id: cm.id, network: "facebook", from: cm.from?.name || "Anonyme", kind: "commentaire", text: cm.message || "", hoursAgo: hoursSince(cm.created_time), unread: false, replies: [] }); })
+        .catch(() => {})));
+  };
+  const igCommentsBlock = async () => {
+    if (!igCtx) return;
+    const media = await argosApiCall("instagram", "ig_media_list", { fields: "id", limit: 10 }, igCtx).catch(() => null);
+    if (!media) return;
+    await Promise.all((media.data || []).slice(0, 8).map((m) =>
+      argosApiCall("instagram", "ig_comments", { fields: "id,text,username,timestamp" }, { ...igCtx, ig_media_id: m.id })
+        .then((c) => { for (const cm of (c.data || [])) convs.push({ id: cm.id, network: "instagram", from: cm.username || "Compte Instagram", kind: "commentaire", text: cm.text || "", hoursAgo: hoursSince(cm.timestamp), unread: false, replies: [] }); })
+        .catch(() => {})));
+  };
+  const igDmBlock = async () => {
+    if (!igCtx) return;
+    const dms = await argosApiCall("instagram", "ig_conversations", { platform: "instagram", fields: "participants,updated_time,messages{message,from,created_time}" }, igCtx).catch(() => null);
+    if (!dms) return;
+    for (const conv of (dms.data || [])) {
+      const lastMsg = (conv.messages?.data || [])[0]; if (!lastMsg) continue;
+      convs.push({ id: conv.id, network: "instagram", from: lastMsg.from?.username || lastMsg.from?.name || "Contact", kind: "dm", text: lastMsg.message || "", hoursAgo: hoursSince(lastMsg.created_time), unread: false, replies: [] });
+    }
+  };
+  await Promise.all([fbBlock(), igCommentsBlock(), igDmBlock()]);
   convs.sort((a, b) => a.hoursAgo - b.hoursAgo);
   return { demo: false, conversations: convs };
 }
@@ -2235,9 +2297,13 @@ ipcMain.handle("argos:postSave", async (_e, post) => {
       } catch (e) { publishResult = { ok: false, error: e.message, at: new Date().toISOString() }; }
     }
   }
-  if (post.id) { const i = st.posts.findIndex((p) => p.id === post.id); if (i >= 0) st.posts[i] = { ...st.posts[i], ...post, fbPublish: publishResult }; }
-  else { post.id = "p" + randomUUID().replace(/-/g, "").slice(0, 12); post.createdAt = new Date().toISOString(); post.fbPublish = publishResult; st.posts.push(post); }
-  return { ok: argosSave(st), post, publishResult };
+  // L'appel Meta ci-dessus peut durer plusieurs secondes : on RECHARGE l'état juste avant
+  // d'écrire et on n'applique que le delta (le post) — sinon toute écriture concurrente
+  // survenue pendant l'attente (autre post, réglage Titan…) était silencieusement écrasée.
+  const st2 = argosState();
+  if (post.id) { const i = st2.posts.findIndex((p) => p.id === post.id); if (i >= 0) st2.posts[i] = { ...st2.posts[i], ...post, fbPublish: publishResult }; else { post.fbPublish = publishResult; st2.posts.push(post); } }
+  else { post.id = "p" + randomUUID().replace(/-/g, "").slice(0, 12); post.createdAt = new Date().toISOString(); post.fbPublish = publishResult; st2.posts.push(post); }
+  return { ok: argosSave(st2), post, publishResult };
 });
 ipcMain.handle("argos:postDelete", (_e, id) => {
   const st = argosState(); st.posts = st.posts.filter((p) => p.id !== id); return { ok: argosSave(st) };
@@ -2273,10 +2339,13 @@ ipcMain.handle("argos:connect", async (_e, platform, mode) => {
       const r = await argosMetaConnect(appId, appSecret, configId);
       const igPages = r.pages.filter((p) => p.ig_user_id).map((p) => ({ id: p.id, name: p.name, token: argosEncSecret(p.access_token), ig_user_id: p.ig_user_id, ig_username: p.ig_username }));
       if (!igPages.length) return { ok: false, error: "Aucun compte Instagram professionnel trouvé (vérifie qu'il est relié à une Page)." };
-      st.providers.meta.igAssets = { pages: igPages };
+      // Le flux OAuth peut durer plusieurs minutes : on recharge l'état AVANT d'écrire (le
+      // snapshot d'entrée est périmé, l'écrire tel quel effacerait les écritures intermédiaires).
+      const stI = argosState();
+      stI.providers.meta = { ...(stI.providers.meta || {}), igAssets: { pages: igPages } };
       const i0 = igPages[0];
-      st.connections.instagram = { provider: "meta", status: "connected", account: "@" + i0.ig_username + (igPages.length > 1 ? ` (+${igPages.length - 1})` : ""), access_token: i0.token, ig_user_id: i0.ig_user_id, scoped: "instagram" };
-      argosSave(st);
+      stI.connections.instagram = { provider: "meta", status: "connected", account: "@" + i0.ig_username + (igPages.length > 1 ? ` (+${igPages.length - 1})` : ""), access_token: i0.token, ig_user_id: i0.ig_user_id, scoped: "instagram" };
+      argosSave(stI);
       return { ok: true, summary: { pages: 0, ig: igPages.length, ads: 0 } };
     }
     if (provider === "meta") {
@@ -2288,16 +2357,19 @@ ipcMain.handle("argos:connect", async (_e, platform, mode) => {
       const pages = r.pages.map((p) => ({ id: p.id, name: p.name, token: argosEncSecret(p.access_token), ig_user_id: p.ig_user_id, ig_username: p.ig_username }));
       const igPages = pages.filter((p) => p.ig_user_id);
       const expires_at = r.expiresIn ? new Date(Date.now() + r.expiresIn * 1000).toISOString() : null;
-      st.providers.meta = { ...pk, user_token: argosEncSecret(r.userToken), expires_at, connected_at: new Date().toISOString(), assets: { pages, adAccounts: r.adAccounts } };
+      // Rechargement post-OAuth : le flux a pu durer plusieurs minutes, le snapshot d'entrée
+      // est périmé — on écrit le delta sur l'état FRAIS (sinon lost update sur argos.json).
+      const stG = argosState();
+      stG.providers.meta = { ...(stG.providers.meta || {}), user_token: argosEncSecret(r.userToken), expires_at, connected_at: new Date().toISOString(), assets: { pages, adAccounts: r.adAccounts } };
       // Surface Facebook : compte primaire = 1re Page (les autres restent dispo pour le mapping par marque)
       const p0 = pages[0];
-      st.connections.facebook = { provider: "meta", status: "connected", account: p0.name + (pages.length > 1 ? ` (+${pages.length - 1})` : ""), access_token: p0.token, page_id: p0.id };
+      stG.connections.facebook = { provider: "meta", status: "connected", account: p0.name + (pages.length > 1 ? ` (+${pages.length - 1})` : ""), access_token: p0.token, page_id: p0.id };
       // Surface Instagram : 1re Page reliée à un compte IG pro (jeton "général" — sans les scopes
       // instagram_business_*, insuffisant pour les vrais appels IG tant que le mode "instagram" n'a pas tourné).
-      if (igPages.length) { const i0 = igPages[0]; st.connections.instagram = { provider: "meta", status: "connected", account: "@" + i0.ig_username + (igPages.length > 1 ? ` (+${igPages.length - 1})` : ""), access_token: i0.token, ig_user_id: i0.ig_user_id }; }
+      if (igPages.length) { const i0 = igPages[0]; stG.connections.instagram = { provider: "meta", status: "connected", account: "@" + i0.ig_username + (igPages.length > 1 ? ` (+${igPages.length - 1})` : ""), access_token: i0.token, ig_user_id: i0.ig_user_id }; }
       // Surface Meta Ads : 1er compte publicitaire (utilise le jeton utilisateur)
-      if (r.adAccounts.length) { const a0 = r.adAccounts[0]; st.connections.meta_ads = { provider: "meta", status: "connected", account: a0.name + (r.adAccounts.length > 1 ? ` (+${r.adAccounts.length - 1})` : ""), access_token: argosEncSecret(r.userToken), ad_account_id: a0.id }; }
-      argosSave(st);
+      if (r.adAccounts.length) { const a0 = r.adAccounts[0]; stG.connections.meta_ads = { provider: "meta", status: "connected", account: a0.name + (r.adAccounts.length > 1 ? ` (+${r.adAccounts.length - 1})` : ""), access_token: argosEncSecret(r.userToken), ad_account_id: a0.id }; }
+      argosSave(stG);
       return { ok: true, summary: { pages: pages.length, ig: igPages.length, ads: r.adAccounts.length } };
     }
     return { ok: false, error: "La connexion " + provider + " arrive bientôt — pour l'instant, Meta est disponible." };

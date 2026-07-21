@@ -159,6 +159,7 @@ contextBridge.exposeInMainWorld("olympus", {
   waMessages: (jid) => ipcRenderer.invoke("wa:messages", jid),
   waSend: (jid, text) => ipcRenderer.invoke("wa:send", jid, text),
   onWaEvent: (cb) => ipcRenderer.on("wa:event", (_e, d) => cb(d)),
+  onChronosAppleRefreshed: (cb) => ipcRenderer.on("chronos:appleRefreshed", () => cb()),
   // Éole — transfert de fichiers
   eoleStatus: () => ipcRenderer.invoke("eole:status"),
   eoleSetupSql: () => ipcRenderer.invoke("eole:setupSql"),
