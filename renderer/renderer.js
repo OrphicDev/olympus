@@ -5080,12 +5080,19 @@ function arConnected() { return Object.values((arState && arState.connections) |
 function arDemoBadge() {
   return `<span class="ar-demo">◌ Données de démonstration — <b data-goconn>connecter les comptes</b></span>`;
 }
+// Pour les vues qui ne DEVIENDRONT jamais réelles via Meta (pas d'API dispo) — pas de CTA
+// "connecter les comptes" trompeur, juste une explication honnête.
+function arDemoBadgePermanent(reason) {
+  return `<span class="ar-demo" style="border-style:solid;">◌ Démonstration — ${escapeHtml(reason)}</span>`;
+}
 // isDemo : chaque vue le passe selon SA PROPRE donnée (r.data.demo) — ne dépend jamais de
 // "Meta est connecté quelque part" (une marque non mappée reste en démo même une fois Meta connecté).
+// Peut aussi être une chaîne (raison) pour les vues structurellement démo — cf. arDemoBadgePermanent.
 function arHead(title, sub, extraHtml, isDemo = true) {
+  const badge = typeof isDemo === "string" ? arDemoBadgePermanent(isDemo) : (isDemo ? arDemoBadge() : "");
   return `<div class="ga-head">
     <div class="ga-head-t"><h2>${escapeHtml(title)}</h2><span>${escapeHtml(sub || "")}</span></div>
-    <div class="ga-controls">${extraHtml || ""}${isDemo ? arDemoBadge() : ""}</div>
+    <div class="ga-controls">${extraHtml || ""}${badge}</div>
   </div>`;
 }
 function arWireCommon(box) {
@@ -5304,7 +5311,7 @@ async function arViewEcoute(box, b) {
   const r = await arGet(b.id + ":listen", () => window.olympus.argosListening(b.id));
   if (!r.ok) { box.innerHTML = `<div class="ga-note">${escapeHtml(r.error)}</div>`; return; }
   const d = r.data; const kws = r.keywords || [];
-  let html = arHead("Écoute", "mentions de la marque et mots-clés surveillés");
+  let html = arHead("Écoute", "mentions de la marque et mots-clés surveillés", "", "Meta ne fournit pas de veille du web — nécessite un outil tiers (Brandwatch, Talkwalker…)");
   if (d.spike) html += `<div class="ar-alerts"><div class="ar-alert warn"><span class="ai">△</span><span>Pic de mentions inhabituel détecté sur les dernières 24 h — surveille le sentiment avant qu'un bad buzz ne s'installe.</span></div></div>`;
   html += `<div class="ga-cards">
     ${pgScore("Mentions", String(d.mentions.length), "", "7 derniers jours")}
@@ -5361,7 +5368,7 @@ async function arViewConcurrence(box, b) {
   const r = await arGet(b.id + ":comp", () => window.olympus.argosCompetitors(b.id));
   if (!r.ok) { box.innerHTML = `<div class="ga-note">${escapeHtml(r.error)}</div>`; return; }
   const rows = r.data.rows || [];
-  let html = arHead("Concurrence", "benchmark face aux comptes suivis", `<button class="btn sec" id="arAddComp">＋ Suivre un concurrent</button>`);
+  let html = arHead("Concurrence", "benchmark face aux comptes suivis", `<button class="btn sec" id="arAddComp">＋ Suivre un concurrent</button>`, "Meta ne donne pas accès aux données de comptes que tu ne gères pas — saisie manuelle uniquement");
   html += pgPanel("Benchmark", `
     <div class="ar-comp-row head"><span>Compte</span><span class="v">Abonnés</span><span class="v">Croissance</span><span class="v">Engagement</span><span class="v">Posts/30 j</span></div>
     ${rows.map((c) => `<div class="ar-comp-row${c.mine ? " mine" : ""}">
@@ -5466,7 +5473,7 @@ async function arViewConnexions(box) {
   // Regroupe les surfaces par fournisseur
   const groups = {};
   conns.forEach((c) => { (groups[c.provider] = groups[c.provider] || []).push(c); });
-  let html = arHead("Connexions", "une app développeur par fournisseur, puis autorisation OAuth");
+  let html = arHead("Connexions", "une app développeur par fournisseur, puis autorisation OAuth", "", false);
   html += `<div class="ga-note" style="margin-bottom:16px;">On renseigne les <b>clés de l'app développeur</b> une fois par fournisseur, puis on clique <b>Connecter un compte</b> : le navigateur s'ouvre, tu autorises, et Argos bascule de la démo aux <b>vraies données</b> (jeton chiffré localement, jamais partagé).</div>`;
   html += `<div class="ar-conns">`;
   for (const [prov, surfaces] of Object.entries(groups)) {
