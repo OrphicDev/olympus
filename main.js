@@ -787,11 +787,14 @@ function gitRun(args) {
 }
 function pkgVersion() { try { return JSON.parse(readFileSync(join(__dirname, "package.json"), "utf8")).version || "?"; } catch { return "?"; } }
 async function gitBranch() { try { return (await gitRun(["rev-parse", "--abbrev-ref", "HEAD"])) || "main"; } catch { return "main"; } }
+// Seul un super_admin peut vérifier/appliquer une mise à jour du code (garde côté serveur).
+function isSuperAdmin() { try { const s = loadSession(); return !!(s && s.user && s.user.role === "super_admin"); } catch { return false; } }
 ipcMain.handle("app:info", async () => {
   let commit = ""; try { commit = await gitRun(["rev-parse", "--short", "HEAD"]); } catch {}
   return { version: pkgVersion(), commit };
 });
 ipcMain.handle("app:checkUpdate", async () => {
+  if (!isSuperAdmin()) return { ok: false, error: "Réservé aux super admins.", forbidden: true };
   try {
     const br = await gitBranch();
     await gitRun(["fetch", "--quiet", "origin", br]);
@@ -801,6 +804,7 @@ ipcMain.handle("app:checkUpdate", async () => {
   } catch (e) { return { ok: false, error: (e && e.message) || String(e) }; }
 });
 ipcMain.handle("app:doUpdate", async () => {
+  if (!isSuperAdmin()) return { ok: false, error: "Réservé aux super admins.", forbidden: true };
   try {
     const br = await gitBranch();
     await gitRun(["fetch", "origin", br]);

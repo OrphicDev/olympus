@@ -3468,6 +3468,7 @@ function applyRole() {
   if (isAdmin) { titanNav.classList.remove("locked"); if (lock) lock.style.display = "none"; }
   else { titanNav.classList.add("locked"); if (lock) lock.style.display = ""; if ($("page-titan").classList.contains("show")) goTo("library"); }
   $("membersSection").style.display = isAdmin ? "" : "none";
+  setupUpdateBtn();   // bouton MAJ du code : super_admin uniquement
 }
 
 // ══════════ TITAN ══════════
@@ -9193,9 +9194,14 @@ function rbRenderAthenaConvs() {
   atRenderModel();
 })();
 
-// ══════════ Bouton version / mise à jour (bas de la barre latérale) ══════════
-(function initUpdateBtn() {
+// ══════════ Bouton version / mise à jour (bas de la barre latérale) — SUPER ADMIN uniquement ══════════
+let _updBtnDone = false;
+function setupUpdateBtn() {
   const btn = $("navUpdate"); if (!btn) return;
+  const isAdmin = currentRole === "super_admin";
+  btn.style.display = isAdmin ? "flex" : "none";     // masqué pour les membres : eux ne touchent pas au code
+  if (!isAdmin || _updBtnDone) return;
+  _updBtnDone = true;
   const sub = $("nuSub"), ic = $("nuIc");
   let available = false, updating = false;
   window.olympus.appInfo().then((i) => { if (i && !available) sub.textContent = "v" + i.version + " · à jour"; }).catch(() => {});
@@ -9227,7 +9233,7 @@ function rbRenderAthenaConvs() {
   btn.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); btn.click(); } };
   setTimeout(() => check(false), 1800);                 // 1er contrôle peu après le lancement
   setInterval(() => check(false), 20 * 60 * 1000);      // puis toutes les 20 min
-})();
+}
 
 function enterHub(user) {
   currentRole = user.role || "classic";
