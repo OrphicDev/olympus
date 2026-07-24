@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Olympus — Google Ads API Tool Design Document</title>
+<style>
+  :root { --ink:#1a1a1a; --muted:#555; --line:#d9d9d9; --accent:#2b4a7a; --soft:#f4f6f9; }
+  * { box-sizing:border-box; }
+  html { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  body { font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:var(--ink);
+         font-size:11pt; line-height:1.55; margin:0; }
+  .page { max-width:820px; margin:0 auto; padding:48px 56px; }
+  h1 { font-size:23pt; margin:0 0 4px; letter-spacing:-.3px; }
+  .sub { color:var(--muted); font-size:11pt; margin:0 0 4px; }
+  .meta { color:var(--muted); font-size:9.5pt; margin:0 0 26px; padding-bottom:16px; border-bottom:2px solid var(--accent); }
+  h2 { font-size:14pt; color:var(--accent); margin:30px 0 8px; padding-top:6px; }
+  h3 { font-size:11.5pt; margin:16px 0 4px; }
+  p { margin:6px 0; }
+  ul { margin:6px 0 6px 0; padding-left:20px; }
+  li { margin:3px 0; }
+  table { width:100%; border-collapse:collapse; margin:10px 0; font-size:10pt; }
+  th, td { border:1px solid var(--line); padding:6px 9px; text-align:left; vertical-align:top; }
+  th { background:var(--soft); font-weight:600; }
+  code { background:var(--soft); padding:1px 5px; border-radius:3px; font-family:"SF Mono",Consolas,monospace; font-size:9.5pt; }
+  .box { background:var(--soft); border:1px solid var(--line); border-radius:6px; padding:12px 16px; margin:12px 0; }
+  .kv { display:grid; grid-template-columns:190px 1fr; gap:2px 14px; font-size:10pt; margin:10px 0; }
+  .kv dt { color:var(--muted); }
+  .kv dd { margin:0; }
+  .tag { display:inline-block; font-size:8.5pt; font-weight:600; padding:1px 7px; border-radius:20px; }
+  .tag.r { background:#e7f0ff; color:#1a4b9c; }
+  .tag.w { background:#fdeaea; color:#a12626; }
+  footer { margin-top:30px; padding-top:12px; border-top:1px solid var(--line); color:var(--muted); font-size:9pt; }
+  @media print { .page { padding:0; max-width:none; } h2 { break-after:avoid; } table, .box { break-inside:avoid; } }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <h1>Olympus — Google Ads API Integration</h1>
+  <p class="sub">Design document — Google Ads API Basic Access Application</p>
+  <p class="meta">Orphic Agency · Monaco · orphic-agency.com · API contact: dev@orphic-agency.com<br>
+    Manager account (MCC): 146-132-7731 · Google Cloud project: 693842101251 · Date: 24 July 2026</p>
+
+  <h2>1. Overview</h2>
+  <p>Orphic Agency is a digital marketing agency based in Monaco. <strong>Olympus</strong> is an internal
+  desktop application used exclusively by our own staff to manage and optimise the Google Ads accounts of
+  the agency's clients. Its Google Ads module ("Argos") uses the Google Ads API to (a) retrieve performance
+  data for reporting and efficiency analysis, and (b) apply reviewed optimisations to Display placements.</p>
+  <p>The tool is not sold, not resold, and not exposed to the public or to clients. It operates only on the
+  client accounts that Orphic Agency manages under its own manager account (MCC 146-132-7731).</p>
+
+  <h2>2. Users and access</h2>
+  <div class="kv">
+    <dt>Who uses the tool</dt><dd>Internal Orphic Agency employees only (account managers / traffic managers).</dd>
+    <dt>External access</dt><dd>None. No public, client-facing, or third-party access.</dd>
+    <dt>Authentication</dt><dd>A single agency Google account (dev@orphic-agency.com) authorised over the managed client accounts, via OAuth 2.0 (desktop "installed application" loopback flow).</dd>
+    <dt>Developed by</dt><dd>Orphic Agency (first-party tool). Not built on top of a third-party tool.</dd>
+  </div>
+
+  <h2>3. Architecture</h2>
+  <ul>
+    <li><strong>Client:</strong> a desktop application (Electron) installed on agency workstations. No public server hosts the tool.</li>
+    <li><strong>Authorisation:</strong> OAuth 2.0 loopback flow for desktop apps; the agency account grants access to the Google Ads scope (<code>https://www.googleapis.com/auth/adwords</code>).</li>
+    <li><strong>Credential storage:</strong> the OAuth refresh token and the developer token are encrypted at rest on the local machine (OS keychain via Electron <code>safeStorage</code>). Secrets are never transmitted to any third party and never leave the workstation except to call Google's own API endpoints.</li>
+    <li><strong>Calls:</strong> all requests go directly from the desktop app to <code>googleads.googleapis.com</code> over HTTPS.</li>
+    <li><strong>Caching:</strong> API responses are cached locally to minimise call volume; the tool serves cached data first and only re-queries on explicit user refresh.</li>
+  </ul>
+
+  <h2>4. Google Ads API usage</h2>
+  <h3>4.1 Read operations — <span class="tag r">GoogleAdsService.Search (GAQL)</span></h3>
+  <table>
+    <tr><th>Resource / method</th><th>Purpose in the tool</th></tr>
+    <tr><td><code>customer</code>, <code>customer_client</code></td><td>Discover the accessible client accounts and the manager-account hierarchy; resolve account names.</td></tr>
+    <tr><td><code>campaign</code></td><td>Campaign list, status, channel type, budget, optimisation score, and metrics (cost, impressions, clicks, conversions).</td></tr>
+    <tr><td><code>ad_group</code></td><td>Ad group identification and type, needed to scope placement targeting.</td></tr>
+    <tr><td><code>keyword_view</code></td><td>Keyword text, match type, average CPC and cost per keyword.</td></tr>
+    <tr><td><code>ad_group_audience_view</code>, <code>user_interest</code></td><td>Audience segments targeted by each campaign (affinity / in-market), with human-readable names.</td></tr>
+    <tr><td><code>campaign_criterion</code></td><td>Geographic targeting (location / proximity, including negatives); reading existing placement exclusions.</td></tr>
+    <tr><td><code>ad_group_criterion</code></td><td>Reading existing managed (targeted) placements.</td></tr>
+    <tr><td><code>detail_placement_view</code></td><td>Actual Display placements (websites, mobile apps, YouTube) with impressions, clicks, cost, Active View viewable/measurable impressions, segmented by date.</td></tr>
+    <tr><td><code>geo_target_constant</code></td><td>Resolve geo-target IDs to readable location names.</td></tr>
+    <tr><td><code>KeywordPlanIdeaService</code> — <code>GenerateKeywordHistoricalMetrics</code>, <code>GenerateKeywordIdeas</code></td><td>Keyword search-volume trends, seasonality and competition for the "Trends" analysis view (the feature that Basic access unlocks).</td></tr>
+  </table>
+
+  <h3>4.2 Write operations — <span class="tag w">Criterion mutate</span></h3>
+  <p>All write operations act on Display placement targeting only, and every write is triggered by an
+  explicit, individually confirmed user action in the interface (a confirmation dialog is shown before each change).</p>
+  <table>
+    <tr><th>Method</th><th>Purpose</th></tr>
+    <tr><td><code>CampaignCriterionService.Mutate</code> — create negative placement criterion</td><td>Exclude a wasteful placement from a campaign.</td></tr>
+    <tr><td><code>CampaignCriterionService.Mutate</code> — remove negative criterion</td><td>Re-enable a placement the user previously excluded.</td></tr>
+    <tr><td><code>AdGroupCriterionService.Mutate</code> — create positive placement criterion</td><td>Re-target ("relaunch") an efficient placement that stopped serving, by adding it as a managed placement.</td></tr>
+    <tr><td><code>AdGroupCriterionService.Mutate</code> — remove positive criterion</td><td>Undo a relaunch and return the placement to automatic targeting.</td></tr>
+  </table>
+
+  <h2>5. Feature walk-through</h2>
+  <h3>5.1 Reporting</h3>
+  <p>Consolidated performance for each managed account: campaigns, keywords, audience segments and geographic
+  targeting, with per-day trends and objective-aware KPIs (impressions / CPM / CTR for awareness campaigns,
+  ROAS / conversions for performance campaigns).</p>
+
+  <h3>5.2 Placement efficiency &amp; budget analysis</h3>
+  <p>Using <code>detail_placement_view</code>, the tool shows exactly where a Display budget was spent
+  (which apps, sites and videos). Each placement receives a research-based efficiency score built on the
+  cost of <em>viewable</em> reach (Active View), conversions, and statistical detection of accidental /
+  invalid clicks. A summary breaks the budget down by efficiency tier so wasted spend is visible at a glance.</p>
+
+  <h3>5.3 Placement optimisation (writes)</h3>
+  <p>From the analysis, staff can, after confirmation: exclude a wasteful placement, re-enable a
+  previously excluded one, relaunch an efficient placement that stopped serving (managed placement), or
+  undo that relaunch. These are the only write operations the tool performs.</p>
+
+  <h3>5.4 Keyword trends (Basic access)</h3>
+  <p>A "Trends" view uses the Keyword Planner services to show search-volume evolution, seasonality and
+  competition for a set of keywords, to guide clients' campaign planning. This view is built and ready and
+  will activate once Basic access is granted.</p>
+
+  <h2>6. Data handling &amp; security</h2>
+  <ul>
+    <li>Data retrieved from the API is used solely for the internal management of the agency's own client accounts.</li>
+    <li>No API data is sold, shared with third parties, or exposed publicly.</li>
+    <li>Credentials (developer token, OAuth refresh token) are encrypted at rest via the OS keychain and never leave the workstation except when calling Google's API.</li>
+    <li>Write operations are limited to Display placement criteria and always require explicit per-action user confirmation; they are reversible.</li>
+    <li>The tool complies with the Google Ads API Terms &amp; Conditions and the Required Minimum Functionality policy.</li>
+  </ul>
+
+  <h2>7. Required Minimum Functionality (RMF)</h2>
+  <p>Olympus exceeds RMF: beyond read-only reporting, it provides genuine account management functionality
+  (creating and removing campaign- and ad-group-level placement criteria to optimise Display campaigns),
+  along with multi-dimensional performance reporting across campaigns, keywords, audiences, geography and placements.</p>
+
+  <h2>8. Estimated API call volume</h2>
+  <p>Usage is low and on-demand: a small number of managed client accounts, queried interactively by a
+  handful of internal users, with local caching to avoid redundant calls. Expected daily volume is well
+  within the Basic access limit of 15,000 operations per day.</p>
+
+  <h2>9. Appendix — user interface</h2>
+  <p>Screenshots of the tool (account overview, placement efficiency analysis, and placement optimisation
+  controls) are appended to this application to illustrate the features described above.</p>
+
+  <footer>
+    Orphic Agency — internal use only. Prepared for the Google Ads API Basic Access review.
+    Contact: dev@orphic-agency.com · orphic-agency.com
+  </footer>
+
+</div>
+</body>
+</html>

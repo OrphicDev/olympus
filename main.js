@@ -2,6 +2,7 @@
 const { app, BrowserWindow, ipcMain, shell, dialog, Menu, safeStorage } = require("electron");
 const { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync, chmodSync, readdirSync, rmSync, statSync } = require("node:fs");
 const { join, basename } = require("node:path");
+const anthropic = require("./lib/anthropic");                 // client Claude natif (SDK officiel, indépendant de Zevs)
 const { homedir, tmpdir } = require("node:os");
 const { createServer } = require("node:http");
 const { execFile } = require("node:child_process");
@@ -21,6 +22,7 @@ function createWindow() {
     height: 700,
     minWidth: 900,
     minHeight: 600,
+    show: false,                 // on n'affiche qu'une fois maximisé → pas de flash de petite fenêtre
     title: "Olympus",
     backgroundColor: "#0a0c12",
     titleBarStyle: "hiddenInset",
@@ -31,6 +33,8 @@ function createWindow() {
     },
   });
   win.loadFile(join(__dirname, "renderer", "index.html"));
+  // Ouverture en grand : la fenêtre remplit l'écran dès le lancement.
+  win.once("ready-to-show", () => { win.maximize(); win.show(); });
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: "deny" };
@@ -776,6 +780,37 @@ ipcMain.handle("members:create", (_e, d) => adminCall("create", d || {}));
 ipcMain.handle("members:delete", (_e, id) => adminCall("delete", { id }));
 ipcMain.handle("members:resetPassword", (_e, id) => adminCall("resetPassword", { id }));
 ipcMain.handle("members:setRole", (_e, id, role) => adminCall("setRole", { id, role }));
+
+// ══════════ Version & mise à jour de l'app (via git — l'app est distribuée par le dépôt Git) ══════════
+function gitRun(args) {
+  return new Promise((res, rej) => execFile("git", args, { cwd: __dirname, timeout: 60000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout, stderr) => err ? rej(new Error(String(stderr || err.message).trim())) : res(String(stdout).trim())));
+}
+function pkgVersion() { try { return JSON.parse(readFileSync(join(__dirname, "package.json"), "utf8")).version || "?"; } catch { return "?"; } }
+async function gitBranch() { try { return (await gitRun(["rev-parse", "--abbrev-ref", "HEAD"])) || "main"; } catch { return "main"; } }
+ipcMain.handle("app:info", async () => {
+  let commit = ""; try { commit = await gitRun(["rev-parse", "--short", "HEAD"]); } catch {}
+  return { version: pkgVersion(), commit };
+});
+ipcMain.handle("app:checkUpdate", async () => {
+  try {
+    const br = await gitBranch();
+    await gitRun(["fetch", "--quiet", "origin", br]);
+    const behind = parseInt(await gitRun(["rev-list", "--count", "HEAD..origin/" + br]), 10) || 0;
+    let latest = null; try { latest = JSON.parse(await gitRun(["show", "origin/" + br + ":package.json"])).version; } catch {}
+    return { ok: true, updateAvailable: behind > 0, behind, current: pkgVersion(), latest };
+  } catch (e) { return { ok: false, error: (e && e.message) || String(e) }; }
+});
+ipcMain.handle("app:doUpdate", async () => {
+  try {
+    const br = await gitBranch();
+    await gitRun(["fetch", "origin", br]);
+    await gitRun(["merge", "--ff-only", "origin/" + br]);   // fast-forward only : refuse plutôt que d'écraser des modifs locales
+    // Réinstalle les dépendances au cas où package.json a changé (best-effort — ne bloque pas la MAJ si ça échoue).
+    try { await new Promise((res, rej) => execFile("npm", ["install", "--no-audit", "--no-fund"], { cwd: __dirname, timeout: 300000, maxBuffer: 32 * 1024 * 1024 }, (e) => e ? rej(e) : res())); } catch {}
+    setTimeout(() => { app.relaunch(); app.exit(0); }, 500);  // redémarre sur la nouvelle version
+    return { ok: true };
+  } catch (e) { return { ok: false, error: (e && e.message) || String(e) }; }
+});
 
 // ══════════ HERMÈS (chat d'équipe) ══════════
 async function refreshToken() {
@@ -1624,6 +1659,62 @@ function argosDecSecret(v) {
   if (typeof v !== "string" || !v.startsWith("enc:")) return v;
   try { return safeStorage.decryptString(Buffer.from(v.slice(4), "base64")); } catch { return null; }
 }
+// ── Clé API Claude propre à Olympus (chiffrée via safeStorage). macOS isole safeStorage par app :
+// la clé chiffrée de Zevs n'est pas déchiffrable ici, l'utilisateur la colle une fois dans Olympus. ──
+function aiGetKey() { const st = argosLoad(); return st.claudeKey ? argosDecSecret(st.claudeKey) : null; }
+ipcMain.handle("ai:hasKey", () => ({ has: !!aiGetKey() }));
+ipcMain.handle("ai:setKey", (_e, key) => {
+  key = String(key || "").trim();
+  if (!/^sk-ant-/.test(key)) return { ok: false, error: "Clé Anthropic invalide (elle commence par sk-ant-)." };
+  const st = argosLoad(); st.claudeKey = argosEncSecret(key); argosSave(st);
+  return { ok: true };
+});
+// Rédige un brouillon de réponse à partir d'une conversation. La clé reste côté main, jamais renvoyée.
+async function aiDraftReply({ kind, participants, messages, mode, draft }) {
+  const key = aiGetKey();
+  if (!key) return { ok: false, needKey: true };
+  const convo = (messages || []).map((m) => `${m.who}: ${m.text}`).join("\n").slice(0, 12000);
+  const canal = kind === "mail" ? "d'e-mails" : "de chat d'équipe";
+  let sys, user;
+  if (mode === "improve") {
+    // Améliore le brouillon de l'utilisateur SANS changer son intention ni inventer d'information.
+    sys = `Tu es l'assistant de rédaction de l'agence Orphic (Monaco). On te donne un brouillon de message ${canal} écrit par « Moi », et éventuellement la conversation pour le contexte. Réécris le brouillon en français en améliorant le style : plus clair, fluide et ${kind === "mail" ? "professionnel et chaleureux" : "naturel"}. NE CHANGE PAS son intention, N'AJOUTE aucune information ni engagement qui n'y sont pas, garde la même langue et le même sens. Renvoie UNIQUEMENT le message amélioré, sans guillemets ni préambule.`;
+    user = `${convo ? "Contexte de la conversation :\n" + convo + "\n\n" : ""}Brouillon de « Moi » à améliorer :\n${draft || ""}`;
+  } else {
+    sys = kind === "mail"
+      ? "Tu es l'assistant de rédaction de l'agence Orphic (Monaco). On te donne un fil d'e-mails. Rédige UNIQUEMENT le corps d'une réponse en français, professionnelle, chaleureuse et concise, du point de vue de « Moi » (Orphic Agency), prête à envoyer. Pas d'objet, pas de balises, juste le texte de la réponse."
+      : "Tu es l'assistant de messagerie de l'agence Orphic. On te donne une conversation de chat d'équipe. Rédige UNIQUEMENT une réponse courte, naturelle et utile en français, du point de vue de « Moi », prête à envoyer. Juste le message, sans guillemets ni préambule.";
+    user = `Conversation avec ${participants || "un interlocuteur"} :\n\n${convo}\n\nRédige la réponse de « Moi ».`;
+  }
+  try {
+    const r = await anthropic.message({ apiKey: key, model: anthropic.MODELS.sonnet, system: sys, maxTokens: 800, user });
+    return r.text ? { ok: true, text: r.text, cost: r.cost } : { ok: false, error: "Réponse vide." };
+  } catch (e) { return { ok: false, error: (e && e.message) || String(e) }; }
+}
+ipcMain.handle("ai:draftReply", (_e, payload) => aiDraftReply(payload || {}));
+// Iris — l'assistante IA d'accueil d'Olympus (conversation multi-tours). La clé reste côté main.
+// (NB : préfixes internes `at*`/`ai*` conservés ; seul le nom affiché a changé. « Athéna » est désormais le mail.)
+async function aiChat({ messages, context, userName, model }) {
+  const key = aiGetKey();
+  if (!key) return { ok: false, needKey: true };
+  const allowed = new Set(Object.values(anthropic.MODELS));   // opus / sonnet / haiku
+  const useModel = allowed.has(model) ? model : anthropic.MODELS.sonnet;
+  const who = (userName || "l'utilisateur").trim();
+  const sys = `Tu es Iris, l'assistante IA de l'agence Orphic (agence créative à Monaco), intégrée à son espace de travail Olympus. Tu accompagnes ${who} au quotidien.
+Style : réponds en français, tutoie ${who}, sois chaleureuse, concise et surtout ACTIONNABLE (va droit au but, propose des prochaines étapes concrètes). Utilise des listes courtes quand c'est utile. N'invente jamais d'information : si une donnée n'est pas dans le contexte fourni, dis-le simplement.
+Olympus regroupe : Hermès (chat d'équipe), Chronos (calendrier), Athéna (e-mails/CRM), Argos (analytics & pub), Atlas (drive), Apollon (galerie), Ploutos (devis), Mnémosyne (notes).${context ? "\n\nContexte en temps réel de la journée de " + who + " (issu de l'app — utilise-le s'il est pertinent, sinon ignore-le) :\n" + String(context).slice(0, 8000) : ""}`;
+  try {
+    const r = await anthropic.chat({ apiKey: key, model: useModel, system: sys, maxTokens: 1024, messages });
+    return r.text ? { ok: true, text: r.text, cost: r.cost } : { ok: false, error: "Réponse vide." };
+  } catch (e) { return { ok: false, error: (e && e.message) || String(e) }; }
+}
+ipcMain.handle("ai:chat", (_e, payload) => aiChat(payload || {}));
+// Lit un média local (renderer/assets) et renvoie ses octets → le renderer en fait un blob: URL
+// pour la <video> d'ambiance (le file:// est bloqué par Chromium pour les médias). basename = pas de traversée.
+ipcMain.handle("media:read", (_e, name) => {
+  try { return { ok: true, data: readFileSync(join(__dirname, "renderer", "assets", basename(String(name || "")))) }; }
+  catch (e) { return { ok: false, error: (e && e.message) || String(e) }; }
+});
 function argosState() {
   let st = argosLoad();
   if (!st) {
@@ -1638,7 +1729,7 @@ function argosState() {
     };
     argosSave(st);
   }
-  st.brands = st.brands || []; st.posts = st.posts || []; st.inboxReplies = st.inboxReplies || []; st.connections = st.connections || {}; st.providers = st.providers || {}; st.cache = st.cache || {};
+  st.brands = st.brands || []; st.posts = st.posts || []; st.inboxReplies = st.inboxReplies || []; st.connections = st.connections || {}; st.providers = st.providers || {}; st.cache = st.cache || {}; st.reports = st.reports || {};
   return st;
 }
 // Registre des plateformes + leurs API réelles (endpoints chargés depuis argos-apis.json,
@@ -1695,6 +1786,9 @@ function argosProviderOf(platform) {
   return platform;
 }
 const ARGOS_OAUTH_PORT = 47823; // fixe : le redirect URI enregistré côté plateforme doit correspondre
+// Version de l'API Google Ads. À bumper quand Google sunset l'ancienne (~1/an) — un appel sur une
+// version périmée renvoie 404. Voir developers.google.com/google-ads/api/docs/release-notes.
+const GOOGLE_ADS_API_VERSION = "v24";
 function argosCallbackHtml(ok) {
   return `<!doctype html><meta charset="utf-8"><title>Olympus — Argos</title>
 <body style="margin:0;font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#0f1012;color:#eee;display:grid;place-items:center;height:100vh;text-align:center">
@@ -1706,18 +1800,25 @@ function argosCallbackHtml(ok) {
 function argosLoopbackAuth(authUrl, expectedState) {
   return new Promise((resolve, reject) => {
     let done = false;
-    const finish = (fn, arg) => { if (done) return; done = true; setTimeout(() => { try { server.close(); } catch {} }, 300); fn(arg); };
+    let stale = null;        // code reçu avec un état différent (onglet périmé) : gardé en secours
+    let graceTimer = null;
+    const finish = (fn, arg) => { if (done) return; done = true; if (graceTimer) clearTimeout(graceTimer); setTimeout(() => { try { server.close(); } catch {} }, 300); fn(arg); };
     const server = createServer((req, res) => {
       let u; try { u = new URL(req.url, `http://localhost:${ARGOS_OAUTH_PORT}`); } catch { res.writeHead(400); return res.end(); }
-      if (u.pathname !== "/callback") { res.writeHead(404); return res.end(); }
+      if (u.pathname !== "/callback") { res.writeHead(404); return res.end(); }        // favicon, etc. : ignoré
       const code = u.searchParams.get("code");
       const state = u.searchParams.get("state");
       const err = u.searchParams.get("error_description") || u.searchParams.get("error");
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }); res.end(argosCallbackHtml(!!code && !err));
-      if (err) return finish(reject, new Error(err));
-      if (!code) return finish(reject, new Error("Aucun code d'autorisation reçu."));
-      if (state !== expectedState) return finish(reject, new Error("État OAuth invalide (protection anti-CSRF)."));
-      finish(resolve, code);
+      if (err) { res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }); res.end(argosCallbackHtml(false)); return finish(reject, new Error(err)); }
+      if (!code) { res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }); return res.end(argosCallbackHtml(false)); }
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }); res.end(argosCallbackHtml(true));
+      // État correct : c'est le bon callback, on résout tout de suite.
+      if (state === expectedState) return finish(resolve, code);
+      // État différent (onglet d'une tentative précédente) : sur loopback local le vrai garde-fou
+      // est que seul 127.0.0.1 reçoit le code, et l'échange de token l'arbitre. On garde ce code en
+      // secours et on laisse une courte fenêtre au « bon » callback ; sinon on tente celui-ci plutôt
+      // que d'attendre le délai complet dans le vide.
+      if (!stale) { stale = code; graceTimer = setTimeout(() => finish(resolve, stale), 3000); }
     });
     server.on("error", (e) => finish(reject, new Error(`Port ${ARGOS_OAUTH_PORT} indisponible : ${e.message}`)));
     server.listen(ARGOS_OAUTH_PORT, "127.0.0.1", () => { shell.openExternal(authUrl); });
@@ -1785,6 +1886,22 @@ async function argosGoogleGet(url, extraHeaders = {}) {
   if (!r.ok) throw new Error(`Google ${r.status} : ${JSON.stringify(j).slice(0, 160)}`);
   return j;
 }
+// POST JSON authentifié Google (GA4 Data API runReport, Search Console searchAnalytics…).
+async function argosGooglePost(url, body, extraHeaders = {}) {
+  const token = await argosGoogleAccessToken();
+  const r = await timedFetch(url, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...extraHeaders }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(`Google ${r.status} : ${JSON.stringify(j).slice(0, 200)}`);
+  return j;
+}
+// Requête GAQL Google Ads (search). `loginCustomerId` = compte administrateur (MCC) sous lequel
+// le compte est géré ; `devToken` déjà déchiffré. Les deux entêtes prennent l'ID sans tirets.
+async function argosGoogleAdsSearch(customerId, query, loginCustomerId, devToken) {
+  const cid = String(customerId).replace(/-/g, "");
+  const headers = { "developer-token": devToken };
+  if (loginCustomerId) headers["login-customer-id"] = String(loginCustomerId).replace(/-/g, "");
+  return argosGooglePost(`https://googleads.googleapis.com/${GOOGLE_ADS_API_VERSION}/customers/${cid}/googleAds:search`, { query }, headers);
+}
 // Découverte des actifs accessibles au compte agence (best-effort : chaque produit peut
 // échouer indépendamment, ex. Ads sans developer token approuvé ou Business non allowlisté).
 async function argosGoogleDiscover() {
@@ -1802,11 +1919,51 @@ async function argosGoogleDiscover() {
     const r = await argosGoogleGet("https://www.googleapis.com/webmasters/v3/sites");
     for (const s of (r.siteEntry || [])) if (s.permissionLevel !== "siteUnverifiedUser") assets.searchConsole.push({ id: s.siteUrl, label: s.siteUrl });
   } catch (e) { assets.searchConsoleError = e.message; }
-  // Google Ads : comptes accessibles (nécessite le developer token)
+  // Google Ads : comptes accessibles (nécessite le developer token). On tente d'enrichir chaque
+  // compte avec son nom réel et de repérer le compte administrateur (MCC) — best-effort : ces
+  // requêtes GAQL échouent tant que le token est en niveau « Test » (accès Basic requis), auquel
+  // cas on retombe sur l'ID brut et login_customer_id reste vide (rempli au prochain re-sync).
   if (devToken) {
     try {
-      const r = await argosGoogleGet("https://googleads.googleapis.com/v18/customers:listAccessibleCustomers", { "developer-token": devToken });
-      for (const rn of (r.resourceNames || [])) { const id = rn.split("/")[1]; assets.googleAds.push({ id, label: id }); }
+      const r = await argosGoogleGet(`https://googleads.googleapis.com/${GOOGLE_ADS_API_VERSION}/customers:listAccessibleCustomers`, { "developer-token": devToken });
+      const accessible = (r.resourceNames || []).map((rn) => rn.split("/")[1]).filter(Boolean);
+      // Noms + hiérarchie : pour chaque compte accessible, `customer_client` liste le compte ET ses
+      // sous-comptes (nom réel, manager, niveau) — un MCC renvoie tous ses enfants d'un coup. C'est
+      // ce qui donne les descriptive_name qui manquaient (l'ancien SELECT … FROM customer, lancé avec
+      // login-customer-id = le compte lui-même, échouait en silence pour les comptes sous MCC).
+      const byId = new Map();          // comptes NON-manager (clients mappables) : id -> {id,name}
+      const managers = new Set();       // comptes administrateurs (MCC) — jamais mappés à un client
+      const enumCount = new Map();      // combien de sous-comptes chaque compte accessible a énuméré
+      let lastErr = null;
+      for (const cust of accessible) {
+        try {
+          const q = await argosGoogleAdsSearch(cust, "SELECT customer_client.id, customer_client.descriptive_name, customer_client.manager, customer_client.level, customer_client.status FROM customer_client", cust, devToken);
+          const rows = q.results || [];
+          enumCount.set(cust, rows.length);
+          for (const row of rows) {
+            const cc = row.customerClient || {};
+            const id = String(cc.id || "").replace(/-/g, "");
+            if (!id || cc.status === "CANCELLED" || cc.status === "CLOSED") continue;
+            if (cc.manager) { managers.add(id); continue; }
+            const name = cc.descriptiveName || null;
+            const prev = byId.get(id);
+            if (!prev || (!prev.name && name)) byId.set(id, { id, name });
+          }
+        } catch (e) { lastErr = e.message; }
+      }
+      // login-customer-id = le compte accessible qui a énuméré le plus de sous-comptes (le MCC
+      // utilisable pour interroger la perf des comptes enfants ensuite). Un compte feuille n'en
+      // renvoie qu'un (lui-même) → non retenu.
+      let bestMcc = null, bestN = 1;
+      for (const [cust, n] of enumCount) if (n > bestN) { bestN = n; bestMcc = cust; }
+      if (bestMcc) assets.loginCustomerId = bestMcc;
+      // Filet : un compte accessible jamais vu comme enfant ET non confirmé manager ne doit pas
+      // disparaître (sa requête a pu échouer) — on le garde avec son ID brut plutôt que de le perdre.
+      for (const id of accessible) if (!byId.has(id) && !managers.has(id)) byId.set(id, { id, name: null });
+      let list = [...byId.values()];
+      if (!list.length) { list = accessible.map((id) => ({ id, name: null })); if (lastErr) assets.googleAdsError = lastErr; }
+      list.sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id, "fr", { numeric: true }));
+      assets.googleAds = list.map((x) => ({ id: x.id, name: x.name || null, label: x.name || x.id }));
     } catch (e) { assets.googleAdsError = e.message; }
   }
   // Business Profile : comptes puis établissements
@@ -2017,6 +2174,349 @@ async function argosRealAds(brand) {
   const demoSplit = [...demoMap.values()].map((d) => ({ ...d, spend: Math.round(d.spend) })).sort((a, b) => b.spend - a.spend);
   return { demo: false, campaigns, totals: { spend: totSpend, conversions: totConv, roas: wRoas }, platformSplit, demoSplit };
 }
+// Vraies campagnes Google Ads d'une marque mappée à un compte (customer id). Nécessite le
+// developer token + l'accès Basic (les requêtes GAQL sur comptes réels sont bloquées en niveau
+// Test). Renvoie une liste de campagnes à la MÊME forme que celles d'argosRealAds (fusionnables).
+async function argosRealGoogleAds(brand) {
+  const cid = argosBrandAsset(brand, "google_ads");
+  if (!cid) return [];
+  const st = argosState();
+  const g = st.providers.google || {};
+  const devToken = g.developer_token ? argosDecSecret(g.developer_token) : null;
+  if (!devToken) return [];
+  const j = await argosGoogleAdsSearch(cid, "SELECT campaign.id, campaign.name, campaign.status, metrics.cost_micros, metrics.impressions, metrics.clicks, metrics.conversions, metrics.conversions_value, metrics.average_cpc FROM campaign WHERE segments.date DURING LAST_30_DAYS", g.login_customer_id, devToken);
+  return (j.results || []).map((r) => {
+    const m = r.metrics || {}, c = r.campaign || {};
+    const spend = +(m.costMicros || 0) / 1e6;
+    const convVal = +(m.conversionsValue || 0);
+    return { id: c.id, name: c.name, platform: "google_ads", status: c.status === "ENABLED" ? "active" : "ended", budget: Math.round(spend), spend: Math.round(spend), roas: spend ? +(convVal / spend).toFixed(1) : 0, cpc: +((+(m.averageCpc || 0)) / 1e6).toFixed(2), impressions: Math.round(+(m.impressions || 0)), clicks: Math.round(+(m.clicks || 0)), conversions: Math.round(+(m.conversions || 0)) };
+  });
+}
+// Type de campagne Google Ads → libellé lisible (Search = « AdWords » classique ; le reste = display,
+// vidéo, notoriété/Demand Gen, etc. — tous n'ont PAS de mots-clés : seul Search cible par mots-clés).
+const ADS_CHANNEL_LABELS = { SEARCH: "Search (AdWords)", DISPLAY: "Display", VIDEO: "Vidéo (YouTube)", SHOPPING: "Shopping", PERFORMANCE_MAX: "Performance Max", DEMAND_GEN: "Demand Gen (notoriété)", DISCOVERY: "Discovery", MULTI_CHANNEL: "Multi-canal", LOCAL: "Local", LOCAL_SERVICES: "Local Services", SMART: "Smart", HOTEL: "Hôtel", TRAVEL: "Voyage" };
+const ADS_KEYWORD_CHANNELS = new Set(["SEARCH", "MULTI_CHANNEL", "SHOPPING"]); // canaux qui utilisent des mots-clés
+function argosAdsClient(brand) {
+  const cid = argosBrandAsset(brand, "google_ads"); if (!cid) return null;
+  const g = argosState().providers.google || {};
+  const devToken = g.developer_token ? argosDecSecret(g.developer_token) : null; if (!devToken) return null;
+  return { cid, login: g.login_customer_id, devToken };
+}
+// GAQL n'accepte comme constantes que LAST_7/14/30_DAYS — pour une plage arbitraire on passe par
+// segments.date BETWEEN 'AAAA-MM-JJ' AND 'AAAA-MM-JJ'. Accepte une PÉRIODE : {days:N} (N derniers
+// jours) OU {from,to} (plage de dates explicite, ex. une fenêtre de 5 jours).
+function gaqlDateRange(period) {
+  const p = period || {};
+  const fmt = (dt) => dt.toISOString().slice(0, 10);
+  if (p.from && p.to) return `segments.date BETWEEN '${p.from}' AND '${p.to}'`;
+  const days = Math.max(1, Math.min(+p.days || 90, 365));
+  const end = new Date(), start = new Date(end.getTime() - days * 86400000);
+  return `segments.date BETWEEN '${fmt(start)}' AND '${fmt(end)}'`;
+}
+function adsPeriodNorm(period) {
+  const p = period || {};
+  if (p.from && p.to) return { from: p.from, to: p.to };
+  return { days: Math.max(1, Math.min(+p.days || 90, 365)) };
+}
+function adsPeriodKey(period) { const p = adsPeriodNorm(period); return p.from ? p.from + "_" + p.to : "d" + p.days; }
+// Campagnes Google Ads réelles du client (type, budget, statut, métriques) sur une PÉRIODE choisie.
+async function argosAdsCampaigns(brand, period) {
+  const c = argosAdsClient(brand); if (!c) return null;
+  const q = `SELECT campaign.id, campaign.name, campaign.status, campaign.advertising_channel_type, campaign.optimization_score, campaign_budget.amount_micros, metrics.cost_micros, metrics.impressions, metrics.clicks, metrics.average_cpc, metrics.conversions, metrics.conversions_value FROM campaign WHERE ${gaqlDateRange(period)} ORDER BY metrics.cost_micros DESC`;
+  const j = await argosGoogleAdsSearch(c.cid, q, c.login, c.devToken);
+  const camps = (j.results || []).map((r) => {
+    const cp = r.campaign || {}, m = r.metrics || {}, b = r.campaignBudget || {};
+    const channel = cp.advertisingChannelType || "UNKNOWN";
+    return { id: cp.id, name: cp.name, status: cp.status, current: cp.status === "ENABLED",
+      channel, channelLabel: ADS_CHANNEL_LABELS[channel] || channel, usesKeywords: ADS_KEYWORD_CHANNELS.has(channel),
+      optScore: cp.optimizationScore != null ? Math.round(+cp.optimizationScore * 100) : null,
+      dailyBudget: b.amountMicros != null ? +(+b.amountMicros / 1e6).toFixed(2) : null,
+      spend: +(+(m.costMicros || 0) / 1e6).toFixed(2), impressions: +(m.impressions || 0), clicks: +(m.clicks || 0),
+      cpc: +((+(m.averageCpc || 0)) / 1e6).toFixed(2), conversions: +(m.conversions || 0) };
+  });
+  return { demo: false, period: adsPeriodNorm(period), campaigns: camps };
+}
+// Mots-clés Google Ads réels du client (par campagne Search) : texte, correspondance, CPC, coût, clics.
+async function argosAdsKeywords(brand, period) {
+  const c = argosAdsClient(brand); if (!c) return null;
+  const q = `SELECT campaign.name, campaign.status, campaign.advertising_channel_type, ad_group.name, ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type, metrics.average_cpc, metrics.clicks, metrics.impressions, metrics.cost_micros, metrics.conversions FROM keyword_view WHERE ${gaqlDateRange(period)} AND ad_group_criterion.status != 'REMOVED' ORDER BY metrics.cost_micros DESC`;
+  const j = await argosGoogleAdsSearch(c.cid, q, c.login, c.devToken);
+  const rows = (j.results || []).map((r) => {
+    const cp = r.campaign || {}, ag = r.adGroup || {}, k = (r.adGroupCriterion || {}).keyword || {}, m = r.metrics || {};
+    return { keyword: k.text || null, matchType: k.matchType || null, campaign: cp.name || null, campaignStatus: cp.status || null,
+      current: cp.status === "ENABLED", adGroup: ag.name || null,
+      cpc: +((+(m.averageCpc || 0)) / 1e6).toFixed(2), clicks: +(m.clicks || 0), impressions: +(m.impressions || 0),
+      cost: +(+(m.costMicros || 0) / 1e6).toFixed(2), conversions: +(m.conversions || 0) };
+  }).filter((x) => x.keyword);
+  return { demo: false, period: adsPeriodNorm(period), keywords: rows };
+}
+// ── « Google Trends maison » via Google Ads Keyword Planner (GRATUIT, même auth Ads) ──────────────
+// Donne le volume de recherche MENSUEL sur ~4 ans (= intérêt dans le temps + saisonnalité de Trends),
+// la concurrence, la fourchette de CPC, et les mots-clés associés (= related/rising queries de Trends).
+const ADS_MONTHS = { JANUARY: 1, FEBRUARY: 2, MARCH: 3, APRIL: 4, MAY: 5, JUNE: 6, JULY: 7, AUGUST: 8, SEPTEMBER: 9, OCTOBER: 10, NOVEMBER: 11, DECEMBER: 12 };
+const GEO_CONST = { france: "2250", monaco: "2492" }; // raccourcis fréquents (évite un appel de résolution)
+async function argosGeoResolve(locationName, headers) {
+  const name = (locationName || "").trim().toLowerCase();
+  if (!name) return "geoTargetConstants/2250"; // France par défaut
+  if (GEO_CONST[name]) return "geoTargetConstants/" + GEO_CONST[name];
+  try {
+    const j = await argosGooglePost(`https://googleads.googleapis.com/${GOOGLE_ADS_API_VERSION}/geoTargetConstants:suggest`, { locale: "fr", locationNames: { names: [locationName] } }, headers);
+    const s = (j.geoTargetConstantSuggestions || [])[0];
+    if (s && s.geoTargetConstant && s.geoTargetConstant.resourceName) return s.geoTargetConstant.resourceName;
+  } catch {}
+  return "geoTargetConstants/2250";
+}
+async function argosTrends(brand, keywords, locationName) {
+  const c = argosAdsClient(brand); if (!c) return null;
+  const kws = [...new Set((keywords || []).map((k) => String(k).trim().toLowerCase()).filter(Boolean))].slice(0, 5);
+  if (!kws.length) return { keywords: [], ideas: [], location: locationName || "France" };
+  const headers = { "developer-token": c.devToken };
+  if (c.login) headers["login-customer-id"] = String(c.login).replace(/-/g, "");
+  const geo = await argosGeoResolve(locationName, headers);
+  const base = `https://googleads.googleapis.com/${GOOGLE_ADS_API_VERSION}/customers/${String(c.cid).replace(/-/g, "")}`;
+  const lang = "languageConstants/1002"; // français
+  const toSeries = (mv) => (mv || []).map((m) => ({ y: +m.year, m: ADS_MONTHS[m.month] || 0, v: +(m.monthlySearches || 0) })).filter((x) => x.m).sort((a, b) => a.y - b.y || a.m - b.m);
+  const trendPct = (s) => { if (s.length < 6) return null; const n = s.length, recent = (s[n - 1].v + s[n - 2].v + s[n - 3].v) / 3, prior = (s[n - 4].v + s[n - 5].v + s[n - 6].v) / 3; return prior ? Math.round((recent - prior) / prior * 100) : null; };
+  const cpc = (mic) => mic != null ? +(+mic / 1e6).toFixed(2) : null;
+  let series = [];
+  try {
+    const j = await argosGooglePost(`${base}:generateKeywordHistoricalMetrics`, { keywords: kws, geoTargetConstants: [geo], keywordPlanNetwork: "GOOGLE_SEARCH", language: lang, historicalMetricsOptions: { includeAverageCpc: true } }, headers);
+    series = (j.results || []).map((r) => {
+      const m = r.keywordMetrics || {}, s = toSeries(m.monthlySearchVolumes);
+      return { keyword: r.text, avgMonthly: +(m.avgMonthlySearches || 0), competition: m.competition || null, competitionIndex: m.competitionIndex != null ? +m.competitionIndex : null, cpcLow: cpc(m.lowTopOfPageBidMicros), cpcHigh: cpc(m.highTopOfPageBidMicros), monthly: s, trendPct: trendPct(s), peak: s.length ? s.reduce((a, x) => x.v > a.v ? x : a, s[0]) : null };
+    });
+  } catch (e) { return { error: e.message.slice(0, 160), keywords: [], ideas: [], location: locationName || "France" }; }
+  let ideas = [];
+  try {
+    const j = await argosGooglePost(`${base}:generateKeywordIdeas`, { keywordSeed: { keywords: kws }, geoTargetConstants: [geo], keywordPlanNetwork: "GOOGLE_SEARCH", language: lang, pageSize: 30, includeAdultKeywords: false }, headers);
+    ideas = (j.results || []).map((r) => { const m = r.keywordIdeaMetrics || {}; return { keyword: r.text, avgMonthly: +(m.avgMonthlySearches || 0), competition: m.competition || null, trendPct: trendPct(toSeries(m.monthlySearchVolumes)) }; })
+      .filter((x) => x.keyword && !kws.includes(x.keyword.toLowerCase()))
+      .sort((a, b) => b.avgMonthly - a.avgMonthly).slice(0, 25);
+  } catch {}
+  return { keywords: series, ideas, location: locationName || "France" };
+}
+// Tendance (Google Trends maison) — gratuit (Google Ads Keyword Planner), cache-first + peek.
+ipcMain.handle("argos:trends", (_e, brandId, keywords, location, forceRefresh, peek) => {
+  const kws = [...new Set((keywords || []).map((k) => String(k).trim().toLowerCase()).filter(Boolean))].slice(0, 5);
+  const extra = "t:" + (location || "").trim().toLowerCase() + ":" + kws.join("|");
+  return argosCached(brandId, "trends", extra, forceRefresh, (b) => !!argosBrandAsset(b, "google_ads"),
+    async (b) => { const real = await argosTrends(b, kws, location); return real ? { data: real } : null; },
+    () => ({ data: { demo: true, keywords: [], ideas: [] } }), peek);
+});
+const ADS_AUDIENCE_LABELS = { USER_INTEREST: "Centre d'intérêt", USER_LIST: "Liste (remarketing)", AUDIENCE: "Audience", CUSTOM_AUDIENCE: "Audience personnalisée", CUSTOM_AFFINITY: "Affinité personnalisée", CUSTOM_INTENT: "Intention personnalisée", COMBINED_AUDIENCE: "Audience combinée", DETAILED_DEMOGRAPHIC: "Démographie détaillée", LIFE_EVENT: "Événement de vie", AGE_RANGE: "Âge", GENDER: "Genre", INCOME_RANGE: "Revenu", PARENTAL_STATUS: "Statut parental" };
+// Segments d'audience ciblés par les campagnes du client (réel) — centres d'intérêt, listes de
+// remarketing, démographie… avec leurs métriques. Pertinent surtout pour Display / notoriété.
+async function argosAdsAudiences(brand, period) {
+  const c = argosAdsClient(brand); if (!c) return null;
+  const q = `SELECT campaign.name, campaign.status, ad_group.name, ad_group_criterion.type, ad_group_criterion.display_name, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions FROM ad_group_audience_view WHERE ${gaqlDateRange(period)} ORDER BY metrics.cost_micros DESC`;
+  const j = await argosGoogleAdsSearch(c.cid, q, c.login, c.devToken);
+  const rows = (j.results || []).map((r) => {
+    const cp = r.campaign || {}, ag = r.adGroup || {}, cr = r.adGroupCriterion || {}, m = r.metrics || {};
+    const type = cr.type || null;
+    return { campaign: cp.name || null, current: cp.status === "ENABLED", adGroup: ag.name || null,
+      type, typeLabel: ADS_AUDIENCE_LABELS[type] || type, name: cr.displayName || null,
+      impressions: +(m.impressions || 0), clicks: +(m.clicks || 0), cost: +(+(m.costMicros || 0) / 1e6).toFixed(2), conversions: +(m.conversions || 0) };
+  }).filter((x) => x.name || x.typeLabel);
+  // display_name des centres d'intérêt = « uservertical::ID » (illisible) → on résout via la
+  // ressource user_interest (id → nom réel, ex. « Amateurs de gastronomie »).
+  if (rows.some((r) => /uservertical::\d+/.test(r.name || ""))) {
+    try {
+      const uj = await argosGoogleAdsSearch(c.cid, "SELECT user_interest.user_interest_id, user_interest.name FROM user_interest", c.login, c.devToken);
+      const map = new Map();
+      for (const u of (uj.results || [])) { const ui = u.userInterest || {}; if (ui.userInterestId != null) map.set(String(ui.userInterestId), ui.name); }
+      for (const r of rows) { const mm = /uservertical::(\d+)/.exec(r.name || ""); if (mm && map.has(mm[1])) r.name = map.get(mm[1]); }
+    } catch {}
+  }
+  return { demo: false, period: adsPeriodNorm(period), audiences: rows };
+}
+// Ciblage géographique des campagnes DU CLIENT (réel) : zones incluses / exclues + proximité (rayon).
+// geo_target_constant renvoie un ID (geoTargetConstants/2492) → on résout le nom via la ressource.
+async function argosAdsGeo(brand) {
+  const c = argosAdsClient(brand); if (!c) return null;
+  const q = `SELECT campaign.name, campaign.status, campaign_criterion.type, campaign_criterion.negative, campaign_criterion.location.geo_target_constant, campaign_criterion.proximity.radius, campaign_criterion.proximity.radius_units, campaign_criterion.proximity.address.city_name, campaign_criterion.proximity.address.postal_code, campaign_criterion.proximity.address.country_code FROM campaign_criterion WHERE campaign_criterion.type IN ('LOCATION','PROXIMITY')`;
+  const j = await argosGoogleAdsSearch(c.cid, q, c.login, c.devToken);
+  const results = j.results || [];
+  const gtc = new Set();
+  for (const r of results) { const loc = r.campaignCriterion?.location?.geoTargetConstant; if (loc) gtc.add(loc); }
+  const nameMap = new Map();
+  if (gtc.size) {
+    try {
+      const inList = [...gtc].map((x) => `'${x}'`).join(",");
+      const gj = await argosGoogleAdsSearch(c.cid, `SELECT geo_target_constant.resource_name, geo_target_constant.name, geo_target_constant.canonical_name, geo_target_constant.target_type FROM geo_target_constant WHERE geo_target_constant.resource_name IN (${inList})`, c.login, c.devToken);
+      for (const g of (gj.results || [])) { const t = g.geoTargetConstant || {}; if (t.resourceName) nameMap.set(t.resourceName, { name: t.name, canonical: t.canonicalName, type: t.targetType }); }
+    } catch {}
+  }
+  const byCamp = {};
+  for (const r of results) {
+    const cp = r.campaign || {}, cr = r.campaignCriterion || {};
+    const nm = cp.name; if (!byCamp[nm]) byCamp[nm] = { campaign: nm, current: cp.status === "ENABLED", locations: [], excluded: [] };
+    if (cr.type === "LOCATION" && cr.location?.geoTargetConstant) {
+      const info = nameMap.get(cr.location.geoTargetConstant) || {};
+      const entry = { name: info.canonical || info.name || cr.location.geoTargetConstant, type: (info.type || "").toLowerCase() || null };
+      (cr.negative ? byCamp[nm].excluded : byCamp[nm].locations).push(entry);
+    } else if (cr.type === "PROXIMITY" && cr.proximity) {
+      const p = cr.proximity, a = p.address || {};
+      const place = a.cityName || a.postalCode || a.countryCode || "un point";
+      byCamp[nm].locations.push({ name: `${place} + ${p.radius || "?"} ${(p.radiusUnits || "").toLowerCase() || "km"} autour`, proximity: true });
+    }
+  }
+  return { demo: false, campaigns: Object.values(byCamp) };
+}
+const ADS_PLACEMENT_LABELS = { WEBSITE: "Site web", MOBILE_APPLICATION: "Application", MOBILE_APP_CATEGORY: "Catégorie d'apps", YOUTUBE_VIDEO: "Vidéo YouTube", YOUTUBE_CHANNEL: "Chaîne YouTube", GOOGLE_PRODUCTS: "Produits Google" };
+// EMPLACEMENTS RÉELS où le budget Display/Vidéo a été dépensé (sites, apps, vidéos/chaînes YouTube) —
+// la vraie réponse à « où est parti mon argent », pas une approximation.
+async function argosAdsPlacements(brand, period) {
+  const c = argosAdsClient(brand); if (!c) return null;
+  // Fenêtres récente (R) / antérieure (P) pour la tendance : W = min(14, moitié de la période).
+  const pn = adsPeriodNorm(period);
+  const endD = (pn.from && pn.to) ? pn.to : new Date().toISOString().slice(0, 10);
+  const startD = (pn.from && pn.to) ? pn.from : new Date(Date.now() - (pn.days || 90) * 86400000).toISOString().slice(0, 10);
+  const periodDays = Math.max(1, Math.round((new Date(endD) - new Date(startD)) / 86400000) + 1);
+  const W = Math.max(1, Math.min(14, Math.floor(periodDays / 2)));
+  const shift = (n) => new Date(new Date(endD).getTime() - n * 86400000).toISOString().slice(0, 10);
+  const rStart = shift(W - 1), pStart = shift(2 * W - 1), pEnd = shift(W); // R = [rStart, endD] · P = [pStart, pEnd]
+  // Segmenté par jour → agrégé par emplacement. `metrics.conversions` best-effort (retiré si l'API le rejette).
+  const base = "detail_placement_view.display_name, detail_placement_view.placement, detail_placement_view.placement_type, detail_placement_view.target_url, campaign.id, campaign.name, campaign.status, ad_group.id, segments.date, metrics.impressions, metrics.clicks, metrics.cost_micros";
+  // Active View = impressions RÉELLEMENT visibles. Essentiel : ~1/3 des impressions display ne sont
+  // jamais vues (IAS 2025), et ce taux varie énormément d'un emplacement à l'autre → un CPM bas sur
+  // un emplacement peu visible est en fait cher. Best-effort : retiré si l'API le rejette.
+  const AV = ", metrics.active_view_impressions, metrics.active_view_measurable_impressions";
+  const runQ = (extra) => argosGoogleAdsSearch(c.cid, `SELECT ${base}${extra} FROM detail_placement_view WHERE ${gaqlDateRange(period)} AND metrics.impressions > 0 ORDER BY metrics.cost_micros DESC`, c.login, c.devToken);
+  let convSupported = true, avSupported = true, j;
+  try { j = await runQ(", metrics.conversions" + AV); }
+  catch {
+    try { j = await runQ(", metrics.conversions"); avSupported = false; }
+    catch { convSupported = false; avSupported = false; j = await runQ(""); }
+  }
+  const win = () => ({ impr: 0, clicks: 0, cost: 0, conv: 0 });
+  const agg = new Map();
+  for (const r of (j.results || [])) {
+    const dp = r.detailPlacementView || {}, m = r.metrics || {}, cp = r.campaign || {}, ag = r.adGroup || {}, date = r.segments?.date || null;
+    const type = dp.placementType || null;
+    const key = (dp.placement || dp.displayName || "") + "|" + (cp.name || "");
+    if (key === "|") continue;
+    let e = agg.get(key);
+    if (!e) { e = { name: dp.displayName || dp.placement || null, url: dp.targetUrl || dp.placement || null, type, typeLabel: ADS_PLACEMENT_LABELS[type] || type, placement: dp.placement || null, campaign: cp.name || null, campaignId: cp.id || null, adGroupId: ag.id || null, current: cp.status === "ENABLED", impressions: 0, clicks: 0, cost: 0, conv: 0, avImpr: 0, avMeas: 0, firstDate: null, lastDate: null, R: win(), P: win() }; agg.set(key, e); }
+    const imp = +(m.impressions || 0), clk = +(m.clicks || 0), cost = +(m.costMicros || 0) / 1e6, cv = convSupported ? +(m.conversions || 0) : 0;
+    e.impressions += imp; e.clicks += clk; e.cost += cost; e.conv += cv;
+    if (avSupported) { e.avImpr += +(m.activeViewImpressions || 0); e.avMeas += +(m.activeViewMeasurableImpressions || 0); }
+    if (date) {
+      if (!e.firstDate || date < e.firstDate) e.firstDate = date; if (!e.lastDate || date > e.lastDate) e.lastDate = date;
+      const w = date >= rStart ? e.R : (date >= pStart && date <= pEnd ? e.P : null);
+      if (w) { w.impr += imp; w.clicks += clk; w.cost += cost; w.conv += cv; }
+    }
+  }
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const rows = [...agg.values()].map((e) => {
+    const daysSinceLast = e.lastDate ? Math.round((new Date(todayIso) - new Date(e.lastDate)) / 86400000) : null;
+    // Visibilité mesurée (part des impressions mesurables réellement vues). null si non mesuré.
+    const viewability = (avSupported && e.avMeas > 0) ? e.avImpr / e.avMeas : null;
+    return { ...e, cost: +e.cost.toFixed(2), conv: +e.conv.toFixed(2), daysSinceLast, ongoing: e.current && daysSinceLast != null && daysSinceLast <= 2, convSupported, avSupported, viewability, windowDays: W };
+  }).sort((a, z) => z.cost - a.cost).slice(0, 300);
+  return { demo: false, period: adsPeriodNorm(period), convSupported, avSupported, windowDays: W, placements: rows };
+}
+// ── Exclusion / réactivation d'emplacements (ÉCRITURE réelle sur le compte Google Ads) ──
+// Le seul vrai levier pour un emplacement Display automatique est le critère négatif au niveau
+// campagne (campaign_criterion negative=true). « Exclure » = créer ce critère, « Réactiver » =
+// le supprimer. Google conserve l'historique de perf à vie (pas de « remise à zéro »).
+// Construit le sous-objet critère selon le type d'emplacement.
+function adsPlacementCriterion(type, placement, url) {
+  const val = placement || url || "";
+  switch (type) {
+    case "WEBSITE": return { placement: { url: val } };
+    case "MOBILE_APPLICATION": return { mobileApplication: { appId: val } };
+    case "YOUTUBE_VIDEO": return { youtubeVideo: { videoId: val } };
+    case "YOUTUBE_CHANNEL": return { youtubeChannel: { channelId: val } };
+    default: return null;
+  }
+}
+// Liste les emplacements DÉJÀ exclus (critères négatifs) → clé "campaignId|type|valeur" + resourceName
+// (nécessaire pour la réactivation = suppression). Best-effort, ne casse pas si l'API refuse.
+async function argosAdsExclusions(brand) {
+  const c = argosAdsClient(brand); if (!c) return null;
+  const q = "SELECT campaign_criterion.criterion_id, campaign_criterion.resource_name, campaign_criterion.type, campaign_criterion.placement.url, campaign_criterion.mobile_application.app_id, campaign_criterion.youtube_video.video_id, campaign_criterion.youtube_channel.channel_id, campaign.id FROM campaign_criterion WHERE campaign_criterion.negative = TRUE AND campaign_criterion.type IN ('PLACEMENT','MOBILE_APPLICATION','YOUTUBE_VIDEO','YOUTUBE_CHANNEL')";
+  const j = await argosGoogleAdsSearch(c.cid, q, c.login, c.devToken);
+  const out = {};
+  for (const r of (j.results || [])) {
+    const cc = r.campaignCriterion || {}, cid = r.campaign?.id || "";
+    const val = cc.placement?.url || cc.mobileApplication?.appId || cc.youtubeVideo?.videoId || cc.youtubeChannel?.channelId || "";
+    if (!val) continue;
+    const type = cc.type === "PLACEMENT" ? "WEBSITE" : cc.type; // detail_placement_view utilise WEBSITE
+    out[`${cid}|${type}|${val}`] = { resourceName: cc.resourceName, campaignId: cid, type, value: val };
+  }
+  return out;
+}
+// Liste les emplacements DÉJÀ ciblés explicitement (critères positifs au niveau groupe d'annonces =
+// « emplacements gérés ») → clé "adGroupId|type|valeur" + resourceName (pour annuler la relance).
+async function argosAdsManaged(brand) {
+  const c = argosAdsClient(brand); if (!c) return null;
+  const q = "SELECT ad_group.id, ad_group_criterion.criterion_id, ad_group_criterion.resource_name, ad_group_criterion.type, ad_group_criterion.placement.url, ad_group_criterion.mobile_application.app_id, ad_group_criterion.youtube_video.video_id, ad_group_criterion.youtube_channel.channel_id FROM ad_group_criterion WHERE ad_group_criterion.negative = FALSE AND ad_group_criterion.type IN ('PLACEMENT','MOBILE_APPLICATION','YOUTUBE_VIDEO','YOUTUBE_CHANNEL')";
+  const j = await argosGoogleAdsSearch(c.cid, q, c.login, c.devToken);
+  const out = {};
+  for (const r of (j.results || [])) {
+    const cc = r.adGroupCriterion || {}, agId = r.adGroup?.id || "";
+    const val = cc.placement?.url || cc.mobileApplication?.appId || cc.youtubeVideo?.videoId || cc.youtubeChannel?.channelId || "";
+    if (!val) continue;
+    const type = cc.type === "PLACEMENT" ? "WEBSITE" : cc.type;
+    out[`${agId}|${type}|${val}`] = { resourceName: cc.resourceName, adGroupId: agId, type, value: val };
+  }
+  return out;
+}
+// ÉCRITURE réelle. exclude/reactivate = critère négatif campagne (bloquer). target/untarget = critère
+// positif groupe d'annonces (« emplacement géré » : forcer Google à recibler un bon emplacement arrêté).
+async function argosAdsMutatePlacement(brand, action, spec) {
+  const c = argosAdsClient(brand); if (!c) throw new Error("Compte Google Ads non résolu pour cette marque.");
+  const cid = String(c.cid).replace(/-/g, "");
+  const headers = { "developer-token": c.devToken };
+  if (c.login) headers["login-customer-id"] = String(c.login).replace(/-/g, "");
+  const V = GOOGLE_ADS_API_VERSION;
+  const campUrl = `https://googleads.googleapis.com/${V}/customers/${cid}/campaignCriteria:mutate`;
+  const agUrl = `https://googleads.googleapis.com/${V}/customers/${cid}/adGroupCriteria:mutate`;
+  if (action === "reactivate") {
+    if (!spec.resourceName) throw new Error("Exclusion introuvable (rien à réactiver).");
+    const j = await argosGooglePost(campUrl, { operations: [{ remove: spec.resourceName }] }, headers);
+    return { ok: true, removed: j.results?.[0]?.resourceName || spec.resourceName };
+  }
+  if (action === "untarget") {
+    if (!spec.resourceName) throw new Error("Ciblage introuvable (rien à annuler).");
+    const j = await argosGooglePost(agUrl, { operations: [{ remove: spec.resourceName }] }, headers);
+    return { ok: true, removed: j.results?.[0]?.resourceName || spec.resourceName };
+  }
+  const crit = adsPlacementCriterion(spec.type, spec.placement, spec.url);
+  if (!crit) throw new Error(`Type d'emplacement non pris en charge : ${spec.type}`);
+  if (action === "target") {
+    if (!spec.adGroupId) throw new Error("Groupe d'annonces inconnu pour cet emplacement.");
+    const create = { adGroup: `customers/${cid}/adGroups/${spec.adGroupId}`, ...crit };
+    const j = await argosGooglePost(agUrl, { operations: [{ create }] }, headers);
+    return { ok: true, resourceName: j.results?.[0]?.resourceName || null };
+  }
+  // exclude
+  if (!spec.campaignId) throw new Error("Campagne inconnue pour cet emplacement.");
+  const create = { campaign: `customers/${cid}/campaigns/${spec.campaignId}`, negative: true, ...crit };
+  const j = await argosGooglePost(campUrl, { operations: [{ create }] }, headers);
+  return { ok: true, resourceName: j.results?.[0]?.resourceName || null };
+}
+// Publicité consolidée d'une marque : Meta Ads + Google Ads fusionnés dans une seule vue. Chaque
+// source est best-effort (une qui échoue n'annule pas l'autre) — null seulement si AUCUNE ne
+// donne de campagne, auquel cas la vue retombe en démo.
+async function argosRealAdsAll(brand) {
+  const [metaR, googleC] = await Promise.all([
+    argosBrandAsset(brand, "meta_ads") ? argosRealAds(brand).catch(() => null) : Promise.resolve(null),
+    argosBrandAsset(brand, "google_ads") ? argosRealGoogleAds(brand).catch(() => null) : Promise.resolve(null),
+  ]);
+  const meta = metaR || null;
+  const gCamps = googleC || [];
+  if (!meta && !gCamps.length) return null;
+  const campaigns = [...(meta?.campaigns || []), ...gCamps];
+  const totSpend = campaigns.reduce((n, c) => n + c.spend, 0);
+  const totConv = campaigns.reduce((n, c) => n + c.conversions, 0);
+  const wRoas = totSpend ? +(campaigns.reduce((n, c) => n + c.roas * c.spend, 0) / totSpend).toFixed(1) : 0;
+  const platformSplit = [...(meta?.platformSplit || [])];
+  const gSpend = gCamps.reduce((n, c) => n + c.spend, 0);
+  if (gSpend) platformSplit.push({ platform: "google_ads", spend: gSpend, impressions: gCamps.reduce((n, c) => n + c.impressions, 0), clicks: gCamps.reduce((n, c) => n + c.clicks, 0) });
+  platformSplit.sort((a, b) => b.spend - a.spend);
+  return { demo: false, campaigns, totals: { spend: totSpend, conversions: totConv, roas: wRoas }, platformSplit, demoSplit: meta?.demoSplit || [] };
+}
 // Résout la Page mappée à une marque (jeton "général" — scopes Pages/Ads).
 function argosBrandFbPage(brand) {
   const st = argosState();
@@ -2098,6 +2598,242 @@ function argosDemoAudience(brand) {
   const totalReachAllTypes = contentReach.reduce((n, x) => n + x.reach, 0);
   return { demo: true, followerAge, followerGender, followerCountry, followerCity, engagedAge, engagedGender, contentReach, totalReachAllTypes, actions: { websiteClicks: Math.round(rng() * 200), profileLinksTaps: Math.round(rng() * 150), accountsEngaged: Math.round(rng() * 500) } };
 }
+// ══ Google Analytics 4 (Data API) — trafic du site mappé à une marque ══
+// "YYYYMMDD" (dimension date GA4) → "YYYY-MM-DD".
+function ga4Date(s) { return s && s.length === 8 ? `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}` : s; }
+async function argosRealWebAnalytics(brand, days) {
+  const prop = argosBrandAsset(brand, "google_analytics"); // ex: "properties/481185730"
+  if (!prop) return null;
+  const property = prop.startsWith("properties/") ? prop : "properties/" + prop;
+  const base = `https://analyticsdata.googleapis.com/v1beta/${property}:runReport`;
+  const range = [{ startDate: `${days}daysAgo`, endDate: "today" }];
+  const [byDateR, chanR, pagesR] = await Promise.all([
+    argosGooglePost(base, { dateRanges: range, dimensions: [{ name: "date" }], metrics: [{ name: "sessions" }, { name: "totalUsers" }, { name: "screenPageViews" }, { name: "conversions" }], orderBys: [{ dimension: { dimensionName: "date" } }] }),
+    argosGooglePost(base, { dateRanges: range, dimensions: [{ name: "sessionDefaultChannelGroup" }], metrics: [{ name: "sessions" }], orderBys: [{ metric: { metricName: "sessions" }, desc: true }], limit: 8 }).catch(() => null),
+    argosGooglePost(base, { dateRanges: range, dimensions: [{ name: "pageTitle" }], metrics: [{ name: "screenPageViews" }], orderBys: [{ metric: { metricName: "screenPageViews" }, desc: true }], limit: 8 }).catch(() => null),
+  ]);
+  const mv = (row, i) => +(row.metricValues?.[i]?.value || 0);
+  const byDay = (byDateR.rows || []).map((r) => ({ date: ga4Date(r.dimensionValues?.[0]?.value), sessions: mv(r, 0), users: mv(r, 1), pageviews: mv(r, 2), conversions: mv(r, 3) }));
+  const totals = byDay.reduce((t, x) => ({ sessions: t.sessions + x.sessions, users: t.users + x.users, pageviews: t.pageviews + x.pageviews, conversions: t.conversions + x.conversions }), { sessions: 0, users: 0, pageviews: 0, conversions: 0 });
+  const channels = (chanR?.rows || []).map((r) => ({ label: r.dimensionValues?.[0]?.value || "—", value: mv(r, 0) }));
+  const topPages = (pagesR?.rows || []).map((r) => ({ label: r.dimensionValues?.[0]?.value || "—", value: mv(r, 0) }));
+  return { demo: false, property, totals, byDay, channels, topPages };
+}
+function argosDemoWeb(brand, days) {
+  const rng = argosRng(brand.id + ":web");
+  const base = 120 + rng() * 900;
+  const byDay = []; const today = new Date();
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(today); d.setDate(d.getDate() - i);
+    const wk = (d.getDay() === 0 || d.getDay() === 6) ? 0.7 : 1;
+    const sessions = Math.round(base * wk * (0.7 + rng() * 0.7));
+    byDay.push({ date: isoLocalD(d), sessions, users: Math.round(sessions * (0.75 + rng() * 0.2)), pageviews: Math.round(sessions * (1.8 + rng() * 1.5)), conversions: Math.round(sessions * (0.01 + rng() * 0.03)) });
+  }
+  const totals = byDay.reduce((t, x) => ({ sessions: t.sessions + x.sessions, users: t.users + x.users, pageviews: t.pageviews + x.pageviews, conversions: t.conversions + x.conversions }), { sessions: 0, users: 0, pageviews: 0, conversions: 0 });
+  const channels = [["Organic Search", .38], ["Direct", .24], ["Paid Search", .16], ["Social", .12], ["Referral", .1]].map(([label, f]) => ({ label, value: Math.round(totals.sessions * f * (0.8 + rng() * 0.4)) }));
+  const topPages = ["Accueil", "Nos services", "À propos", "Contact", "Blog"].map((label) => ({ label, value: Math.round(totals.pageviews * (0.05 + rng() * 0.2)) })).sort((a, b) => b.value - a.value);
+  return { demo: true, totals, byDay, channels, topPages };
+}
+// ══ Core Web Vitals (PageSpeed Insights / Lighthouse) — GRATUIT, sur le site mappé ══
+// Niveau 3 de la cascade : API Google gratuite. URL = site Search Console de la marque.
+async function argosRealVitals(brand) {
+  const site = argosBrandAsset(brand, "search_console");
+  if (!site) return null;
+  const url = site.replace(/\/+$/, "");
+  // Appel AUTHENTIFIÉ (token Google OAuth) → quota du projet 693842101251, au lieu du quota
+  // anonyme partagé (429 systématique). Nécessite "PageSpeed Insights API" activée dans le projet.
+  const call = async (strategy) => {
+    const api = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(url)}&strategy=${strategy}&category=performance`;
+    const j = await argosGoogleGet(api);
+    const lh = j.lighthouseResult || {}, a = lh.audits || {};
+    const num = (id) => a[id]?.numericValue;
+    return { score: Math.round((lh.categories?.performance?.score || 0) * 100), lcp: num("largest-contentful-paint"), inp: num("interaction-to-next-paint") ?? num("experimental-interaction-to-next-paint"), cls: num("cumulative-layout-shift"), fcp: num("first-contentful-paint"), tbt: num("total-blocking-time") };
+  };
+  const [mobile, desktop] = await Promise.all([call("mobile").catch(() => null), call("desktop").catch(() => null)]);
+  if (!mobile && !desktop) return null;
+  return { demo: false, url, mobile, desktop };
+}
+function argosDemoVitals(brand) {
+  const rng = argosRng(brand.id + ":cwv");
+  const gen = () => ({ score: Math.round(55 + rng() * 40), lcp: 1500 + rng() * 2500, inp: 90 + rng() * 250, cls: +(rng() * 0.25).toFixed(3), fcp: 900 + rng() * 1500, tbt: 100 + rng() * 400 });
+  return { demo: true, url: null, mobile: gen(), desktop: gen() };
+}
+// ══ Search Console (searchAnalytics.query) — SEO du site mappé à une marque ══
+async function argosRealSeo(brand, days) {
+  const siteRaw = argosBrandAsset(brand, "search_console"); // ex: "https://chezteva.com/"
+  if (!siteRaw) return null;
+  const endpoint = `https://www.googleapis.com/webmasters/v3/sites/${encodeURIComponent(siteRaw)}/searchAnalytics/query`;
+  const endDate = isoLocalD(new Date());
+  const startDate = isoLocalD(new Date(Date.now() - days * 86400000));
+  const q = (dims, rowLimit) => argosGooglePost(endpoint, { startDate, endDate, dimensions: dims, rowLimit }).catch(() => null);
+  const [byDateR, queriesR, pagesR] = await Promise.all([q(["date"], 500), q(["query"], 12), q(["page"], 10)]);
+  const byDay = (byDateR?.rows || []).map((r) => ({ date: r.keys?.[0], clicks: +(r.clicks || 0), impressions: +(r.impressions || 0) }));
+  const totClicks = byDay.reduce((n, x) => n + x.clicks, 0);
+  const totImpr = byDay.reduce((n, x) => n + x.impressions, 0);
+  // CTR et position moyens pondérés par impressions sur la période entière (via la ligne agrégée).
+  let ctr = totImpr ? totClicks / totImpr : 0, position = 0, posW = 0;
+  for (const r of (byDateR?.rows || [])) { position += (+r.position || 0) * (+r.impressions || 0); posW += (+r.impressions || 0); }
+  position = posW ? position / posW : 0;
+  const topQueries = (queriesR?.rows || []).map((r) => ({ label: r.keys?.[0] || "—", clicks: +(r.clicks || 0), impressions: +(r.impressions || 0), ctr: +(r.ctr || 0), position: +(r.position || 0) }));
+  const topPages = (pagesR?.rows || []).map((r) => ({ label: (r.keys?.[0] || "—").replace(/^https?:\/\/[^/]+/, "") || "/", clicks: +(r.clicks || 0), impressions: +(r.impressions || 0) }));
+  return { demo: false, site: siteRaw, totals: { clicks: totClicks, impressions: totImpr, ctr: +(ctr * 100).toFixed(1), position: +position.toFixed(1) }, byDay, topQueries, topPages };
+}
+function argosDemoSeo(brand, days) {
+  const rng = argosRng(brand.id + ":seo");
+  const base = 30 + rng() * 250;
+  const byDay = []; const today = new Date();
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(today); d.setDate(d.getDate() - i);
+    const clicks = Math.round(base * (0.7 + rng() * 0.7));
+    byDay.push({ date: isoLocalD(d), clicks, impressions: Math.round(clicks * (14 + rng() * 20)) });
+  }
+  const totClicks = byDay.reduce((n, x) => n + x.clicks, 0);
+  const totImpr = byDay.reduce((n, x) => n + x.impressions, 0);
+  const QS = ["photographe monaco", "shooting produit", "studio photo", "book mannequin", "vidéaste événementiel", "retouche photo pro", "portrait corporate"];
+  const topQueries = QS.map((label) => { const impressions = Math.round(200 + rng() * 4000); const ctr = 0.01 + rng() * 0.09; return { label, impressions, clicks: Math.round(impressions * ctr), ctr, position: +(1 + rng() * 30).toFixed(1) }; }).sort((a, b) => b.clicks - a.clicks);
+  const topPages = ["/", "/services", "/portfolio", "/contact", "/blog"].map((label) => { const impressions = Math.round(300 + rng() * 3000); return { label, impressions, clicks: Math.round(impressions * (0.02 + rng() * 0.08)) }; }).sort((a, b) => b.clicks - a.clicks);
+  return { demo: true, totals: { clicks: totClicks, impressions: totImpr, ctr: +((totClicks / (totImpr || 1)) * 100).toFixed(1), position: +(3 + rng() * 12).toFixed(1) }, byDay, topQueries, topPages };
+}
+// ══ SEO Intelligence (gratuit, 100% calculé en local depuis Search Console) ══
+// Cannibalisation : requêtes où PLUSIEURS pages du site se positionnent (elles se concurrencent).
+// Quick-wins : requêtes en position 4-20 avec du volume (remonter = gain rapide).
+// Chutes A/B : requêtes ayant perdu clics/position vs la période précédente de même durée.
+const clean = (u) => (u || "").replace(/^https?:\/\/[^/]+/, "") || "/";
+async function argosRealSeoIntel(brand, days) {
+  const site = argosBrandAsset(brand, "search_console");
+  if (!site) return null;
+  const endpoint = `https://www.googleapis.com/webmasters/v3/sites/${encodeURIComponent(site)}/searchAnalytics/query`;
+  const end = isoLocalD(new Date());
+  const start = isoLocalD(new Date(Date.now() - days * 86400000));
+  const prevEnd = isoLocalD(new Date(Date.now() - (days + 1) * 86400000));
+  const prevStart = isoLocalD(new Date(Date.now() - (2 * days + 1) * 86400000));
+  const q = (body) => argosGooglePost(endpoint, body).catch(() => null);
+  const [qpNow, qNow, qPrev] = await Promise.all([
+    q({ startDate: start, endDate: end, dimensions: ["query", "page"], rowLimit: 2000 }),
+    q({ startDate: start, endDate: end, dimensions: ["query"], rowLimit: 1000 }),
+    q({ startDate: prevStart, endDate: prevEnd, dimensions: ["query"], rowLimit: 1000 }),
+  ]);
+  // Cannibalisation
+  const byQuery = new Map();
+  for (const r of (qpNow?.rows || [])) {
+    const [query, page] = r.keys || [];
+    if (!byQuery.has(query)) byQuery.set(query, []);
+    byQuery.get(query).push({ page, clicks: +(r.clicks || 0), impressions: +(r.impressions || 0), position: +(r.position || 0) });
+  }
+  const cannibal = [...byQuery.entries()]
+    .filter(([, pages]) => pages.length >= 2 && pages.reduce((n, p) => n + p.impressions, 0) >= 50)
+    .map(([query, pages]) => ({ query, pages: pages.length, impressions: pages.reduce((n, p) => n + p.impressions, 0), clicks: pages.reduce((n, p) => n + p.clicks, 0), urls: pages.sort((a, b) => b.clicks - a.clicks).slice(0, 3).map((p) => ({ url: clean(p.page), clicks: p.clicks, position: +p.position.toFixed(1) })) }))
+    .sort((a, b) => b.impressions - a.impressions).slice(0, 15);
+  // Quick-wins (striking distance : position 4-20)
+  const quickWins = (qNow?.rows || []).map((r) => ({ query: r.keys[0], clicks: +(r.clicks || 0), impressions: +(r.impressions || 0), ctr: +(r.ctr || 0), position: +(r.position || 0) }))
+    .filter((x) => x.position >= 4 && x.position <= 20 && x.impressions >= 30)
+    .sort((a, b) => b.impressions - a.impressions).slice(0, 15);
+  // Chutes A/B
+  const prevMap = new Map((qPrev?.rows || []).map((r) => [r.keys[0], { clicks: +(r.clicks || 0), position: +(r.position || 0) }]));
+  const drops = (qNow?.rows || []).map((r) => {
+    const query = r.keys[0], prev = prevMap.get(query);
+    if (!prev) return null;
+    return { query, clicks: +(r.clicks || 0), prevClicks: prev.clicks, dClicks: +(r.clicks || 0) - prev.clicks, position: +(r.position || 0), prevPosition: prev.position, dPos: +(+(r.position || 0) - prev.position).toFixed(1) };
+  }).filter((x) => x && x.prevClicks >= 3 && (x.dClicks <= -3 || x.dPos >= 1.5))
+    .sort((a, b) => a.dClicks - b.dClicks).slice(0, 15);
+  return { demo: false, cannibal, quickWins, drops };
+}
+function argosDemoSeoIntel(brand) {
+  const rng = argosRng(brand.id + ":seoi");
+  const QS = ["restaurant monaco", "meilleur resto monaco", "brunch monaco", "réserver table monaco", "menu du jour monaco", "restaurant vue mer"];
+  const cannibal = QS.slice(0, 3).map((query) => ({ query, pages: 2 + Math.round(rng() * 2), impressions: Math.round(200 + rng() * 2000), clicks: Math.round(rng() * 40), urls: [{ url: "/", clicks: Math.round(rng() * 30), position: +(2 + rng() * 5).toFixed(1) }, { url: "/menu", clicks: Math.round(rng() * 15), position: +(6 + rng() * 8).toFixed(1) }] }));
+  const quickWins = QS.map((query) => ({ query, clicks: Math.round(rng() * 20), impressions: Math.round(100 + rng() * 3000), ctr: 0.01 + rng() * 0.05, position: +(4 + rng() * 14).toFixed(1) })).sort((a, b) => b.impressions - a.impressions).slice(0, 6);
+  const drops = QS.slice(0, 4).map((query) => { const prevClicks = 8 + Math.round(rng() * 40); const dClicks = -(2 + Math.round(rng() * 15)); return { query, clicks: prevClicks + dClicks, prevClicks, dClicks, position: +(3 + rng() * 10).toFixed(1), prevPosition: +(2 + rng() * 6).toFixed(1), dPos: +(rng() * 4).toFixed(1) }; });
+  return { demo: true, cannibal, quickWins, drops };
+}
+// ══ Audit technique (crawler léger, GRATUIT) — nos propres fetchs sur le site du client ══
+// Extraction SEO par regex (pas de dépendance parseur) : suffisant pour les balises head/SEO.
+function argosParseSeo(html) {
+  const first = (re) => { const x = html.match(re); return x ? x[1].replace(/\s+/g, " ").trim() : null; };
+  const title = first(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  const desc = first(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']*)["']/i) || first(/<meta[^>]+content=["']([^"']*)["'][^>]+name=["']description["']/i);
+  const h1 = (html.match(/<h1[\s>]/gi) || []).length;
+  const canonical = first(/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']*)["']/i);
+  const robots = first(/<meta[^>]+name=["']robots["'][^>]+content=["']([^"']*)["']/i) || "";
+  const imgs = html.match(/<img\b[^>]*>/gi) || [];
+  const imgNoAlt = imgs.filter((t) => !/\balt\s*=\s*["'][^"']/i.test(t)).length;
+  const links = [...html.matchAll(/<a\b[^>]+href=["']([^"']+)["']/gi)].map((x) => x[1]).filter((h) => !/^(mailto:|tel:|javascript:)/i.test(h));
+  const text = html.replace(/<script[\s\S]*?<\/script>/gi, "").replace(/<style[\s\S]*?<\/style>/gi, "").replace(/<[^>]+>/g, " ");
+  const words = (text.match(/[^\s]+/g) || []).length;
+  return { title, desc, h1, canonical, noindex: /noindex/i.test(robots), imgCount: imgs.length, imgNoAlt, links, words };
+}
+async function argosCrawl(brand, { maxPages = 80, maxDepth = 3, concurrency = 5 } = {}) {
+  const site = argosBrandAsset(brand, "search_console");
+  if (!site) throw new Error("Aucun site Search Console mappé à ce client — associe-le d'abord dans Titan.");
+  let origin; try { origin = new URL(/^https?:\/\//.test(site) ? site : "https://" + site).origin; } catch { throw new Error("URL de site invalide."); }
+  const norm = (u) => { try { const x = new URL(u); return (x.origin + x.pathname).replace(/\/$/, "") || x.origin; } catch { return u; } };
+  const start = origin + "/";
+  const seen = new Set([norm(start)]);
+  let queue = [{ url: start, depth: 0 }];
+  const pages = []; const linkedTo = new Set();
+  while (queue.length && pages.length < maxPages) {
+    const batch = queue.splice(0, concurrency);
+    await Promise.all(batch.map(async ({ url, depth }) => {
+      if (pages.length >= maxPages) return;
+      let r; try { r = await timedFetch(url, { redirect: "follow" }, 9000); } catch { pages.push({ url: norm(url), status: 0, error: true, depth }); return; }
+      const status = r.status, finalUrl = r.url, ct = (r.headers.get("content-type") || "");
+      const rec = { url: norm(url), status, depth, redirected: norm(finalUrl) !== norm(url) };
+      if (status >= 200 && status < 300 && /text\/html/i.test(ct)) {
+        const html = await r.text().catch(() => "");
+        const seo = argosParseSeo(html);
+        rec.title = seo.title; rec.desc = seo.desc; rec.h1 = seo.h1; rec.canonical = seo.canonical; rec.noindex = seo.noindex; rec.imgNoAlt = seo.imgNoAlt; rec.words = seo.words;
+        if (depth < maxDepth) for (const link of seo.links) {
+          try { const abs = new URL(link, url); if (abs.origin === origin && /^https?:/.test(abs.protocol)) { const n = norm(abs.href); linkedTo.add(n); if (!seen.has(n) && seen.size < maxPages * 4 && !/\.(jpg|jpeg|png|gif|svg|webp|pdf|zip|css|js|ico|woff2?|mp4|xml)$/i.test(abs.pathname)) { seen.add(n); queue.push({ url: abs.origin + abs.pathname, depth: depth + 1 }); } } } catch {}
+        }
+      }
+      pages.push(rec);
+    }));
+  }
+  // ── Agrégation des problèmes ──
+  const html2xx = pages.filter((p) => p.status >= 200 && p.status < 300 && p.title !== undefined);
+  const titleMap = new Map();
+  for (const p of html2xx) if (p.title) titleMap.set(p.title, (titleMap.get(p.title) || 0) + 1);
+  const dupTitles = html2xx.filter((p) => p.title && titleMap.get(p.title) > 1);
+  const broken = pages.filter((p) => p.status >= 400 || p.status === 0);
+  const redirects = pages.filter((p) => p.redirected && p.status >= 200 && p.status < 400);
+  const noTitle = html2xx.filter((p) => !p.title);
+  const noDesc = html2xx.filter((p) => !p.desc);
+  const badH1 = html2xx.filter((p) => p.h1 !== 1);
+  const noindex = html2xx.filter((p) => p.noindex);
+  const noCanon = html2xx.filter((p) => !p.canonical);
+  const thin = html2xx.filter((p) => (p.words || 0) < 150);
+  const imgAlt = html2xx.reduce((n, p) => n + (p.imgNoAlt || 0), 0);
+  // ── Health Score (pondéré, plafonné par catégorie) ──
+  const cap = (v, m) => Math.min(v, m);
+  let penalty = 0;
+  penalty += cap(broken.length * 4, 30);
+  penalty += cap(redirects.length * 0.5, 8);
+  penalty += cap(noTitle.length * 3, 15);
+  penalty += cap(dupTitles.length * 1.5, 10);
+  penalty += cap(noDesc.length * 0.5, 8);
+  penalty += cap(badH1.length * 1, 10);
+  penalty += cap(noindex.length * 2, 12);
+  penalty += cap(noCanon.length * 0.4, 6);
+  penalty += cap(thin.length * 0.5, 8);
+  penalty += cap(imgAlt * 0.1, 6);
+  const healthScore = Math.max(0, Math.round(100 - penalty));
+  // ── Tickets d'action priorisés ──
+  const T = [];
+  const push = (sev, count, label, sample) => { if (count) T.push({ sev, count, label, sample: (sample || []).slice(0, 5) }); };
+  push("high", broken.length, "Pages en erreur (404/5xx) à corriger ou rediriger", broken.map((p) => p.url));
+  push("high", noindex.length, "Pages en noindex (vérifier si volontaire)", noindex.map((p) => p.url));
+  push("high", noTitle.length, "Pages sans balise <title>", noTitle.map((p) => p.url));
+  push("med", dupTitles.length, "Titres dupliqués (même <title> sur plusieurs pages)", dupTitles.map((p) => p.url));
+  push("med", badH1.length, "Pages sans H1 unique (0 ou plusieurs)", badH1.map((p) => p.url));
+  push("med", redirects.length, "Redirections internes à mettre à jour", redirects.map((p) => p.url));
+  push("low", noDesc.length, "Pages sans meta description", noDesc.map((p) => p.url));
+  push("low", thin.length, "Pages au contenu léger (< 150 mots)", thin.map((p) => p.url));
+  push("low", noCanon.length, "Pages sans balise canonical", noCanon.map((p) => p.url));
+  push("low", imgAlt, "Images sans attribut ALT", []);
+  const sevRank = { high: 0, med: 1, low: 2 };
+  T.sort((a, b) => sevRank[a.sev] - sevRank[b.sev] || b.count - a.count);
+  return { demo: false, origin, pages: pages.length, indexable: html2xx.length - noindex.length, healthScore, tickets: T, at: new Date().toISOString() };
+}
 // Vraies données Aperçu — Instagram (si la connexion dédiée existe) + Facebook (posts + champs
 // publics de Page ; pas d'insights Facebook tant que read_insights n'est pas accordé).
 // Principe strict : ce qui n'est pas accessible reste à 0/vide plutôt qu'estimé — jamais de
@@ -2107,16 +2843,18 @@ function argosDemoAudience(brand) {
 // suivant renvoie IMMÉDIATEMENT la dernière donnée connue et rafraîchit en tâche de fond —
 // l'utilisateur ne voit jamais l'attente réseau après la toute première fois. Marques en démo :
 // pas de cache, c'est déjà instantané (calcul local, aucun appel réseau).
-const ARGOS_CACHE_TTL = 15 * 60 * 1000; // 15 min
-async function argosCached(brandId, kind, extra, forceRefresh, hasRealSource, realFn, demoFn) {
+const ARGOS_STALE_MS = 6 * 60 * 60 * 1000; // 6 h — seuil « à rafraîchir » (affichage + prewarm), PAS une expiration de lecture
+// Politique cache-first (Obj 1 : revoir une donnée ne rappelle JAMAIS l'API) :
+//  · lecture (défaut) : sert l'entrée en cache quel que soit son âge ; ne fetch QUE si absente. Aucun refetch en fond.
+//  · peek=true : cache-only strict, jamais d'appel (pour le lecteur de snapshot / générateur de rapport).
+//  · forceRefresh=true : refetch + recache (boutons « rafraîchir »).
+async function argosCached(brandId, kind, extra, forceRefresh, hasRealSource, realFn, demoFn, peek) {
   const st = argosState(); const b = st.brands.find((x) => x.id === brandId);
   if (!b) return { ok: false, error: "Marque inconnue." };
-  if (!hasRealSource(b)) return { ok: true, ...demoFn(b) };
+  if (!hasRealSource(b)) return { ok: true, ...demoFn(b) }; // démo synthétique, gratuite, non cachée
   const key = brandId + ":" + kind + (extra != null ? ":" + extra : "");
   const cached = st.cache[key];
-  const fresh = cached && Date.now() - cached.fetchedAt < ARGOS_CACHE_TTL;
-  // realFn renvoie la forme COMPLÈTE à mettre en cache (ex: {data:...} ou {demo,conversations})
-  // — null si indisponible, auquel cas on retombe sur demoFn.
+  // realFn renvoie la forme COMPLÈTE à mettre en cache (ex: {data:...}) — null si indisponible → demoFn.
   const doRefresh = async () => {
     let result;
     try { const real = await realFn(b); result = real || demoFn(b); }
@@ -2124,9 +2862,10 @@ async function argosCached(brandId, kind, extra, forceRefresh, hasRealSource, re
     const st2 = argosState(); st2.cache[key] = { ...result, fetchedAt: Date.now() }; argosSave(st2);
     return result;
   };
-  if (!forceRefresh && fresh) return { ok: true, ...cached };
-  if (!forceRefresh && cached) { doRefresh().catch(() => {}); return { ok: true, ...cached, stale: true }; }
-  return { ok: true, ...(await doRefresh()) };
+  if (peek) return cached ? { ok: true, ...cached, cached: true } : { ok: true, data: null, peeked: true };
+  if (forceRefresh) return { ok: true, ...(await doRefresh()) };
+  if (cached) return { ok: true, ...cached, cached: true, stale: Date.now() - (cached.fetchedAt || 0) > ARGOS_STALE_MS };
+  return { ok: true, ...(await doRefresh()) }; // absente → un seul fetch
 }
 async function argosRealOverview(brand, days) {
   const igCtx = argosBrandIg(brand);
@@ -2297,19 +3036,19 @@ ipcMain.handle("argos:brandDelete", (_e, id) => {
   st.inboxReplies = st.inboxReplies.filter((r) => r.brandId !== id); // pas de fuite de données client
   return { ok: argosSave(st) };
 });
-ipcMain.handle("argos:overview", (_e, brandId, days, forceRefresh) => {
+ipcMain.handle("argos:overview", (_e, brandId, days, forceRefresh, peek) => {
   const d = Math.max(7, Math.min(90, days || 30));
   return argosCached(brandId, "ov", d, forceRefresh, (b) => !!(argosBrandAsset(b, "facebook") || argosBrandAsset(b, "instagram")),
     async (b) => { const real = await argosRealOverview(b, d); return real ? { data: real } : null; },
-    (b) => ({ data: argosDemoOverview(b, d) }));
+    (b) => ({ data: argosDemoOverview(b, d) }), peek);
 });
-ipcMain.handle("argos:inbox", async (_e, brandId, forceRefresh) => {
+ipcMain.handle("argos:inbox", async (_e, brandId, forceRefresh, peek) => {
   const st = argosState(); const b = st.brands.find((x) => x.id === brandId);
   if (!b) return { ok: false, error: "Marque inconnue." };
   const mergeReplies = (convs) => (convs || []).map((c) => ({ ...c, replies: st.inboxReplies.filter((r) => r.convId === c.id) }));
   const r = await argosCached(brandId, "inbox", null, forceRefresh, (bb) => !!(argosBrandAsset(bb, "facebook") || argosBrandAsset(bb, "instagram")),
     async (bb) => { const real = await argosRealInbox(bb); return real ? { demo: false, conversations: real.conversations } : null; },
-    (bb) => ({ demo: true, conversations: argosDemoInbox(bb) }));
+    (bb) => ({ demo: true, conversations: argosDemoInbox(bb) }), peek);
   return { ...r, conversations: mergeReplies(r.conversations) };
 });
 ipcMain.handle("argos:inboxReply", (_e, brandId, convId, text) => {
@@ -2328,15 +3067,179 @@ ipcMain.handle("argos:keywords", (_e, brandId, keywords) => {
   b.keywords = (keywords || []).map((k) => String(k).trim()).filter(Boolean).slice(0, 20);
   return { ok: argosSave(st), keywords: b.keywords };
 });
-ipcMain.handle("argos:ads", (_e, brandId, forceRefresh) => {
-  return argosCached(brandId, "ads", null, forceRefresh, (b) => !!argosBrandAsset(b, "meta_ads"),
-    async (b) => { const real = await argosRealAds(b); return real ? { data: real } : null; },
-    (b) => ({ data: argosDemoAds(b) }));
+ipcMain.handle("argos:ads", (_e, brandId, forceRefresh, peek) => {
+  return argosCached(brandId, "ads", null, forceRefresh, (b) => !!(argosBrandAsset(b, "meta_ads") || argosBrandAsset(b, "google_ads")),
+    async (b) => { const real = await argosRealAdsAll(b); return real ? { data: real } : null; },
+    (b) => ({ data: argosDemoAds(b) }), peek);
 });
-ipcMain.handle("argos:audience", (_e, brandId, forceRefresh) => {
+ipcMain.handle("argos:audience", (_e, brandId, forceRefresh, peek) => {
   return argosCached(brandId, "aud", null, forceRefresh, (b) => !!argosBrandAsset(b, "instagram"),
     async (b) => { const real = await argosRealAudience(b); return real ? { data: real } : null; },
-    (b) => ({ data: argosDemoAudience(b) }));
+    (b) => ({ data: argosDemoAudience(b) }), peek);
+});
+// Campagnes Google Ads du client (type, budget, statut) — réel dès que le compte Ads est mappé.
+ipcMain.handle("argos:adsCampaigns", (_e, brandId, period, forceRefresh, peek) => {
+  return argosCached(brandId, "adscamp", adsPeriodKey(period), forceRefresh, (b) => !!argosBrandAsset(b, "google_ads"),
+    async (b) => { const real = await argosAdsCampaigns(b, period); return real ? { data: real } : null; },
+    () => ({ data: { demo: true, campaigns: [] } }), peek);
+});
+// Mots-clés Google Ads du client (campagnes Search) — CPC, coût, clics réels.
+ipcMain.handle("argos:adsKeywords", (_e, brandId, period, forceRefresh, peek) => {
+  return argosCached(brandId, "adskw", adsPeriodKey(period), forceRefresh, (b) => !!argosBrandAsset(b, "google_ads"),
+    async (b) => { const real = await argosAdsKeywords(b, period); return real ? { data: real } : null; },
+    () => ({ data: { demo: true, keywords: [] } }), peek);
+});
+// Segments d'audience ciblés par les campagnes du client (Display / notoriété surtout).
+ipcMain.handle("argos:adsAudiences", (_e, brandId, period, forceRefresh, peek) => {
+  return argosCached(brandId, "adsaud", adsPeriodKey(period), forceRefresh, (b) => !!argosBrandAsset(b, "google_ads"),
+    async (b) => { const real = await argosAdsAudiences(b, period); return real ? { data: real } : null; },
+    () => ({ data: { demo: true, audiences: [] } }), peek);
+});
+// Ciblage géographique des campagnes du client (zones incluses/exclues + proximité).
+ipcMain.handle("argos:adsGeo", (_e, brandId, forceRefresh, peek) => {
+  return argosCached(brandId, "adsgeo", null, forceRefresh, (b) => !!argosBrandAsset(b, "google_ads"),
+    async (b) => { const real = await argosAdsGeo(b); return real ? { data: real } : null; },
+    () => ({ data: { demo: true, campaigns: [] } }), peek);
+});
+// Emplacements réels (sites, apps, YouTube) où le budget a été dépensé — « où est parti l'argent ».
+ipcMain.handle("argos:adsPlacements", (_e, brandId, period, forceRefresh, peek) => {
+  return argosCached(brandId, "adsplc2", adsPeriodKey(period), forceRefresh, (b) => !!argosBrandAsset(b, "google_ads"),
+    async (b) => { const real = await argosAdsPlacements(b, period); return real ? { data: real } : null; },
+    () => ({ data: { demo: true, placements: [] } }), peek);
+});
+// Emplacements déjà exclus (critères négatifs) — pour refléter l'état des boutons dans la modale.
+ipcMain.handle("argos:adsExclusions", async (_e, brandId) => {
+  const st = argosState(); const b = st.brands.find((x) => x.id === brandId);
+  if (!b) return { ok: false, error: "Marque inconnue." };
+  try { const map = await argosAdsExclusions(b); return { ok: true, exclusions: map || {} }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
+// Emplacements déjà ciblés explicitement (gérés) — reflète l'état du bouton « Relancer ».
+ipcMain.handle("argos:adsManaged", async (_e, brandId) => {
+  const st = argosState(); const b = st.brands.find((x) => x.id === brandId);
+  if (!b) return { ok: false, error: "Marque inconnue." };
+  try { const map = await argosAdsManaged(b); return { ok: true, managed: map || {} }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
+// ÉCRITURE réelle : exclure / réactiver un emplacement. Toujours déclenché par une action confirmée
+// côté renderer. Renvoie {ok, error?} — l'UI gère l'attente d'accès Basic (message dédié).
+ipcMain.handle("argos:adsPlacementAction", async (_e, brandId, action, spec) => {
+  const st = argosState(); const b = st.brands.find((x) => x.id === brandId);
+  if (!b) return { ok: false, error: "Marque inconnue." };
+  if (!["exclude", "reactivate", "target", "untarget"].includes(action)) return { ok: false, error: "Action invalide." };
+  try { const r = await argosAdsMutatePlacement(b, action, spec || {}); return { ok: true, ...r }; }
+  catch (e) { return { ok: false, error: e.message }; }
+});
+// Site web (GA4) et SEO (Search Console) — réel dès qu'une propriété/un site est mappé à la marque.
+ipcMain.handle("argos:web", (_e, brandId, days, forceRefresh, peek) => {
+  const d = Math.max(7, Math.min(+days || 30, 90));
+  return argosCached(brandId, "web", d, forceRefresh, (b) => !!argosBrandAsset(b, "google_analytics"),
+    async (b) => { const real = await argosRealWebAnalytics(b, d); return real ? { data: real } : null; },
+    (b) => ({ data: argosDemoWeb(b, d) }), peek);
+});
+// Audit technique : crawl déclenché à la demande (coûteux), résultat mis en cache 7 j dans argos.json.
+ipcMain.handle("argos:crawl", async (_e, brandId, forceRefresh, peek) => {
+  const st = argosState(); const b = st.brands.find((x) => x.id === brandId);
+  if (!b) return { ok: false, error: "Marque inconnue." };
+  const key = brandId + ":crawl";
+  const cached = st.cache[key];
+  if (!forceRefresh && cached && Date.now() - cached.fetchedAt < 7 * 86400000) return { ok: true, data: cached.data, cached: true, at: cached.fetchedAt };
+  if (peek) return { ok: true, data: null }; // ouverture de vue : ne pas lancer le crawl automatiquement
+  try {
+    const data = await argosCrawl(b);
+    const st2 = argosState(); st2.cache[key] = { data, fetchedAt: Date.now() }; argosSave(st2);
+    return { ok: true, data };
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+ipcMain.handle("argos:vitals", (_e, brandId, forceRefresh, peek) => {
+  return argosCached(brandId, "vitals", null, forceRefresh, (b) => !!argosBrandAsset(b, "search_console"),
+    async (b) => { const real = await argosRealVitals(b); return real ? { data: real } : null; },
+    (b) => ({ data: argosDemoVitals(b) }), peek);
+});
+ipcMain.handle("argos:seoIntel", (_e, brandId, days, forceRefresh, peek) => {
+  const d = Math.max(7, Math.min(+days || 30, 90));
+  return argosCached(brandId, "seoIntel", d, forceRefresh, (b) => !!argosBrandAsset(b, "search_console"),
+    async (b) => { const real = await argosRealSeoIntel(b, d); return real ? { data: real } : null; },
+    (b) => ({ data: argosDemoSeoIntel(b) }), peek);
+});
+ipcMain.handle("argos:seo", (_e, brandId, days, forceRefresh, peek) => {
+  const d = Math.max(7, Math.min(+days || 30, 90));
+  return argosCached(brandId, "seo", d, forceRefresh, (b) => !!argosBrandAsset(b, "search_console"),
+    async (b) => { const real = await argosRealSeo(b, d); return real ? { data: real } : null; },
+    (b) => ({ data: argosDemoSeo(b, d) }), peek);
+});
+// ── LECTEUR UNIFIÉ « snapshot » (Obj 2) ──────────────────────────────────────
+// Rassemble EN CACHE SEUL (aucun appel API) toutes les données déjà récupérées pour un client
+// et une période, bien classées par source. `missing` liste les types absents du cache → le
+// générateur de rapport sait quoi (re)générer (uniquement sur force / période neuve).
+// Table déclarative : [section, nom, store('argos'|'si'|'siPrefix'), builder(clé/préfixe depuis {days,pk,domain})]
+const ARGOS_SNAP_TYPES = [
+  ["google", "web", "argos", (c) => "web:" + c.days],
+  ["google", "seo", "argos", (c) => "seo:" + c.days],
+  ["google", "seoIntel", "argos", (c) => "seoIntel:" + c.days],
+  ["google", "vitals", "argos", () => "vitals"],
+  ["google", "adsCampaigns", "argos", (c) => "adscamp:" + c.pk],
+  ["google", "adsKeywords", "argos", (c) => "adskw:" + c.pk],
+  ["google", "adsAudiences", "argos", (c) => "adsaud:" + c.pk],
+  ["google", "adsGeo", "argos", () => "adsgeo"],
+  ["google", "adsPlacements", "argos", (c) => "adsplc2:" + c.pk],
+  ["google", "crawl", "argos", () => "crawl"],
+  ["meta", "overview", "argos", (c) => "ov:" + c.days],
+  ["meta", "inbox", "argos", () => "inbox"],
+  ["meta", "audience", "argos", () => "aud"],
+  ["ads", "totals", "argos", () => "ads"],
+  ["si", "domainOverview", "si", (c) => "domov:" + c.domain],
+  ["si", "rankedKw", "si", (c) => "rankkw:" + c.domain],
+  ["si", "seoCompetitors", "si", (c) => "seocomp:" + c.domain],
+  ["si", "backlinks", "si", (c) => "bl:" + c.domain],
+  ["si", "sea", "si", (c) => "sea:" + c.domain],
+  ["si", "localCompetitors", "siPrefix", (c) => "localcomp:v4:" + c.domain + ":"],
+];
+function argosSnapshot(brandId, period) {
+  const ast = argosState(); const b = ast.brands.find((x) => x.id === brandId);
+  if (!b) return { ok: false, error: "Marque inconnue." };
+  const per = period || { days: 30 };
+  const ctx = {
+    days: Math.max(7, Math.min((per.days) || 30, 90)),
+    pk: adsPeriodKey(per),
+    domain: (siBrandDomain(b) || "").replace(/^www\./, "").toLowerCase(),
+  };
+  const ac = ast.cache || {};
+  const sc = (() => { try { return siLoad().cache || {}; } catch { return {}; } })();
+  const sections = { google: {}, meta: {}, ads: {}, si: {} };
+  const fetchedAt = {}; const missing = [];
+  for (const [section, name, store, build] of ARGOS_SNAP_TYPES) {
+    let payload = null, ts = null;
+    if (store === "argos") {
+      const e = ac[brandId + ":" + build(ctx)];
+      if (e) { payload = (e.data !== undefined ? e.data : (({ fetchedAt, cached, stale, ...rest }) => rest)(e)); ts = e.fetchedAt || null; }
+    } else if (store === "si") {
+      const e = ctx.domain ? sc[build(ctx)] : null;
+      if (e) { payload = e.data; ts = e.at || null; }
+    } else if (store === "siPrefix") {
+      const prefix = ctx.domain ? build(ctx) : null;
+      const k = prefix ? Object.keys(sc).find((x) => x.startsWith(prefix)) : null;
+      if (k) { payload = sc[k].data; ts = sc[k].at || null; }
+    }
+    if (payload != null) { sections[section][name] = payload; fetchedAt[section + "." + name] = ts; }
+    else missing.push(section + "." + name);
+  }
+  return { ok: true, brand: { id: b.id, name: b.name, secteur: b.secteur || null, zone: b.zone || null }, period: per, generatedAt: Date.now(), ...sections, fetchedAt, missing };
+}
+// Snapshot cache-only (jamais d'appel API) — le générateur de rapport consomme ça.
+ipcMain.handle("argos:snapshot", (_e, brandId, period) => argosSnapshot(brandId, period));
+// Persistance des rapports générés : revoir un rapport = lecture disque, zéro appel.
+ipcMain.handle("argos:reportSave", (_e, brandId, period, snapshot) => {
+  const st = argosState(); if (!st.brands.find((x) => x.id === brandId)) return { ok: false, error: "Marque inconnue." };
+  const pk = adsPeriodKey(period || { days: 30 });
+  st.reports[brandId] = st.reports[brandId] || {};
+  st.reports[brandId][pk] = { generatedAt: Date.now(), period: period || { days: 30 }, snapshot };
+  return { ok: argosSave(st), periodKey: pk };
+});
+ipcMain.handle("argos:reportGet", (_e, brandId, period) => {
+  const st = argosState(); const pk = adsPeriodKey(period || { days: 30 });
+  const r = (st.reports[brandId] || {})[pk] || null;
+  return { ok: true, report: r, periodKey: pk, all: Object.keys(st.reports[brandId] || {}) };
 });
 // Buckets d'actifs disponibles PAR RÉSEAU, pour le glisser-déposer dans Titan — structure
 // générique prête à recevoir Google/TikTok/LinkedIn/X dès qu'ils seront connectés (buckets
@@ -2351,7 +3254,7 @@ ipcMain.handle("argos:networkBuckets", () => {
     { network: "meta_ads", label: "Meta Ads", icon: "📣", connected: !!st.connections.meta_ads, items: (assets.adAccounts || []).map((a) => ({ id: a.id, label: a.name })) },
     { network: "google_analytics", label: "Google Analytics", icon: "📈", connected: !!st.connections.google_analytics, items: (g.analytics || []).map((x) => ({ id: x.id, label: x.label })) },
     { network: "search_console", label: "Search Console", icon: "🔍", connected: !!st.connections.search_console, items: (g.searchConsole || []).map((x) => ({ id: x.id, label: x.label })) },
-    { network: "google_ads", label: "Google Ads", icon: "🔎", connected: !!st.connections.google_ads, items: (g.googleAds || []).map((x) => ({ id: x.id, label: x.label })) },
+    { network: "google_ads", label: "Google Ads", icon: "🔎", connected: !!st.connections.google_ads, items: (g.googleAds || []).map((x) => ({ id: x.id, label: x.label, sub: x.name ? x.id : null })) },
     { network: "google_business", label: "Google Business", icon: "📍", connected: !!st.connections.google_business, items: (g.business || []).map((x) => ({ id: x.id, label: x.label })) },
     { network: "tiktok", label: "TikTok", icon: "🎵", connected: false, items: [] },
     { network: "linkedin", label: "LinkedIn", icon: "💼", connected: false, items: [] },
@@ -2448,7 +3351,7 @@ ipcMain.handle("argos:connect", async (_e, platform, mode) => {
       argosSave(stG);
       const assets = await argosGoogleDiscover();
       const stG2 = argosState();
-      stG2.providers.google = { ...(stG2.providers.google || {}), assets };
+      stG2.providers.google = { ...(stG2.providers.google || {}), assets, ...(assets.loginCustomerId ? { login_customer_id: assets.loginCustomerId } : {}) };
       const mark = (surface, items, account) => { if (items.length) stG2.connections[surface] = { provider: "google", status: "connected", account: account + (items.length > 1 ? ` (+${items.length - 1})` : "") }; };
       mark("google_analytics", assets.analytics, assets.analytics[0]?.label || "");
       mark("search_console", assets.searchConsole, assets.searchConsole[0]?.label || "");
@@ -2498,6 +3401,27 @@ ipcMain.handle("argos:connect", async (_e, platform, mode) => {
       return { ok: true, summary: { pages: pages.length, ig: igPages.length, ads: r.adAccounts.length } };
     }
     return { ok: false, error: "La connexion " + provider + " arrive bientôt — pour l'instant, Meta est disponible." };
+  } catch (e) {
+    try { writeFileSync(join(app.getPath("userData"), "connect-debug.log"), new Date().toISOString() + " [" + provider + "] " + (e && e.stack ? e.stack : (e.message || String(e))) + "\n", { flag: "a" }); } catch {}
+    return { ok: false, error: e.message || String(e) };
+  }
+});
+// Re-synchronise les actifs Google sans repasser par le navigateur : réutilise le refresh_token
+// déjà stocké pour relancer la découverte (utile après avoir activé une API côté Google Cloud).
+ipcMain.handle("argos:googleResync", async () => {
+  try {
+    const g = argosState().providers.google;
+    if (!g || !g.refresh_token) return { ok: false, error: "Google n'est pas connecté — clique d'abord « Connecter un compte »." };
+    const assets = await argosGoogleDiscover();
+    const st = argosState();
+    st.providers.google = { ...(st.providers.google || {}), assets, ...(assets.loginCustomerId ? { login_customer_id: assets.loginCustomerId } : {}) };
+    const mark = (surface, items, account) => { if (items.length) st.connections[surface] = { provider: "google", status: "connected", account: account + (items.length > 1 ? ` (+${items.length - 1})` : "") }; };
+    mark("google_analytics", assets.analytics, assets.analytics[0]?.label || "");
+    mark("search_console", assets.searchConsole, assets.searchConsole[0]?.label || "");
+    mark("google_ads", assets.googleAds, assets.googleAds[0]?.label || "");
+    mark("google_business", assets.business, assets.business[0]?.label || "");
+    argosSave(st);
+    return { ok: true, summary: { ga: assets.analytics.length, sc: assets.searchConsole.length, ads: assets.googleAds.length, biz: assets.business.length, notes: [assets.analyticsError && "GA4 : " + assets.analyticsError, assets.googleAdsError && "Ads : " + assets.googleAdsError, assets.businessError && "Business : " + assets.businessError].filter(Boolean) } };
   } catch (e) { return { ok: false, error: e.message || String(e) }; }
 });
 ipcMain.handle("argos:connDisconnect", (_e, platform) => {
@@ -2506,6 +3430,754 @@ ipcMain.handle("argos:connDisconnect", (_e, platform) => {
 ipcMain.handle("argos:apiDocs", (_e, platform) => {
   const spec = (argosApis().apis || []).find((a) => a.platform === platform || (a.covers || []).includes(platform));
   return { ok: true, spec: spec || null };
+});
+
+// ══════════════════ SEARCH INTELLIGENCE — fondation ══════════════════
+// Fournisseurs de données SEO payants derrière une ABSTRACTION : un adaptateur par fournisseur
+// (DataForSEO en premier), renvoyant des DTO standardisés. Changer de fournisseur = changer
+// l'adaptateur, zéro impact sur le domaine. Toute donnée suivra la cascade : cache Olympus →
+// calcul local → Google gratuit → fournisseur payant (dernier recours, budgété et mis en cache).
+function siPath() { return join(app.getPath("userData"), "search-intel.json"); }
+function siDefault() { return { provider: "dataforseo", creds: {}, sandbox: false, budget: { soft: 20, hard: 50, spent: 0, currency: "EUR", history: [] }, cache: {}, seaKw: {} }; }
+function siLoad() {
+  const p = siPath();
+  if (!existsSync(p)) return siDefault();
+  try { return { ...siDefault(), ...JSON.parse(readFileSync(p, "utf8")) }; }
+  catch { try { renameSync(p, p + ".corrupt-" + Date.now()); } catch {} return siDefault(); }
+}
+function siSave(st) { return writeJsonAtomic(siPath(), st); }
+// Taux de conversion USD→EUR pour l'AFFICHAGE des estimations (DataForSEO facture en USD).
+const SI_USD_EUR = 0.92;
+// Registre fournisseurs + tarifs unitaires (USD/appel) — le PricingService estime AVANT tout appel.
+const SI_PROVIDERS = {
+  dataforseo: {
+    label: "DataForSEO", base: "https://api.dataforseo.com",
+    pricing: {
+      serp:           { unit: 0.002,  label: "Résultats Google d'un mot-clé (SERP)" },
+      keyword_volume: { unit: 0.0001, label: "Volume de recherche (par mot-clé)" },
+      keyword_ideas:  { unit: 0.01,   label: "Idées de mots-clés (par graine)" },
+      backlinks:      { unit: 0.02,   label: "Backlinks (par domaine)" },
+      competitors:    { unit: 0.02,   label: "Concurrents organiques (par domaine)" },
+      seo_competitors:{ unit: 0.02,   label: "Concurrents SEO (par domaine)" },
+      content_gap:    { unit: 0.02,   label: "Content gap (par concurrent)" },
+      domain_overview:{ unit: 0.02,   label: "Vue d'ensemble domaine" },
+      ranked_kw:      { unit: 0.02,   label: "Mots-clés positionnés (par domaine)" },
+      backlinks_sum:  { unit: 0.02,   label: "Résumé backlinks (par domaine)" },
+      sea_overview:   { unit: 0.02,   label: "Vue SEA (par domaine)" },
+      whois:          { unit: 0.13,   label: "Âge de domaine whois (lot de 8)" },
+      reviews:        { unit: 0.02,   label: "Avis Google d'un établissement (priorité haute)" },
+    },
+  },
+};
+function siProviderCfg() { return SI_PROVIDERS[siLoad().provider] || SI_PROVIDERS.dataforseo; }
+// URL de base — bascule sur le Sandbox DataForSEO (données factices, gratuit, sans vérif de compte)
+// quand le mode sandbox est actif, pour tester la plomberie sans dépenser ni bloquer sur la vérif.
+function siBase() { const st = siLoad(); const b = siProviderCfg().base; return st.sandbox ? b.replace("://api.", "://sandbox.") : b; }
+// Estimation de coût (EUR) pour un endpoint × un volume — aucun appel payant sans passer par là.
+function siEstimate(endpoint, count = 1) {
+  const p = siProviderCfg().pricing[endpoint];
+  if (!p) return null;
+  const usd = p.unit * count;
+  return { endpoint, count, usd: +usd.toFixed(4), eur: +(usd * SI_USD_EUR).toFixed(4), label: p.label };
+}
+// Auth DataForSEO = Basic (login:password). Secret chiffré au repos, jamais renvoyé au renderer.
+function siAuthHeader() {
+  const st = siLoad();
+  const login = st.creds.login, password = argosDecSecret(st.creds.password);
+  if (!login || !password) { const e = new Error("Fournisseur non connecté."); e.notConnected = true; throw e; }
+  return "Basic " + Buffer.from(`${login}:${password}`).toString("base64");
+}
+async function siDfsCall(path, body, timeoutMs = 30000) {
+  const r = await timedFetch(siBase() + path, { method: body ? "POST" : "GET", headers: { Authorization: siAuthHeader(), "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined }, timeoutMs);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(`DataForSEO ${r.status} : ${(j.status_message || r.statusText || "").slice(0, 140)}`);
+  if (j.status_code && j.status_code !== 20000) throw new Error(`DataForSEO ${j.status_code} : ${j.status_message}`);
+  return j;
+}
+// Test de connexion : endpoint GRATUIT renvoyant le solde du compte (prouve l'auth + budget dispo).
+async function siProviderTest() {
+  const j = await siDfsCall("/v3/appendix/user_data", null);
+  const d = j.tasks?.[0]?.result?.[0] || {};
+  return { ok: true, balance: d.money?.balance ?? null, currency: d.money?.currency || "USD", login: siLoad().creds.login };
+}
+// Budget : soft = avertissement, hard = blocage. siBudgetCheck avant, siCharge après chaque appel réel.
+function siBudgetState() {
+  const b = siLoad().budget;
+  return { soft: b.soft, hard: b.hard, spent: +(b.spent || 0).toFixed(2), currency: b.currency || "EUR", remaining: +((b.hard || 0) - (b.spent || 0)).toFixed(2), history: (b.history || []).slice(-50) };
+}
+function siBudgetCheck(eur) { const b = siLoad().budget; return (b.spent || 0) + eur <= b.hard; }
+function siCharge(endpoint, eur, meta = {}) {
+  const st = siLoad();
+  st.budget.spent = +((st.budget.spent || 0) + eur).toFixed(4);
+  st.budget.history = st.budget.history || [];
+  st.budget.history.push({ at: new Date().toISOString(), endpoint, eur: +(+eur).toFixed(4), ...meta });
+  if (st.budget.history.length > 500) st.budget.history = st.budget.history.slice(-500);
+  return siSave(st);
+}
+ipcMain.handle("si:status", () => {
+  const st = siLoad();
+  return { ok: true, provider: st.provider, providerLabel: siProviderCfg().label, connected: !!(st.creds.login && st.creds.password), login: st.creds.login || null, sandbox: !!st.sandbox,
+    budget: siBudgetState(),
+    pricing: Object.entries(siProviderCfg().pricing).map(([id, v]) => ({ id, label: v.label, eur: +(v.unit * SI_USD_EUR).toFixed(4) })) };
+});
+ipcMain.handle("si:saveKeys", (_e, login, password) => {
+  const st = siLoad();
+  if (login != null) st.creds.login = String(login).trim();
+  if (password) st.creds.password = argosEncSecret(String(password).trim());
+  return { ok: siSave(st) };
+});
+ipcMain.handle("si:test", async () => { try { return await siProviderTest(); } catch (e) { return { ok: false, error: e.message }; } });
+ipcMain.handle("si:setBudget", (_e, soft, hard) => {
+  const st = siLoad();
+  if (soft != null && soft !== "") st.budget.soft = Math.max(0, +soft || 0);
+  if (hard != null && hard !== "") st.budget.hard = Math.max(0, +hard || 0);
+  return { ok: siSave(st), budget: siBudgetState() };
+});
+ipcMain.handle("si:estimate", (_e, endpoint, count) => ({ ok: true, est: siEstimate(endpoint, count) }));
+ipcMain.handle("si:budget", () => ({ ok: true, budget: siBudgetState() }));
+ipcMain.handle("si:setSandbox", (_e, on) => { const st = siLoad(); st.sandbox = !!on; return { ok: siSave(st), sandbox: st.sandbox }; });
+
+// ── Adaptateur DataForSEO Labs (concurrentiel SEO) ──
+function siBrandDomain(brand) {
+  const site = argosBrandAsset(brand, "search_console");
+  if (!site) return null;
+  try { return new URL(/^https?:\/\//.test(site) ? site : "https://" + site).hostname.replace(/^www\./, ""); } catch { return null; }
+}
+const SI_LOC = { location_code: 2250, language_code: "fr" }; // France / français (défaut)
+async function siLabs(endpoint, body) {
+  const j = await siDfsCall(`/v3/dataforseo_labs/google/${endpoint}/live`, [{ ...body }]);
+  return j.tasks?.[0]?.result?.[0] || {};
+}
+// Concurrents organiques d'un domaine (qui se dispute les mêmes mots-clés) — 1 appel.
+async function siSeoCompetitors(brand, opts = {}) {
+  const domain = siBrandDomain(brand); if (!domain) throw new Error("Aucun site Search Console mappé à ce client.");
+  const res = await siLabs("competitors_domain", { target: domain, ...SI_LOC, limit: 12, exclude_top_domains: true, ...opts });
+  const items = (res.items || []).map((it) => {
+    const org = (it.full_domain_metrics && it.full_domain_metrics.organic) || (it.metrics && it.metrics.organic) || {};
+    return { domain: it.domain, common: it.intersections ?? null, avgPosition: it.avg_position != null ? +(+it.avg_position).toFixed(1) : null, keywords: org.count ?? null, etv: org.etv != null ? Math.round(org.etv) : null };
+  }).filter((x) => x.domain);
+  return { demo: false, domain, items };
+}
+// Content gap : mots-clés sur lesquels un concurrent se positionne mais PAS le client — 1 appel.
+async function siContentGap(brand, competitorDomain) {
+  const domain = siBrandDomain(brand); if (!domain) throw new Error("Aucun site Search Console mappé.");
+  if (!competitorDomain) throw new Error("Domaine concurrent manquant.");
+  const res = await siLabs("domain_intersection", { target1: competitorDomain, target2: domain, intersections: false, ...SI_LOC, limit: 30, order_by: ["first_domain_serp_element.etv,desc"] });
+  const items = (res.items || []).map((it) => {
+    const kd = it.keyword_data || {};
+    const ki = kd.keyword_info || {};
+    const rank = it.first_domain_serp_element || {};
+    return { keyword: kd.keyword || it.keyword, volume: ki.search_volume ?? null, cpc: ki.cpc ?? null, competition: ki.competition_level || ki.competition || null, position: rank.rank_absolute ?? rank.rank_group ?? null };
+  }).filter((x) => x.keyword);
+  return { demo: false, target: domain, competitor: competitorDomain, items };
+}
+// Vue d'ensemble organique + payante d'un domaine (mots-clés, trafic estimé, distribution de positions).
+async function siDomainOverview(brand, domainOverride) {
+  const domain = domainOverride || siBrandDomain(brand); if (!domain) throw new Error("Aucun site Search Console mappé.");
+  const res = await siLabs("domain_rank_overview", { target: domain, ...SI_LOC });
+  const it = (res.items || [])[0] || {};
+  const m = it.metrics || {};
+  const org = m.organic || {}, paid = m.paid || {};
+  const pick = (o) => ({ count: o.count ?? null, etv: o.etv != null ? Math.round(o.etv) : null, value: o.estimated_paid_traffic_cost != null ? Math.round(o.estimated_paid_traffic_cost) : null,
+    pos1: o.pos_1 ?? null, pos23: o.pos_2_3 ?? null, pos410: o.pos_4_10 ?? null, pos1120: o.pos_11_20 ?? null, pos2130: o.pos_21_30 ?? null, pos3140: o.pos_31_40 ?? null, pos4150: o.pos_41_50 ?? null, pos51100: o.pos_51_100 ?? null });
+  return { demo: false, domain, organic: pick(org), paid: pick(paid) };
+}
+// Mots-clés sur lesquels le domaine se positionne (top par trafic estimé).
+async function siRankedKeywords(brand, domainOverride) {
+  const domain = domainOverride || siBrandDomain(brand); if (!domain) throw new Error("Aucun site Search Console mappé.");
+  const res = await siLabs("ranked_keywords", { target: domain, ...SI_LOC, limit: 40, order_by: ["ranked_serp_element.serp_item.etv,desc"] });
+  const items = (res.items || []).map((it) => {
+    const kd = it.keyword_data || {}, ki = kd.keyword_info || {};
+    const el = it.ranked_serp_element?.serp_item || {};
+    return { keyword: kd.keyword || null, volume: ki.search_volume ?? null, cpc: ki.cpc ?? null, position: el.rank_absolute ?? el.rank_group ?? null, etv: el.etv != null ? Math.round(el.etv) : null, url: el.url || null };
+  }).filter((x) => x.keyword);
+  return { demo: false, domain, items };
+}
+// Mots-clés du site avec position VÉRIFIÉE EN DIRECT : on récupère la liste des mots-clés (base
+// DataForSEO) puis on interroge le SERP live de chacun (top 10) pour la position réelle du jour —
+// et on met chaque SERP en cache, si bien que la loupe s'ouvre ensuite instantanément et cohérente.
+async function siKeywordsVerified(brand) {
+  const domain = siBrandDomain(brand); if (!domain) throw new Error("Aucun site Search Console mappé.");
+  const res = await siLabs("ranked_keywords", { target: domain, ...SI_LOC, limit: 10, order_by: ["ranked_serp_element.serp_item.etv,desc"] });
+  const dbItems = (res.items || []).map((it) => { const kd = it.keyword_data || {}, ki = kd.keyword_info || {}; return { keyword: kd.keyword || null, volume: ki.search_volume ?? null }; }).filter((x) => x.keyword);
+  const st0 = siLoad();
+  const results = await Promise.all(dbItems.map(async (k) => {
+    const ck = "serp:" + domain + ":" + k.keyword;
+    const c = st0.cache[ck];
+    if (c && Date.now() - c.at < 7 * 86400000) return { k, serp: c.data, fresh: false };
+    try { return { k, serp: await siSerp(brand, k.keyword), fresh: true, ck }; }
+    catch { return { k, serp: null, fresh: false }; }
+  }));
+  const st = siLoad(); let serpCalls = 0;
+  for (const r of results) if (r.fresh && r.serp) { st.cache[r.ck] = { at: Date.now(), data: r.serp }; serpCalls++; } // écriture groupée (pas de race)
+  if (serpCalls) siSave(st);
+  const items = results.map((r) => ({ keyword: r.k.keyword, volume: r.k.volume, position: r.serp ? r.serp.myPosition : null })).sort((a, b) => (a.position ?? 999) - (b.position ?? 999));
+  return { demo: false, domain, items, serpCalls };
+}
+// Résultats Google (SERP) d'un mot-clé : le classement organique réel. Marque les sites placés
+// DEVANT le client (position inférieure à la sienne) pour un mot-clé donné.
+async function siSerp(brand, keyword) {
+  if (!keyword) throw new Error("Mot-clé manquant.");
+  const domain = siBrandDomain(brand);
+  const j = await siDfsCall("/v3/serp/google/organic/live/regular", [{ keyword, ...SI_LOC, depth: 20 }]);
+  const items = (j.tasks?.[0]?.result?.[0]?.items || []).filter((it) => it.type === "organic").map((it) => ({
+    position: it.rank_absolute ?? it.rank_group ?? null, domain: (it.domain || "").replace(/^www\./, ""), title: it.title || null, url: it.url || null,
+  })).filter((x) => x.domain);
+  const mine = domain ? items.find((x) => x.domain.replace(/^www\./, "") === domain.replace(/^www\./, "")) : null;
+  return { demo: false, keyword, domain, myPosition: mine ? mine.position : null, items };
+}
+// Résumé du profil de backlinks (domaines référents, liens, autorité).
+async function siBacklinksSummary(brand, domainOverride) {
+  const domain = domainOverride || siBrandDomain(brand); if (!domain) throw new Error("Aucun site Search Console mappé.");
+  const j = await siDfsCall("/v3/backlinks/summary/live", [{ target: domain, internal_list_limit: 10, backlinks_status_type: "live" }]);
+  const r = j.tasks?.[0]?.result?.[0] || {};
+  return { demo: false, domain, rank: r.rank ?? null, backlinks: r.backlinks ?? null, referringDomains: r.referring_domains ?? null, referringMainDomains: r.referring_main_domains ?? null, brokenBacklinks: r.broken_backlinks ?? null, referringPages: r.referring_pages ?? null, dofollow: r.referring_links_attributes?.dofollow ?? null };
+}
+// Données MARCHÉ d'une liste de mots-clés (Keywords Data / Google Ads) : volume, CPC moyen, niveau de
+// concurrence, fourchette d'enchères haut de page. 1 appel pour toute la liste (batch, ~très bon marché).
+async function siKeywordMarket(keywords, locationName) {
+  const kws = [...new Set((keywords || []).map((k) => String(k || "").trim().toLowerCase()).filter(Boolean))].slice(0, 200);
+  if (!kws.length) return { demo: false, items: [] };
+  const loc = (locationName || "").trim() ? { location_name: locationName.trim(), language_code: "fr" } : SI_LOC;
+  const j = await siDfsCall("/v3/keywords_data/google_ads/search_volume/live", [{ keywords: kws, ...loc }]);
+  const items = (j.tasks?.[0]?.result || []).map((r) => ({
+    keyword: r.keyword, volume: r.search_volume ?? null, cpc: r.cpc != null ? +(+r.cpc).toFixed(2) : null,
+    competition: r.competition || null, competitionIndex: r.competition_index ?? null,
+    lowBid: r.low_top_of_page_bid != null ? +(+r.low_top_of_page_bid).toFixed(2) : null,
+    highBid: r.high_top_of_page_bid != null ? +(+r.high_top_of_page_bid).toFixed(2) : null,
+  }));
+  return { demo: false, items };
+}
+// Zone la plus « propre » (pays/ville, pas code postal) déduite du géociblage des campagnes actives.
+function deriveZoneFromGeo(geo) {
+  if (!geo || !geo.campaigns) return "";
+  const locs = [];
+  for (const c of geo.campaigns) if (c.current) for (const l of (c.locations || [])) locs.push(l);
+  const named = locs.filter((l) => !l.proximity && !/^\d/.test(l.name || "")); // exclut "06000,…"
+  const pick = named[0] || locs[0]; if (!pick) return "";
+  return (pick.name || "").split(",")[0].split(" (")[0].trim(); // "Monaco (country)" → "Monaco"
+}
+// Terme d'activité déduit des mots-clés de la campagne (à défaut de secteur renseigné).
+function deriveSectorFromKeywords(kwR) {
+  const kws = ((kwR && kwR.keywords) || []).filter((k) => k.current).map((k) => (k.keyword || "").trim()).filter(Boolean);
+  if (!kws.length) return "";
+  return kws.slice().sort((a, z) => z.length - a.length)[0]; // le plus spécifique (ex. « cuisine française »)
+}
+// Distance à vol d'oiseau (km) entre deux points géo (haversine).
+function haversineKm(lat1, lon1, lat2, lon2) {
+  const R = 6371, toRad = (x) => x * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return +(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))).toFixed(2);
+}
+// Concurrents LOCAUX réels via Google Maps (DataForSEO) : vrais commerces du secteur dans la zone
+// (ex. restaurants de Monaco). Secteur + zone AUTO-DÉDUITS de la campagne si non renseignés.
+// `depth` = nombre de résultats (20 pour les cartes, jusqu'à 100 pour la vue Notoriété).
+async function siLocalCompetitors(brand, depth) {
+  let sector = (brand.secteur || "").trim();
+  let zone = (brand.zone || "").trim();
+  const auto = [];
+  if (!sector || !zone) {
+    const [geo, kwR] = await Promise.all([argosAdsGeo(brand).catch(() => null), argosAdsKeywords(brand, { days: 90 }).catch(() => null)]);
+    if (!zone) { zone = deriveZoneFromGeo(geo); if (zone) auto.push("zone"); }
+    if (!sector) { sector = deriveSectorFromKeywords(kwR); if (sector) auto.push("secteur"); }
+  }
+  if (!sector && !zone) { const e = new Error("Impossible de déduire secteur/zone : lance une campagne géociblée avec des mots-clés, ou renseigne-les dans les Réglages."); e.noSector = true; throw e; }
+  const d = Math.max(20, Math.min(+depth || 20, 100));
+  const keyword = zone ? `${sector} ${zone}`.trim() : sector;
+  const body = { keyword, language_code: "fr", depth: d };
+  if (zone) body.location_name = zone; else body.location_code = 2250;
+  const j = await siDfsCall("/v3/serp/google/maps/live/advanced", [{ ...body }]);
+  const norm = (x) => (x || "").replace(/^www\./, "").toLowerCase();
+  const myDomain = siBrandDomain(brand);
+  const items = (j.tasks?.[0]?.result?.[0]?.items || []).map((it) => ({
+    title: it.title || null, rating: it.rating?.value ?? null, reviews: it.rating?.votes_count ?? null,
+    category: it.category || null, address: it.address || null, domain: norm(it.domain) || null,
+    phone: it.phone || null, url: it.url || null, position: it.rank_absolute ?? it.rank_group ?? null,
+    latitude: it.latitude ?? null, longitude: it.longitude ?? null,
+    place_id: it.place_id || null, cid: it.cid || null,
+    mine: !!(myDomain && it.domain && norm(it.domain) === norm(myDomain)),
+  })).filter((x) => x.title);
+  // Note + coordonnées de l'établissement DU CLIENT (comparaison + calcul de distance) — lookup par nom.
+  let me = null;
+  try {
+    const mj = await siDfsCall("/v3/serp/google/maps/live/advanced", [{ keyword: `${brand.name} ${zone}`.trim(), language_code: "fr", ...(zone ? { location_name: zone } : { location_code: 2250 }), depth: 5 }]);
+    const first = (mj.tasks?.[0]?.result?.[0]?.items || [])[0];
+    if (first && first.title) me = { title: first.title, rating: first.rating?.value ?? null, reviews: first.rating?.votes_count ?? null, category: first.category || null, latitude: first.latitude ?? null, longitude: first.longitude ?? null, place_id: first.place_id || null, cid: first.cid || null };
+  } catch {}
+  // Secours : si le lookup nominatif échoue, on prend le client trouvé dans SES PROPRES résultats
+  // (mine:true, matché par domaine) — garantit note/avis/coordonnées → distances fiables.
+  const mineInResults = items.find((c) => c.mine);
+  if (mineInResults) {
+    if (!me) me = { title: mineInResults.title, category: mineInResults.category };
+    if (me.rating == null) me.rating = mineInResults.rating;
+    if (me.reviews == null) me.reviews = mineInResults.reviews;
+    if (me.latitude == null) { me.latitude = mineInResults.latitude; me.longitude = mineInResults.longitude; }
+    if (!me.place_id) me.place_id = mineInResults.place_id;
+  }
+  // Distance de chaque concurrent à l'établissement du client (si coordonnées dispo).
+  if (me && me.latitude != null && me.longitude != null) {
+    for (const c of items) if (c.latitude != null && c.longitude != null) c.distance = haversineKm(me.latitude, me.longitude, c.latitude, c.longitude);
+  }
+  return { demo: false, keyword, sector, zone, auto, me, competitors: items };
+}
+// Ancienneté (proxy) = âge du nom de domaine (date d'enregistrement whois de DataForSEO).
+// L'endpoint whois/overview facture au FORFAIT par appel et accepte jusqu'à 8 domaines (filtre `in`).
+// siDomainAges(domaines) → { ageByDomain: {domaine: mois|null}, calls } (null = domaine absent de la base).
+const SI_WHOIS_BATCH = 8;
+const domAgeMonths = (created) => { if (!created) return null; const t = Date.parse((created || "").replace(" +00:00", "Z").replace(" ", "T")); return isNaN(t) ? null : Math.max(0, Math.round((Date.now() - t) / (30.44 * 86400000))); };
+async function siDomainAges(domains) {
+  const uniq = [...new Set((domains || []).map((x) => (x || "").replace(/^www\./, "").trim().toLowerCase()).filter(Boolean))];
+  const ageByDomain = {}; let calls = 0;
+  for (let i = 0; i < uniq.length; i += SI_WHOIS_BATCH) {
+    const batch = uniq.slice(i, i + SI_WHOIS_BATCH);
+    calls++;
+    const j = await siDfsCall("/v3/domain_analytics/whois/overview/live", [{ limit: SI_WHOIS_BATCH, filters: [["domain", "in", batch]] }]);
+    const items = j.tasks?.[0]?.result?.[0]?.items || [];
+    const found = {}; for (const it of items) if (it.domain) found[it.domain.replace(/^www\./, "").toLowerCase()] = domAgeMonths(it.created_datetime);
+    for (const d of batch) ageByDomain[d] = (d in found) ? found[d] : null; // null = introuvable → « NC »
+  }
+  return { ageByDomain, calls };
+}
+// Avis Google d'un établissement (par place_id) — endpoint asynchrone task_post/get.
+// Renvoie les 10 meilleurs et 10 pires avis parmi les avis récupérés (tri par note, récence en départage).
+async function siPlaceReviews(placeId, depth = 40) {
+  if (!placeId) return null;
+  // priority 2 (haute) = traitement plus rapide côté DataForSEO (les tâches avis sont lentes en priorité normale).
+  const post = await siDfsCall("/v3/business_data/google/reviews/task_post", [{ place_id: placeId, depth, priority: 2, language_code: "fr", location_code: 2250 }]);
+  const id = post.tasks?.[0]?.id;
+  if (!id) return null;
+  const ts = (s) => Date.parse((s || "").replace(" +00:00", "Z").replace(" ", "T")) || 0;
+  const t0 = Date.now();
+  while (Date.now() - t0 < 120000) {
+    await new Promise((r) => setTimeout(r, 3000));
+    let g; try { g = await siDfsCall(`/v3/business_data/google/reviews/task_get/${id}`, null); } catch (e) { if (/404|40602|40601/i.test(e.message)) continue; throw e; }
+    const task = g.tasks?.[0];
+    if (task?.status_code === 20000) {
+      const raw = (task.result?.[0]?.items || []).filter((it) => it.rating && it.rating.value != null);
+      const map = (it) => ({ rating: it.rating.value, text: (it.review_text || "").trim().slice(0, 500), timeAgo: it.time_ago || null, timestamp: it.timestamp || null, author: it.profile_name || null });
+      const sorted = raw.slice().sort((a, b) => (b.rating.value - a.rating.value) || (ts(b.timestamp) - ts(a.timestamp)));
+      const best = sorted.slice(0, 10).map(map);
+      const worst = sorted.slice(10).slice(-10).reverse().map(map); // pires (hors des 10 meilleurs), du pire au moins pire
+      return { total: task.result?.[0]?.reviews_count ?? raw.length, fetched: raw.length, best, worst };
+    }
+    if (task && ![40602, 40601].includes(task.status_code)) break;
+  }
+  return null; // pas prête à temps
+}
+// Vue SEA : présence publicitaire (Google Ads) du client + des concurrents détectés — via la
+// section "paid" de domain_rank_overview de chaque domaine (qui investit, sur combien de mots-clés).
+async function siSeaOverview(brand) {
+  const domain = siBrandDomain(brand); if (!domain) throw new Error("Aucun site Search Console mappé.");
+  // concurrents (depuis le cache si dispo, sinon on découvre)
+  const st = siLoad();
+  const norm = (x) => (x || "").replace(/^www\./, "");
+  let comps = (st.cache["seocomp:" + domain]?.data?.items || []).map((c) => c.domain);
+  if (!comps.length) { const cr = await siSeoCompetitors(brand); comps = (cr.items || []).map((c) => c.domain); }
+  comps = comps.filter((c) => norm(c) !== norm(domain)).slice(0, 5); // le client lui-même n'est pas son concurrent
+  const domains = [domain, ...comps];
+  const rows = [];
+  for (const d of domains) {
+    try { const ov = await siDomainOverview(brand, d); rows.push({ domain: d, mine: d === domain, paidKeywords: ov.paid.count, paidTraffic: ov.paid.etv, paidCost: ov.paid.value }); }
+    catch { rows.push({ domain: d, mine: d === domain, paidKeywords: null }); }
+  }
+  return { demo: false, domain, rows };
+}
+// ── Veille SEA MANUELLE : l'utilisateur choisit ses mots-clés (persistés par marque) ; pour chacun
+// on lit le SERP « advanced » → la POSITION du client (organique) + s'il annonce, et le paysage
+// publicitaire (annonces des concurrents : annonceur, titre, description). Rafraîchi 7 j + à la demande.
+function siSeaKwLoad(brandId) { const st = siLoad(); return (st.seaKw && st.seaKw[brandId]) || []; }
+function siSeaKwSave(brandId, list) { const st = siLoad(); st.seaKw = st.seaKw || {}; st.seaKw[brandId] = list; return siSave(st); }
+async function siSeaKwFetch(brand, kw) {
+  const domain = siBrandDomain(brand);
+  const norm = (x) => (x || "").replace(/^www\./, "");
+  const hostOf = (u) => { try { return norm(new URL(u).hostname); } catch { return null; } };
+  const j = await siDfsCall("/v3/serp/google/organic/live/advanced", [{ keyword: kw, ...SI_LOC, depth: 20 }]);
+  const items = j.tasks?.[0]?.result?.[0]?.items || [];
+  const ads = [], organic = [];
+  for (const it of items) {
+    const d = norm(it.domain || "") || hostOf(it.url);
+    if (!d) continue;
+    if (it.type === "paid") ads.push({ domain: d, title: it.title || null, description: it.description || null, url: it.url || null });
+    else if (it.type === "organic") organic.push({ position: it.rank_absolute ?? it.rank_group ?? null, domain: d, title: it.title || null, url: it.url || null });
+  }
+  const mine = domain ? organic.find((o) => norm(o.domain) === norm(domain)) : null;
+  const iAdvertise = domain ? ads.some((a) => norm(a.domain) === norm(domain)) : false;
+  return { keyword: kw, myPosition: mine ? mine.position : null, iAdvertise, adCount: ads.length, ads, organic: organic.slice(0, 10) };
+}
+// Exécute + met en cache (7 j, local + cloud) le SERP d'un mot-clé SEA. force=true ignore la fraîcheur.
+async function siSeaKwRun(brandId, kw, force) {
+  const b = argosState().brands.find((x) => x.id === brandId); if (!b) return { ok: false, error: "Marque inconnue." };
+  const key = "seaadv:" + siDom(brandId) + ":" + kw;
+  const st0 = siLoad(); const cached = st0.cache[key];
+  if (!force && cached && Date.now() - cached.at < 7 * 86400000) return { ok: true, data: cached.data, at: cached.at, cached: true };
+  if (!force) { const cloud = await siCloudGet(key); if (cloud != null) { const st = siLoad(); st.cache[key] = { at: Date.now(), data: cloud }; siSave(st); return { ok: true, data: cloud, at: Date.now(), cached: true, source: "cloud" }; } }
+  const est = siEstimate("serp", 1);
+  if (!st0.sandbox && est && !siBudgetCheck(est.eur)) return { ok: false, budgetBlocked: true, error: "Budget mensuel atteint (blocage). Augmente la limite dans Titan." };
+  let data; try { data = await siSeaKwFetch(b, kw); } catch (e) { return { ok: false, error: e.message }; }
+  const st = siLoad(); st.cache[key] = { at: Date.now(), data }; siSave(st);
+  if (!st0.sandbox) { siCloudSet(key, data); siCharge("serp", est.eur, { key }); }
+  return { ok: true, data, at: Date.now(), cost: st0.sandbox ? 0 : est.eur, budget: siBudgetState() };
+}
+// Exécute une action payante : cache (dédup) → estimation → check budget → appel → facturation.
+// En sandbox : gratuit, non facturé, non plafonné. TTL du cache : 7 j (données concurrentielles stables).
+async function siPaidAction(brandId, endpoint, cacheKey, runFn, peek, force) {
+  const b = argosState().brands.find((x) => x.id === brandId);
+  if (!b) return { ok: false, error: "Marque inconnue." };
+  const st0 = siLoad();
+  const cached = st0.cache[cacheKey];
+  if (!force && cached && Date.now() - cached.at < 7 * 86400000) return { ok: true, data: cached.data, cached: true, sandbox: st0.sandbox };
+  // Cache cloud (Supabase) : si la pré-chauffe hebdo a déjà rempli l'entrée, on la lit (gratuit)
+  // et on repeuple le cache local → affichage instantané même sur un poste neuf, sans appel payant.
+  if (!force) {
+    const cloud = await siCloudGet(cacheKey);
+    if (cloud != null) { const st = siLoad(); st.cache[cacheKey] = { at: Date.now(), data: cloud }; siSave(st); return { ok: true, data: cloud, cached: true, source: "cloud", sandbox: st0.sandbox }; }
+  }
+  if (peek) return { ok: true, data: null, peeked: true, sandbox: st0.sandbox }; // lecture cache seule : pas d'appel payant
+  const est = siEstimate(endpoint, 1);
+  if (!st0.sandbox && est && !siBudgetCheck(est.eur)) return { ok: false, error: "Budget mensuel atteint (blocage). Augmente la limite dans Titan.", budgetBlocked: true };
+  let data;
+  try { data = await runFn(b); }
+  catch (e) { return { ok: false, error: e.message }; }
+  const st = siLoad(); st.cache[cacheKey] = { at: Date.now(), data }; siSave(st);
+  if (!st0.sandbox) siCloudSet(cacheKey, data); // réplique dans Supabase (best-effort, silencieux si absent)
+  if (!st0.sandbox && est) siCharge(endpoint, est.eur, { key: cacheKey });
+  return { ok: true, data, cost: st0.sandbox ? 0 : (est ? est.eur : 0), sandbox: st0.sandbox, budget: siBudgetState() };
+}
+ipcMain.handle("si:seoCompetitors", (_e, brandId, peek) => {
+  const b = argosState().brands.find((x) => x.id === brandId);
+  return siPaidAction(brandId, "seo_competitors", "seocomp:" + (b ? siBrandDomain(b) : brandId), (bb) => siSeoCompetitors(bb), peek);
+});
+ipcMain.handle("si:contentGap", (_e, brandId, competitor, peek) => {
+  const b = argosState().brands.find((x) => x.id === brandId);
+  return siPaidAction(brandId, "content_gap", "gap:" + (b ? siBrandDomain(b) : brandId) + ":" + competitor, (bb) => siContentGap(bb, competitor), peek);
+});
+const siDom = (brandId) => { const b = argosState().brands.find((x) => x.id === brandId); return b ? siBrandDomain(b) : brandId; };
+// `domain` optionnel = override pour analyser le poids SEO d'un CONCURRENT (clé de cache par ce domaine).
+ipcMain.handle("si:domainOverview", (_e, brandId, peek, domain) => {
+  const dom = (domain || "").replace(/^www\./, "").trim().toLowerCase() || siDom(brandId);
+  return siPaidAction(brandId, "domain_overview", "domov:" + dom, (bb) => siDomainOverview(bb, domain || null), peek);
+});
+ipcMain.handle("si:rankedKw", (_e, brandId, peek) => siPaidAction(brandId, "ranked_kw", "rankkw:" + siDom(brandId), (bb) => siRankedKeywords(bb), peek));
+// Estimation SEA d'un domaine CONCURRENT : mots-clés payants + dépense estimée + ses mots-clés visibles.
+ipcMain.handle("si:competitorSea", async (_e, brandId, domain, peek) => {
+  const b = argosState().brands.find((x) => x.id === brandId); if (!b) return { ok: false, error: "Marque inconnue." };
+  domain = (domain || "").replace(/^www\./, "").trim().toLowerCase(); if (!domain) return { ok: false, error: "Domaine manquant." };
+  const key = "compsea:" + domain;
+  const st0 = siLoad(); const cached = st0.cache[key];
+  if (cached && Date.now() - cached.at < 7 * 86400000) return { ok: true, data: cached.data, cached: true, sandbox: st0.sandbox };
+  const cloud = await siCloudGet(key);
+  if (cloud != null) { const st = siLoad(); st.cache[key] = { at: Date.now(), data: cloud }; siSave(st); return { ok: true, data: cloud, cached: true, source: "cloud", sandbox: st0.sandbox }; }
+  if (peek) return { ok: true, data: null, peeked: true, sandbox: st0.sandbox };
+  const e1 = siEstimate("domain_overview", 1), e2 = siEstimate("ranked_kw", 1);
+  const totalEur = (e1 ? e1.eur : 0) + (e2 ? e2.eur : 0);
+  if (!st0.sandbox && !siBudgetCheck(totalEur)) return { ok: false, budgetBlocked: true, error: "Budget mensuel atteint (blocage). Augmente la limite dans Titan." };
+  let ov, rk;
+  try { [ov, rk] = await Promise.all([siDomainOverview(b, domain), siRankedKeywords(b, domain)]); } catch (e) { return { ok: false, error: e.message }; }
+  const data = { domain, paid: ov.paid, organic: ov.organic, keywords: rk.items };
+  const st = siLoad(); st.cache[key] = { at: Date.now(), data }; siSave(st);
+  if (!st0.sandbox) { siCloudSet(key, data); siCharge("domain_overview", e1 ? e1.eur : 0, { key }); siCharge("ranked_kw", e2 ? e2.eur : 0, { key }); }
+  return { ok: true, data, cost: st0.sandbox ? 0 : totalEur, sandbox: st0.sandbox, budget: siBudgetState() };
+});
+ipcMain.handle("si:backlinks", (_e, brandId, peek) => siPaidAction(brandId, "backlinks_sum", "bl:" + siDom(brandId), (bb) => siBacklinksSummary(bb), peek));
+ipcMain.handle("si:serp", (_e, brandId, keyword, peek) => siPaidAction(brandId, "serp", "serp:" + siDom(brandId) + ":" + (keyword || ""), (bb) => siSerp(bb, keyword), peek));
+// Données marché (volume / CPC / concurrence) d'une liste de mots-clés — 1 appel batch, cache 7 j.
+ipcMain.handle("si:kwMarket", async (_e, brandId, keywords, peek, location) => {
+  const b = argosState().brands.find((x) => x.id === brandId); if (!b) return { ok: false, error: "Marque inconnue." };
+  const kws = [...new Set((keywords || []).map((k) => String(k || "").trim().toLowerCase()).filter(Boolean))];
+  if (!kws.length) return { ok: true, data: { items: [] } };
+  const loc = (location || "").trim();
+  const key = "kwmarket:" + siDom(brandId) + ":" + (loc.toLowerCase() || "fr") + ":" + kws.slice().sort().join("|");
+  const st0 = siLoad(); const cached = st0.cache[key];
+  if (cached && Date.now() - cached.at < 7 * 86400000) return { ok: true, data: cached.data, cached: true, sandbox: st0.sandbox };
+  const cloud = await siCloudGet(key);
+  if (cloud != null) { const st = siLoad(); st.cache[key] = { at: Date.now(), data: cloud }; siSave(st); return { ok: true, data: cloud, cached: true, source: "cloud", sandbox: st0.sandbox }; }
+  if (peek) return { ok: true, data: null, peeked: true, sandbox: st0.sandbox };
+  const est = siEstimate("keyword_volume", kws.length);
+  if (!st0.sandbox && est && !siBudgetCheck(est.eur)) return { ok: false, error: "Budget mensuel atteint (blocage). Augmente la limite dans Titan.", budgetBlocked: true };
+  let data; try { data = await siKeywordMarket(kws, loc || null); } catch (e) { return { ok: false, error: e.message }; }
+  const st = siLoad(); st.cache[key] = { at: Date.now(), data }; siSave(st);
+  if (!st0.sandbox) { siCloudSet(key, data); siCharge("keyword_volume", est ? est.eur : 0, { key }); }
+  return { ok: true, data, cost: st0.sandbox ? 0 : (est ? est.eur : 0), sandbox: st0.sandbox, budget: siBudgetState() };
+});
+// Concurrents LOCAUX réels (Google Maps) — vrais commerces du secteur+zone du client. Cache 7 j.
+ipcMain.handle("si:localCompetitors", async (_e, brandId, peek, depth) => {
+  const b = argosState().brands.find((x) => x.id === brandId); if (!b) return { ok: false, error: "Marque inconnue." };
+  const d = Math.max(20, Math.min(+depth || 20, 100));
+  // depth 20 garde l'ancienne clé (cache existant préservé pour les cartes) ; les profondeurs > 20 ont leur clé.
+  // v4 = purge des caches sans distances (fetch client raté figé par le cache-first).
+  const key = "localcomp:v4:" + siDom(brandId) + ":" + ((b.secteur || "").trim().toLowerCase() || "auto") + ":" + ((b.zone || "").trim().toLowerCase() || "auto") + (d > 20 ? ":d" + d : "");
+  const st0 = siLoad(); const cached = st0.cache[key];
+  if (cached && Date.now() - cached.at < 7 * 86400000) return { ok: true, data: cached.data, cached: true, sandbox: st0.sandbox };
+  const cloud = await siCloudGet(key);
+  if (cloud != null) { const st = siLoad(); st.cache[key] = { at: Date.now(), data: cloud }; siSave(st); return { ok: true, data: cloud, cached: true, source: "cloud", sandbox: st0.sandbox }; }
+  if (peek) return { ok: true, data: null, peeked: true, sandbox: st0.sandbox };
+  const est = siEstimate("serp", 1);
+  if (!st0.sandbox && est && !siBudgetCheck(est.eur)) return { ok: false, error: "Budget mensuel atteint (blocage). Augmente la limite dans Titan.", budgetBlocked: true };
+  let data; try { data = await siLocalCompetitors(b, d); } catch (e) { return { ok: false, error: e.message, noSector: !!e.noSector }; }
+  const st = siLoad(); st.cache[key] = { at: Date.now(), data }; siSave(st);
+  if (!st0.sandbox) { siCloudSet(key, data); siCharge("serp", est ? est.eur : 0, { key }); }
+  return { ok: true, data, cost: st0.sandbox ? 0 : (est ? est.eur : 0), sandbox: st0.sandbox, budget: siBudgetState() };
+});
+// Ancienneté (âge de domaine whois) pour l'établissement du client + ses concurrents locaux.
+// domains = domaines des concurrents (le domaine du client est ajouté côté serveur). Cache 30 j par domaine
+// (la date de création d'un domaine ne change jamais). peek = ne renvoie que le cache, aucun appel payant.
+ipcMain.handle("si:localAges", async (_e, brandId, domains, peek) => {
+  const b = argosState().brands.find((x) => x.id === brandId);
+  if (!b) return { ok: false, error: "Marque inconnue." };
+  const meDomain = (siBrandDomain(b) || "").replace(/^www\./, "").toLowerCase() || null;
+  const wanted = [...new Set([...(domains || []), meDomain].map((x) => (x || "").replace(/^www\./, "").trim().toLowerCase()).filter(Boolean))];
+  const st0 = siLoad();
+  const FRESH = 30 * 86400000;
+  const ages = {}; const uncached = [];
+  for (const d of wanted) {
+    const c = st0.cache["domage:" + d];
+    if (c && Date.now() - c.at < FRESH) ages[d] = c.data.m; else uncached.push(d);
+  }
+  if (peek) return { ok: true, ages, meDomain, needFetch: uncached.length, sandbox: st0.sandbox };
+  if (!uncached.length) return { ok: true, ages, meDomain, cost: 0, sandbox: st0.sandbox };
+  const batches = Math.ceil(uncached.length / SI_WHOIS_BATCH);
+  const est = siEstimate("whois", batches);
+  if (!st0.sandbox && est && !siBudgetCheck(est.eur)) return { ok: false, error: "Budget mensuel atteint (blocage). Augmente la limite dans Titan.", budgetBlocked: true };
+  let res; try { res = await siDomainAges(uncached); } catch (e) { return { ok: false, error: e.message }; }
+  const st = siLoad();
+  for (const d of uncached) { const m = (d in res.ageByDomain) ? res.ageByDomain[d] : null; ages[d] = m; st.cache["domage:" + d] = { at: Date.now(), data: { m } }; }
+  siSave(st);
+  if (!st0.sandbox) siCharge("whois", est ? est.eur : 0, { calls: res.calls });
+  return { ok: true, ages, meDomain, cost: st0.sandbox ? 0 : (est ? est.eur : 0), calls: res.calls, sandbox: st0.sandbox, budget: siBudgetState() };
+});
+// Avis Google d'un établissement (par place_id) : 10 meilleurs + 10 pires avis récents. Cache 14 j.
+ipcMain.handle("si:placeReviews", async (_e, brandId, placeId, peek) => {
+  const b = argosState().brands.find((x) => x.id === brandId);
+  if (!b) return { ok: false, error: "Marque inconnue." };
+  if (!placeId) return { ok: false, error: "Établissement sans identifiant Google Maps." };
+  const key = "reviews:" + placeId;
+  const st0 = siLoad(); const cached = st0.cache[key];
+  if (cached && Date.now() - cached.at < 14 * 86400000) return { ok: true, data: cached.data, cached: true, sandbox: st0.sandbox };
+  if (peek) return { ok: true, data: null, peeked: true, sandbox: st0.sandbox };
+  const est = siEstimate("reviews", 1);
+  if (!st0.sandbox && est && !siBudgetCheck(est.eur)) return { ok: false, error: "Budget mensuel atteint (blocage). Augmente la limite dans Titan.", budgetBlocked: true };
+  let data; try { data = await siPlaceReviews(placeId); } catch (e) { return { ok: false, error: e.message }; }
+  if (!data) return { ok: false, error: "Avis indisponibles (tâche trop longue ou établissement sans avis)." };
+  const st = siLoad(); st.cache[key] = { at: Date.now(), data }; siSave(st);
+  if (!st0.sandbox) siCharge("reviews", est ? est.eur : 0, { key });
+  return { ok: true, data, cost: st0.sandbox ? 0 : (est ? est.eur : 0), sandbox: st0.sandbox, budget: siBudgetState() };
+});
+// Mots-clés avec position live vérifiée (ranked_keywords + SERP live de chacun) — coût = 1 ranked + N serp.
+ipcMain.handle("si:keywords", async (_e, brandId, peek) => {
+  const b = argosState().brands.find((x) => x.id === brandId);
+  if (!b) return { ok: false, error: "Marque inconnue." };
+  const key = "kwlive:" + siDom(brandId);
+  const st0 = siLoad();
+  const cached = st0.cache[key];
+  if (cached && Date.now() - cached.at < 7 * 86400000) return { ok: true, data: cached.data, cached: true, sandbox: st0.sandbox };
+  if (peek) return { ok: true, data: null, sandbox: st0.sandbox };
+  const est = (siEstimate("ranked_kw", 1)?.eur || 0) + (siEstimate("serp", 10)?.eur || 0);
+  if (!st0.sandbox && !siBudgetCheck(est)) return { ok: false, budgetBlocked: true, error: "Budget mensuel atteint (blocage). Augmente la limite dans Titan." };
+  let data; try { data = await siKeywordsVerified(b); } catch (e) { return { ok: false, error: e.message }; }
+  const st = siLoad(); st.cache[key] = { at: Date.now(), data }; siSave(st);
+  if (!st0.sandbox) siCharge("ranked_kw", (siEstimate("ranked_kw", 1)?.eur || 0) + (siEstimate("serp", data.serpCalls || 0)?.eur || 0), { key });
+  return { ok: true, data, sandbox: st0.sandbox, budget: siBudgetState() };
+});
+// SEA : appel multi-domaines (client + jusqu'à 5 concurrents) → coût = 0,02 € par domaine.
+ipcMain.handle("si:sea", async (_e, brandId, peek) => {
+  const b = argosState().brands.find((x) => x.id === brandId);
+  if (!b) return { ok: false, error: "Marque inconnue." };
+  const key = "sea:" + siDom(brandId);
+  const st0 = siLoad();
+  const cached = st0.cache[key];
+  if (cached && Date.now() - cached.at < 7 * 86400000) return { ok: true, data: cached.data, cached: true, sandbox: st0.sandbox };
+  if (peek) return { ok: true, data: null, peeked: true, sandbox: st0.sandbox };
+  const est = siEstimate("sea_overview", 6);
+  if (!st0.sandbox && !siBudgetCheck(est.eur)) return { ok: false, error: "Budget mensuel atteint (blocage). Augmente la limite dans Titan.", budgetBlocked: true };
+  let data; try { data = await siSeaOverview(b); } catch (e) { return { ok: false, error: e.message }; }
+  const st = siLoad(); st.cache[key] = { at: Date.now(), data }; siSave(st);
+  const realEst = siEstimate("sea_overview", (data.rows || []).length || 1);
+  if (!st0.sandbox) { siCloudSet(key, data); siCharge("sea_overview", realEst.eur, { key }); }
+  return { ok: true, data, cost: st0.sandbox ? 0 : realEst.eur, sandbox: st0.sandbox, budget: siBudgetState() };
+});
+// Veille SEA manuelle : liste des mots-clés surveillés + leur dernier résultat en cache (peek, gratuit).
+ipcMain.handle("si:seaKwList", (_e, brandId) => {
+  const b = argosState().brands.find((x) => x.id === brandId); if (!b) return { ok: false, error: "Marque inconnue." };
+  const domain = siDom(brandId); const st = siLoad();
+  const keywords = siSeaKwLoad(brandId).map((kw) => { const c = st.cache["seaadv:" + domain + ":" + kw]; return { keyword: kw, data: c ? c.data : null, at: c ? c.at : null }; });
+  return { ok: true, keywords, sandbox: st.sandbox };
+});
+// Ajoute un mot-clé (persisté) et l'analyse aussitôt (payant : 1 SERP).
+ipcMain.handle("si:seaKwAdd", async (_e, brandId, kw) => {
+  const b = argosState().brands.find((x) => x.id === brandId); if (!b) return { ok: false, error: "Marque inconnue." };
+  kw = String(kw || "").trim().toLowerCase().replace(/\s+/g, " "); if (!kw) return { ok: false, error: "Mot-clé vide." };
+  if (kw.length > 80) return { ok: false, error: "Mot-clé trop long." };
+  const list = siSeaKwLoad(brandId); if (!list.includes(kw)) { list.push(kw); siSeaKwSave(brandId, list); }
+  const r = await siSeaKwRun(brandId, kw, true);
+  return { ...r, keyword: kw };
+});
+// Supprime un mot-clé (et son résultat en cache).
+ipcMain.handle("si:seaKwRemove", (_e, brandId, kw) => {
+  kw = String(kw || "").trim().toLowerCase();
+  const list = siSeaKwLoad(brandId).filter((k) => k !== kw); siSeaKwSave(brandId, list);
+  const st = siLoad(); delete st.cache["seaadv:" + siDom(brandId) + ":" + kw]; siSave(st);
+  return { ok: true, keywords: list };
+});
+// Rafraîchissement instantané : réanalyse tous les mots-clés surveillés (payant : 1 SERP par mot-clé).
+ipcMain.handle("si:seaKwRefresh", async (_e, brandId, kw) => {
+  const list = kw ? [String(kw).trim().toLowerCase()] : siSeaKwLoad(brandId);
+  const results = [];
+  for (const k of list) { const r = await siSeaKwRun(brandId, k, true); results.push({ keyword: k, data: r.data || null, at: r.at || null, error: r.ok ? null : r.error, budgetBlocked: !!r.budgetBlocked }); if (r.budgetBlocked) break; }
+  return { ok: true, results, budget: siBudgetState() };
+});
+
+// ══════════ Cache cloud (Supabase) + pré-chauffe hebdomadaire ══════════
+// But : le lundi 01:00, on récupère et met en cache (7 j) toutes les données payantes de chaque
+// client — vue d'ensemble, backlinks, concurrents, et le classement (SERP) de chaque mot-clé
+// Search Console — pour que la loupe et les vues s'affichent INSTANTANÉMENT toute la semaine, sans
+// nouvel appel payant. Le cache est répliqué dans Supabase (table argos_si_cache) pour survivre à
+// un réinstall et être partagé entre postes ; si la table/session est absente, on reste en local.
+const SI_CLOUD_TABLE = "argos_si_cache";
+function siCloudEnabled() { return !!loadSession()?.access_token; }
+async function siCloudReq(method, path, body, extraHeaders) {
+  if (!loadSession()?.access_token) return null;
+  const doFetch = () => fetch(`${AUTH_BASE}/rest/v1/${path}`, {
+    method,
+    headers: { apikey: AUTH_ANON, Authorization: `Bearer ${loadSession()?.access_token}`, "Content-Type": "application/json", ...(extraHeaders || {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  let r = await doFetch();
+  if ((r.status === 401 || r.status === 403) && (await refreshToken())) r = await doFetch();
+  return r;
+}
+// Lecture cache cloud : renvoie le payload si l'entrée existe et n'est pas expirée, sinon null.
+async function siCloudGet(cacheKey) {
+  try {
+    const r = await siCloudReq("GET", `${SI_CLOUD_TABLE}?cache_key=eq.${encodeURIComponent(cacheKey)}&select=payload,expires_at&limit=1`);
+    if (!r || !r.ok) return null;
+    const rows = await r.json().catch(() => []);
+    const row = rows && rows[0];
+    if (!row) return null;
+    if (row.expires_at && new Date(row.expires_at).getTime() < Date.now()) return null;
+    return row.payload ?? null;
+  } catch { return null; }
+}
+// Écriture cache cloud (upsert). Best-effort : silencieuse si la table n'existe pas / hors ligne.
+async function siCloudSet(cacheKey, data, ttlMs = 7 * 86400000) {
+  try {
+    const now = Date.now();
+    await siCloudReq("POST", SI_CLOUD_TABLE, [{ cache_key: cacheKey, payload: data, fetched_at: new Date(now).toISOString(), expires_at: new Date(now + ttlMs).toISOString() }], { Prefer: "resolution=merge-duplicates,return=minimal" });
+  } catch {}
+}
+
+// Semaine ISO (ex. "2026-W30") — clé de déduplication de la pré-chauffe hebdomadaire.
+function isoWeek(d) {
+  const dt = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const day = dt.getUTCDay() || 7;
+  dt.setUTCDate(dt.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(dt.getUTCFullYear(), 0, 1));
+  const wk = Math.ceil((((dt - yearStart) / 86400000) + 1) / 7);
+  return `${dt.getUTCFullYear()}-W${String(wk).padStart(2, "0")}`;
+}
+// Mots-clés Search Console d'une marque (gratuit) — la liste à pré-chauffer pour la loupe.
+async function siGscKeywordsFor(brand, limit = 12) {
+  try { const real = await argosRealSeo(brand, 30); return (real?.topQueries || []).map((x) => x.label).filter(Boolean).slice(0, limit); }
+  catch { return []; }
+}
+// Pré-chauffe une marque : rafraîchit + met en cache 7 j (local + cloud) toutes ses données payantes.
+// Respecte le budget (s'arrête proprement si le plafond est atteint).
+async function argosPrewarmBrand(brand) {
+  const domain = siBrandDomain(brand);
+  if (!domain) return { brand: brand.name, skipped: "aucun site Search Console mappé" };
+  const done = { brand: brand.name, domain, calls: 0, errors: 0 };
+  const run = async (endpoint, cacheKey, fn) => {
+    if (done.budgetBlocked) return;
+    const est = siEstimate(endpoint, 1);
+    if (!siLoad().sandbox && est && !siBudgetCheck(est.eur)) { done.budgetBlocked = true; return; }
+    try {
+      const data = await fn();
+      const st = siLoad(); st.cache[cacheKey] = { at: Date.now(), data }; siSave(st);
+      if (!siLoad().sandbox) { siCloudSet(cacheKey, data); if (est) siCharge(endpoint, est.eur, { key: cacheKey, prewarm: true }); }
+      done.calls++;
+    } catch { done.errors++; }
+  };
+  await run("domain_overview", "domov:" + domain, () => siDomainOverview(brand));
+  await run("backlinks_sum", "bl:" + domain, () => siBacklinksSummary(brand));
+  await run("seo_competitors", "seocomp:" + domain, () => siSeoCompetitors(brand));
+  const kws = await siGscKeywordsFor(brand);
+  for (const kw of kws) await run("serp", "serp:" + domain + ":" + kw, () => siSerp(brand, kw));
+  // Mots-clés SEA surveillés manuellement par l'utilisateur (rafraîchis 7 j avec le reste).
+  for (const kw of siSeaKwLoad(brand.id)) await run("serp", "seaadv:" + domain + ":" + kw, () => siSeaKwFetch(brand, kw));
+  return done;
+}
+// Pré-chauffe tous les clients (marques visibles avec un site mappé). Séquentiel (limite de débit).
+async function argosPrewarmAll() {
+  const st = siLoad();
+  if (st.sandbox) return { ok: false, error: "Mode sandbox actif — pré-chauffe désactivée." };
+  if (!st.creds?.login || !st.creds?.password) return { ok: false, error: "Fournisseur non connecté." };
+  const brands = argosState().brands.filter((b) => !b.hidden && siBrandDomain(b));
+  const results = [];
+  for (const b of brands) { const r = await argosPrewarmBrand(b); results.push(r); if (r.budgetBlocked) break; }
+  const si = siLoad();
+  si.prewarm = { lastWeek: isoWeek(new Date()), lastAt: new Date().toISOString(), results };
+  siSave(si);
+  return { ok: true, brands: results.length, results, budget: siBudgetState() };
+}
+
+// ── Planification : lundi 01:00 (heure locale) ──
+// Sur poste, l'app n'est pas toujours ouverte à 01:00 : on combine un minuteur précis (si l'app
+// tourne à ce moment) + un rattrapage au lancement et toutes les 6 h (si la semaine ISO courante
+// n'a pas encore été rafraîchie). Résultat : au pire, la pré-chauffe se fait au prochain lancement.
+function nextMonday1am(from = new Date()) {
+  const d = new Date(from); d.setHours(1, 0, 0, 0);
+  let add = (1 - d.getDay() + 7) % 7;
+  if (add === 0 && from.getTime() >= d.getTime()) add = 7;
+  d.setDate(d.getDate() + add);
+  return d;
+}
+function prewarmDue() {
+  const st = siLoad();
+  if (st.sandbox || st.prewarmAuto === false || !st.creds?.login || !st.creds?.password) return false;
+  if (st.prewarm?.lastWeek === isoWeek(new Date())) return false; // déjà rafraîchi cette semaine
+  const now = new Date();
+  const mondayThisWeek = nextMonday1am(new Date(now.getTime() - 7 * 86400000)); // lundi 01:00 de cette semaine
+  return now.getTime() >= mondayThisWeek.getTime();
+}
+let _prewarmRunning = false;
+async function argosPrewarmMaybe(reason) {
+  if (_prewarmRunning || !prewarmDue()) return;
+  _prewarmRunning = true;
+  try { console.log("[prewarm]", reason, "→ démarrage"); const r = await argosPrewarmAll(); console.log("[prewarm] terminé :", JSON.stringify((r.results || []).map((x) => ({ b: x.brand, calls: x.calls, err: x.errors })))); }
+  catch (e) { console.log("[prewarm] échec :", e.message); }
+  finally { _prewarmRunning = false; }
+}
+function scheduleWeeklyPrewarm() {
+  const ms = Math.max(60000, Math.min(nextMonday1am().getTime() - Date.now(), 2 ** 31 - 1));
+  setTimeout(() => { argosPrewarmMaybe("minuteur lundi 01:00"); scheduleWeeklyPrewarm(); }, ms);
+}
+
+ipcMain.handle("si:prewarmNow", async (_e, brandId) => {
+  try {
+    if (siLoad().sandbox) return { ok: false, error: "Mode sandbox actif — pré-chauffe désactivée." };
+    if (brandId) { const b = argosState().brands.find((x) => x.id === brandId); if (!b) return { ok: false, error: "Marque inconnue." }; const r = await argosPrewarmBrand(b); const si = siLoad(); si.prewarm = { lastWeek: isoWeek(new Date()), lastAt: new Date().toISOString(), results: [r] }; siSave(si); return { ok: true, results: [r], budget: siBudgetState() }; }
+    return await argosPrewarmAll();
+  } catch (e) { return { ok: false, error: e.message }; }
+});
+ipcMain.handle("si:prewarmStatus", () => ({ ok: true, prewarm: siLoad().prewarm || null, auto: siLoad().prewarmAuto !== false, cloud: siCloudEnabled(), nextRun: nextMonday1am().toISOString() }));
+ipcMain.handle("si:setPrewarmAuto", (_e, on) => { const st = siLoad(); st.prewarmAuto = !!on; return { ok: siSave(st), auto: st.prewarmAuto }; });
+// SQL de création de la table de cache cloud (à exécuter une fois dans le SQL Editor Supabase).
+ipcMain.handle("si:cloudSql", () => {
+  let editor = null; try { editor = `https://supabase.com/dashboard/project/${new URL(AUTH_BASE).hostname.split(".")[0]}/sql/new`; } catch {}
+  const sql = `-- Cache Search Intelligence (Olympus) — pré-chauffe hebdomadaire, TTL 7 j.
+create table if not exists public.${SI_CLOUD_TABLE} (
+  cache_key   text primary key,
+  payload     jsonb not null,
+  fetched_at  timestamptz not null default now(),
+  expires_at  timestamptz not null
+);
+alter table public.${SI_CLOUD_TABLE} enable row level security;
+create policy "auth read"   on public.${SI_CLOUD_TABLE} for select to authenticated using (true);
+create policy "auth insert" on public.${SI_CLOUD_TABLE} for insert to authenticated with check (true);
+create policy "auth update" on public.${SI_CLOUD_TABLE} for update to authenticated using (true) with check (true);
+create policy "auth delete" on public.${SI_CLOUD_TABLE} for delete to authenticated using (true);
+create index if not exists ${SI_CLOUD_TABLE}_expires_idx on public.${SI_CLOUD_TABLE} (expires_at);`;
+  return { ok: true, sql, editor };
 });
 ipcMain.handle("pegasus:analyticsStatus", () => {
   const s = loadSettings();
@@ -3281,6 +4953,11 @@ app.whenReady().then(() => {
   if (existsSync(KEY_FILE)) pegEnsureWorkspace(); // ~/Pegasus/ dès que Pegasus est installé
   createWindow();
   medusaEnsure(); // Medusa (MCP Pegasus pour Claude) s'installe/se met à jour avec Olympus
+  // Pré-chauffe hebdo Search Intelligence : rattrapage au lancement (si lundi 01:00 déjà passé et
+  // pas encore fait cette semaine), minuteur précis vers le prochain lundi 01:00, + re-vérif 6 h.
+  setTimeout(() => argosPrewarmMaybe("lancement"), 45000);
+  scheduleWeeklyPrewarm();
+  setInterval(() => argosPrewarmMaybe("re-vérif 6 h"), 6 * 3600 * 1000);
 });
 app.on("window-all-closed", () => app.quit());
 app.on("activate", () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });

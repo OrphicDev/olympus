@@ -34,9 +34,216 @@ function mCountUp(root, sel) {
 }
 
 // ══════════ THÈME (sombre / clair) ══════════
-function applyTheme(t) { document.documentElement.setAttribute("data-theme", t); localStorage.setItem("olympusTheme", t); }
+let atVideoInit = false;
+function applyTheme(t) { document.documentElement.setAttribute("data-theme", t); localStorage.setItem("olympusTheme", t); if (appShader) appShader.setTheme(t); if (atVideoInit) atVideoSetTheme(t); }
+// ══════════ Shader d'ambiance global (WebGL) — fond vivant, discret, visible à travers le verre ══════════
+const AT_SHADER_PAL = {
+  dark:  { c1: [0.035, 0.035, 0.046], c2: [0.105, 0.100, 0.125], acc: [0.56, 0.40, 1.0], acc2: [0.24, 0.52, 0.98], int: 0.30 },
+  light: { c1: [0.945, 0.920, 0.878], c2: [0.989, 0.981, 0.968], acc: [0.95, 0.83, 0.58], acc2: [0.97, 0.86, 0.78], int: 0.52 },
+};
+let appShader = null;
+function initAppShader() {
+  const cv = document.getElementById("glShader"); if (!cv) return null;
+  let gl; try { gl = cv.getContext("webgl", { antialias: false, depth: false, alpha: false, powerPreference: "low-power" }) || cv.getContext("experimental-webgl"); } catch { gl = null; }
+  if (!gl) { cv.style.display = "none"; return null; }
+  const fs = `precision highp float;
+uniform vec2 uRes;uniform float uTime;uniform vec3 uC1;uniform vec3 uC2;uniform vec3 uAcc;uniform vec3 uAcc2;uniform float uInt;
+float hash(vec2 p){return fract(sin(dot(p,vec2(41.3,289.1)))*43758.5453);}
+float noise(vec2 p){vec2 i=floor(p),f=fract(p);float a=hash(i),b=hash(i+vec2(1,0)),c=hash(i+vec2(0,1)),d=hash(i+vec2(1,1));vec2 u=f*f*(3.0-2.0*f);return mix(mix(a,b,u.x),mix(c,d,u.x),u.y);}
+float fbm(vec2 p){float v=0.0,a=0.5;for(int i=0;i<4;i++){v+=a*noise(p);p*=2.0;a*=0.5;}return v;}
+void main(){vec2 uv=gl_FragCoord.xy/uRes.xy;vec2 p=uv*vec2(uRes.x/uRes.y,1.0);float t=uTime*0.03;
+vec2 q=vec2(fbm(p*0.9+t*0.6),fbm(p*0.9+vec2(3.1)-t*0.5));
+vec2 r=vec2(fbm(p*1.2+q*1.7+t*0.4),fbm(p*1.2+q*1.7+vec2(1.7)-t*0.35));
+float n=fbm(p*1.3+r*1.2);
+vec3 base=mix(uC2,uC1,smoothstep(-0.1,1.1,uv.y+(n-0.5)*0.35));
+float g1=smoothstep(0.42,0.96,fbm(p*1.05+r*1.3+t*0.5));
+float g2=smoothstep(0.5,1.0,fbm(p*1.15+q*1.5-t*0.4+vec2(5.0)));
+vec3 col=base;
+col=mix(col,uAcc,g1*uInt);
+col=mix(col,uAcc2,g2*uInt*0.85);
+float vig=smoothstep(1.35,0.12,length(uv-0.5));col*=mix(0.86,1.0,vig);
+gl_FragColor=vec4(col,1.0);}`;
+  const mk = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); return gl.getShaderParameter(s, gl.COMPILE_STATUS) ? s : null; };
+  const vs = mk(gl.VERTEX_SHADER, "attribute vec2 p;void main(){gl_Position=vec4(p,0.0,1.0);}"), fss = mk(gl.FRAGMENT_SHADER, fs);
+  if (!vs || !fss) { cv.style.display = "none"; return null; }
+  const prog = gl.createProgram(); gl.attachShader(prog, vs); gl.attachShader(prog, fss); gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) { cv.style.display = "none"; return null; }
+  gl.useProgram(prog);
+  const buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(prog, "p"); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+  const U = (n) => gl.getUniformLocation(prog, n);
+  const uRes = U("uRes"), uTime = U("uTime"), uC1 = U("uC1"), uC2 = U("uC2"), uAcc = U("uAcc"), uAcc2 = U("uAcc2"), uInt = U("uInt");
+  const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  function resize() { const dpr = Math.min(1.0, window.devicePixelRatio || 1); const w = Math.round(innerWidth * dpr), h = Math.round(innerHeight * dpr); if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; } gl.viewport(0, 0, cv.width, cv.height); gl.uniform2f(uRes, cv.width, cv.height); if (reduce) draw(12000); }
+  function setTheme(t) { const p = AT_SHADER_PAL[t] || AT_SHADER_PAL.dark; gl.uniform3fv(uC1, p.c1); gl.uniform3fv(uC2, p.c2); gl.uniform3fv(uAcc, p.acc); gl.uniform3fv(uAcc2, p.acc2); gl.uniform1f(uInt, p.int); if (reduce) draw(12000); }
+  function draw(ms) { gl.uniform1f(uTime, ms * 0.001); gl.drawArrays(gl.TRIANGLES, 0, 3); }
+  window.addEventListener("resize", resize); resize();
+  setTheme(document.documentElement.getAttribute("data-theme") || "dark");
+  // Rendu plafonné à ~30 fps : le fond dérive lentement, pas besoin de 60 fps — et ça divise par 2 le coût GPU + la recomposition des panneaux en verre.
+  if (!reduce) { let lastDraw = -1e9; const loop = (ms) => { if (ms - lastDraw >= 33) { draw(ms); lastDraw = ms; } requestAnimationFrame(loop); }; requestAnimationFrame(loop); }
+  return { setTheme };
+}
+appShader = initAppShader();
 applyTheme(localStorage.getItem("olympusTheme") || "dark");
 $("themeToggle").onclick = () => applyTheme(document.documentElement.getAttribute("data-theme") === "light" ? "dark" : "light");
+// Joue/met en pause la vidéo d'ambiance selon qu'on est sur Athéna (économie CPU/batterie ailleurs).
+function atVideoToggle(on) {
+  const v = document.getElementById("atVideo"); if (!v || !v.src) return;
+  const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (on && !reduce) v.play().catch(() => {}); else v.pause();
+}
+// Vidéo d'ambiance d'Athéna : une vidéo par thème (sombre / clair), chargée en blob (file:// bloqué
+// pour les <video> par Chromium). Blobs mis en cache → le changement de thème est instantané.
+const AT_VIDEO_FOR = { dark: "athena-bg.m4v", light: "athena-bg.m4v" }; // light = même vidéo, couleurs inversées via CSS
+const atVideoBlobs = {};
+async function atVideoLoad(file) {
+  if (atVideoBlobs[file]) return atVideoBlobs[file];
+  const r = await window.olympus.mediaRead(file).catch(() => null);
+  if (!r || !r.ok || !r.data) return null;
+  return (atVideoBlobs[file] = URL.createObjectURL(new Blob([r.data], { type: "video/mp4" })));
+}
+async function atVideoSetTheme(theme) {
+  const v = document.getElementById("atVideo"); if (!v) return;
+  const file = AT_VIDEO_FOR[theme] || AT_VIDEO_FOR.dark;
+  if (v.dataset.file === file) return;                       // déjà la bonne vidéo
+  const url = await atVideoLoad(file); if (!url) return;
+  if (v.dataset.file) v.classList.remove("ready");           // fondu de sortie avant de changer de source
+  v.dataset.file = file; v.src = url; v.load();
+  const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  v.addEventListener("loadeddata", () => v.classList.add("ready"), { once: true });
+  const onHome = $("page-home") && $("page-home").classList.contains("show");
+  if (reduce) v.pause(); else if (onHome) v.play().catch(() => v.classList.add("ready"));
+}
+atVideoInit = true;
+atVideoSetTheme(document.documentElement.getAttribute("data-theme") || "dark");
+// Orbe d'Athéna FORMÉE de particules : points fins répartis sur une sphère (spirale de Fibonacci),
+// en rotation lente ; la profondeur module taille + opacité. Repoussés au survol de la souris, ressort de retour.
+// Petit canvas 200px, dessiné UNIQUEMENT quand l'accueil est visible → coût contenu.
+(function initOrbFx() {
+  const canvas = document.getElementById("atOrbFx"); if (!canvas) return;
+  const wrap = canvas.parentElement, root = document.documentElement, ctx = canvas.getContext("2d"); if (!ctx) return;
+  const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  let W = 0, H = 0, seeded = false;
+  function resize() { W = canvas.clientWidth; H = canvas.clientHeight; canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); seeded = false; }
+  const R = 34, GA = Math.PI * (3 - Math.sqrt(5));
+  // Sphère : points fins et denses répartis en spirale de Fibonacci.
+  const NS = reduce ? 340 : 880;
+  const pts = Array.from({ length: NS }, (_, i) => { const sy = 1 - (i / (NS - 1)) * 2, r = Math.sqrt(Math.max(0, 1 - sy * sy)), th = GA * i; return { sx: Math.cos(th) * r, sy, sz: Math.sin(th) * r, x: 0, y: 0, vx: 0, vy: 0 }; });
+  // Nuage chaotique autour : particules très fines, mouvement turbulent (champ de flux + jitter).
+  const NC = reduce ? 500 : 2800;
+  const cld = Array.from({ length: NC }, () => ({ x: 0, y: 0, vx: (Math.random() - .5) * .5, vy: (Math.random() - .5) * .5, size: .3 + Math.random() * .6, tw: Math.random() * 6.2832, pr: 44 + Math.random() * 52, spin: (0.015 + Math.random() * 0.05) * (Math.random() < .5 ? 1 : -1) }));
+  const mouse = { x: 0, y: 0, on: false };
+  wrap.addEventListener("mousemove", (e) => { const b = canvas.getBoundingClientRect(); mouse.x = e.clientX - b.left; mouse.y = e.clientY - b.top; mouse.on = true; });
+  wrap.addEventListener("mouseleave", () => { mouse.on = false; });
+  const visible = () => { const ph = document.getElementById("page-home"); return ph && ph.classList.contains("show") && !document.getElementById("atWrap").classList.contains("chatting") && !document.hidden; };
+  const tilt = 0.42, cX = Math.cos(tilt), sX = Math.sin(tilt);
+  const bolts = [];   // éclairs actifs (tempête)
+  let ang = 0, tick = 0;
+  function frame() {
+    requestAnimationFrame(frame);
+    if (!visible() || !canvas.clientWidth) return;
+    if (canvas.width !== Math.round(canvas.clientWidth * dpr)) resize();
+    if (!reduce) { ang += 0.0045; tick++; }
+    const CX = W / 2, CY = H / 2 + (reduce ? 0 : Math.sin(ang * 1.7) * 3), cY = Math.cos(ang), sY = Math.sin(ang), T = tick * 0.03;
+    ctx.clearRect(0, 0, W, H);
+    const light = root.getAttribute("data-theme") === "light";
+    const g = ctx.createRadialGradient(CX, CY, 0, CX, CY, R * 1.8); // halo doux
+    g.addColorStop(0, light ? "rgba(150,112,42,.1)" : "rgba(220,225,245,.12)"); g.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(CX, CY, R * 1.8, 0, 6.2832); ctx.fill();
+    // Couleur commune → on module l'opacité par globalAlpha (pas d'allocation de chaîne rgba par particule).
+    // Light = doré (raccord shader crème & or) ; Dark = blanc glacé.
+    const common = light ? "rgb(158,116,42)" : "rgb(233,236,248)", flashCol = light ? "rgb(230,184,80)" : "rgb(206,224,255)";
+    ctx.fillStyle = common;
+    const lm = light ? 0.8 : 1;
+    // Sphère dense (points fins)
+    for (const p of pts) {
+      const x = p.sx * cY + p.sz * sY, z = -p.sx * sY + p.sz * cY;
+      const y2 = p.sy * cX - z * sX, z2 = p.sy * sX + z * cX;   // profondeur
+      const hx = CX + x * R, hy = CY + y2 * R;
+      if (!seeded) { p.x = hx; p.y = hy; }
+      p.vx += (hx - p.x) * 0.06; p.vy += (hy - p.y) * 0.06;
+      if (!reduce && mouse.on) { const dx = p.x - mouse.x, dy = p.y - mouse.y, d2 = dx * dx + dy * dy, RR = 50; if (d2 < RR * RR) { const d = Math.sqrt(d2) || 1, f = (1 - d / RR) * 3.0; p.vx += (dx / d) * f; p.vy += (dy / d) * f; } }
+      p.vx *= 0.8; p.vy *= 0.8; p.x += p.vx; p.y += p.vy;
+      const depth = (z2 + 1) / 2, fla = p.flash || 0;
+      ctx.globalAlpha = lm * (0.1 + depth * 0.62);
+      ctx.beginPath(); ctx.arc(p.x, p.y, 0.26 + depth * 0.7, 0, 6.2832); ctx.fill();
+      if (fla > 0.03) {                                                 // extrémité d'éclair sur la sphère → léger flash discret
+        ctx.fillStyle = flashCol;
+        ctx.globalAlpha = fla * 0.26; ctx.beginPath(); ctx.arc(p.x, p.y, 1 + fla * 2, 0, 6.2832); ctx.fill();
+        ctx.globalAlpha = Math.min(0.8, fla * 0.75); ctx.beginPath(); ctx.arc(p.x, p.y, 0.5 + fla * 1, 0, 6.2832); ctx.fill();
+        ctx.fillStyle = common;
+      }
+      p.flash = fla * 0.9;
+    }
+    // Nuage chaotique
+    for (const p of cld) {
+      if (!seeded) { const a = Math.random() * 6.2832; p.x = CX + Math.cos(a) * p.pr; p.y = CY + Math.sin(a) * p.pr; }
+      const dx0 = p.x - CX, dy0 = p.y - CY, dist = Math.hypot(dx0, dy0) || 1;
+      if (!reduce) {
+        const tx = -dy0 / dist, ty = dx0 / dist;             // tangente → chaque particule orbite (répartition tout autour)
+        p.vx += tx * p.spin; p.vy += ty * p.spin;
+        const rerr = dist - p.pr;                            // rappel vers son rayon préféré → halo autour de la sphère
+        p.vx -= (dx0 / dist) * rerr * 0.03; p.vy -= (dy0 / dist) * rerr * 0.03;
+        p.vx += (Math.random() - .5) * 0.2; p.vy += (Math.random() - .5) * 0.2;   // turbulence chaotique
+        if (mouse.on) { const dx = p.x - mouse.x, dy = p.y - mouse.y, d2 = dx * dx + dy * dy, RR = 56; if (d2 < RR * RR) { const d = Math.sqrt(d2) || 1, f = (1 - d / RR) * 2.6; p.vx += (dx / d) * f; p.vy += (dy / d) * f; } }
+        p.vx *= 0.9; p.vy *= 0.9; p.x += p.vx; p.y += p.vy; p.tw += 0.05;
+      }
+      const fade = Math.max(0.15, Math.min(1, 1 - (dist - 48) / 92)), fla = p.flash || 0;
+      // 1 seule passe (perf à haute densité) : le glow naît du recouvrement des particules.
+      ctx.globalAlpha = lm * (0.2 + 0.2 * (Math.sin(p.tw) * 0.5 + 0.5)) * fade;
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.size * 1.7, 0, 6.2832); ctx.fill();
+      if (fla > 0.03) {                                                 // touchée par un éclair → léger surcroît de brillance (discret)
+        ctx.fillStyle = flashCol;
+        ctx.globalAlpha = fla * 0.3; ctx.beginPath(); ctx.arc(p.x, p.y, 1.5 + fla * 3, 0, 6.2832); ctx.fill();
+        ctx.globalAlpha = Math.min(0.85, fla * 0.8); ctx.beginPath(); ctx.arc(p.x, p.y, p.size + fla * 1.3, 0, 6.2832); ctx.fill();
+        ctx.fillStyle = common;
+      }
+      p.flash = fla * 0.9;
+    }
+    // Éclairs / tempête : trait jagged reliant une particule de la sphère à une du nuage, flash bref + glow.
+    let mainN = 0; for (const bb of bolts) if ((bb.mag || 1) >= 1) mainN++;   // ne compter que les éclairs principaux
+    if (!reduce && mainN < 3 && Math.random() < 0.14 && pts.length && cld.length) {
+      const b = cld[(Math.random() * cld.length) | 0];
+      // particule de la sphère la PLUS PROCHE du point du nuage → l'éclair part du bord face au nuage, sans traverser la sphère
+      let a = pts[0], best = Infinity;
+      for (const q of pts) { const dx = q.x - b.x, dy = q.y - b.y, d2 = dx * dx + dy * dy; if (d2 < best) { best = d2; a = q; } }
+      const ns = 3 + (Math.random() * 3 | 0), segs = [];
+      for (let k = 1; k <= ns; k++) segs.push({ t: k / (ns + 1), off: (Math.random() - .5) * 0.16 });  // offset en fraction de la longueur (jaggedness tangentielle → reste hors de la sphère)
+      bolts.push({ a, b, segs, life: 1, mag: 1 });
+      // Ramifications : la particule touchée arque vers 5-10 voisines proches du nuage (petits éclairs, moins lumineux).
+      const nb = [];
+      for (const q of cld) { if (q === b) continue; const dx = q.x - b.x, dy = q.y - b.y; if (dx * dx + dy * dy < 42 * 42) nb.push(q); }
+      const k2 = 5 + (Math.random() * 6 | 0);
+      for (let j = 0; j < k2 && nb.length; j++) {
+        const q = nb.splice((Math.random() * nb.length) | 0, 1)[0];
+        const ns2 = 2 + (Math.random() * 2 | 0), sg = [];
+        for (let m = 1; m <= ns2; m++) sg.push({ t: m / (ns2 + 1), off: (Math.random() - .5) * 0.24 });
+        bolts.push({ a: b, b: q, segs: sg, life: 0.7, mag: 0.5 });
+      }
+    }
+    if (bolts.length) {
+      ctx.globalAlpha = 1; ctx.lineCap = "round"; ctx.lineJoin = "round";
+      const col = light ? "202,152,48" : "162,192,255";               // éclair : doré en light, bleu glacé en dark
+      for (let i = bolts.length - 1; i >= 0; i--) {
+        const bo = bolts[i]; bo.life -= 0.025;
+        if (bo.life <= 0) { bolts.splice(i, 1); continue; }
+        const mg = bo.mag || 1;                                       // magnitude : 1 = éclair principal, <1 = ramification
+        bo.a.flash = Math.max(bo.a.flash || 0, bo.life * mg); bo.b.flash = Math.max(bo.b.flash || 0, bo.life * mg);   // extrémités s'illuminent (secondaires un peu moins)
+        const ax = bo.a.x, ay = bo.a.y, bx = bo.b.x, by = bo.b.y, dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy) || 1, nx = -dy / len, ny = dx / len;
+        const fl = bo.life * mg * (0.55 + Math.random() * 0.45);      // flicker (ramifications plus faibles)
+        ctx.beginPath(); ctx.moveTo(ax, ay);
+        for (const s of bo.segs) ctx.lineTo(ax + dx * s.t + nx * s.off * len, ay + dy * s.t + ny * s.off * len);
+        ctx.lineTo(bx, by);
+        ctx.strokeStyle = "rgba(" + col + "," + (fl * 0.24).toFixed(3) + ")"; ctx.lineWidth = 2.6 * mg; ctx.stroke();  // glow (large + faible)
+        ctx.strokeStyle = "rgba(" + col + "," + fl.toFixed(3) + ")"; ctx.lineWidth = Math.max(0.5, 0.8 * mg); ctx.stroke();  // cœur fin et vif
+      }
+    }
+    ctx.globalAlpha = 1;
+    seeded = true;
+  }
+  resize(); requestAnimationFrame(frame);
+})();
 
 // ══════════ NAVIGATION ══════════
 document.querySelectorAll(".nav-item").forEach((it) => {
@@ -47,11 +254,34 @@ document.querySelectorAll(".nav-item").forEach((it) => {
     document.querySelectorAll(".page").forEach((p) => p.classList.remove("show"));
     const pg = $("page-" + it.dataset.page);
     pg.classList.add("show");
+    if (typeof atVideoToggle === "function") atVideoToggle(it.dataset.page === "home"); // vidéo d'ambiance : jouée sur Athéna, en pause ailleurs
     mArrive(pg);
     setTimeout(() => mCountUp(pg, ".ir-kpi .n, .ag-kpi .n, .ir-stat .n"), 80); // les KPIs se comptent à l'arrivée
     $("hub").classList.toggle("with-rail", it.dataset.page === "chronos"); // roue + agenda : Chronos uniquement
+    if (it.dataset.page === "settings") setNavRender();
   };
 });
+// ── Réglages : colonne de tri (par type / app) ──
+const SET_GROUPS = [
+  { id: "account", ic: "◎", label: "Compte & équipe" },
+  { id: "argos", ic: "📣", label: "Argos" },
+  { id: "claude", ic: "✦", label: "Claude Code" },
+  { id: "medusa", ic: "🪼", label: "Medusa" },
+];
+let setGroup = "account";
+function setApplyGroup() {
+  document.querySelectorAll("#setMain [data-setgroup]").forEach((s) => {
+    let show = s.dataset.setgroup === setGroup;
+    if (s.id === "membersSection" && currentRole !== "super_admin") show = false; // section réservée super admin
+    s.style.display = show ? "" : "none";
+  });
+}
+function setNavRender() {
+  const nav = $("setNav"); if (!nav) return;
+  nav.innerHTML = SET_GROUPS.map((g) => `<div class="ir-folder${setGroup === g.id ? " active" : ""}" data-setgroup="${g.id}"><span class="fic">${g.ic}</span><span class="lname">${escapeHtml(g.label)}</span></div>`).join("");
+  nav.querySelectorAll("[data-setgroup]").forEach((el) => el.onclick = () => { setGroup = el.dataset.setgroup; setNavRender(); });
+  setApplyGroup();
+}
 function goTo(page) {
   const it = document.querySelector(`.nav-item[data-page="${page}"]`);
   if (it && !it.classList.contains("locked")) it.click();
@@ -3230,7 +3460,7 @@ $("evBusy").onclick = () => $("evBusy").classList.toggle("on");
 
 // ══════════ RÔLE (depuis la session) ══════════
 let currentRole = "classic";
-let currentUserId = null;
+let currentUserId = null, currentUserName = null;
 function applyRole() {
   const isAdmin = currentRole === "super_admin";
   const titanNav = document.querySelector('.nav-item[data-app="titan"]');
@@ -3349,13 +3579,13 @@ let hmConvs = [
     { d: "Hier", a: "Lucas Dubois", t: "14:12", kind: "text", body: "J'ai fini le montage du teaser, tu veux le voir ?" },
     { d: "Hier", mine: true, t: "14:20", kind: "text", body: "Grave ! Envoie 🔥" },
     { d: "Hier", a: "Lucas Dubois", t: "14:21", kind: "file", name: "teaser_v2.mp4", size: "148 Mo", icon: "🎬" },
-    { d: "Aujourd'hui", a: "Lucas Dubois", t: "09:02", kind: "voice", dur: "0:42", seed: 3 },
+    { d: "Aujourd'hui", a: "Lucas Dubois", t: "09:02", kind: "text", body: "J'ai laissé mes notes sur le rythme du montage dans le doc partagé." },
     { d: "Aujourd'hui", a: "Lucas Dubois", t: "09:03", kind: "text", body: "Dis-moi ce que t'en penses avant le call de 10h" },
   ] },
   { id: "dm-astrid", kind: "dm", name: "Astrid Berges", online: false, unread: 0, msgs: [
     { d: "Mardi", a: "Astrid Berges", t: "11:35", kind: "image", cap: "Moodboard — Maison Solène", g: 0 },
     { d: "Mardi", mine: true, t: "11:48", kind: "text", body: "Canon. On part là-dessus pour la DA." },
-    { d: "Mardi", a: "Astrid Berges", t: "12:02", kind: "voice", dur: "1:17", seed: 8 },
+    { d: "Mardi", a: "Astrid Berges", t: "12:02", kind: "text", body: "Je te détaille la palette et les références en réunion demain." },
     { d: "Mardi", a: "Astrid Berges", t: "12:03", kind: "text", body: "Parfait, je prépare la shotlist ce soir ✨" },
   ] },
   { id: "g-solene", kind: "group", name: "Prod — Maison Solène", members: ["Sacha", "Lucas Dubois", "Astrid Berges"], unread: 1, msgs: [
@@ -3368,7 +3598,7 @@ let hmConvs = [
   { id: "g-emotions", kind: "group", name: "Shoot Émotions Arts", members: ["Sacha", "Lucas Dubois"], unread: 0, msgs: [
     { d: "Lundi", mine: true, t: "17:32", kind: "text", body: "Les rushs sont sur Atlas, dossier Shoots 2026 / Émotions Arts." },
     { d: "Lundi", a: "Lucas Dubois", t: "17:40", kind: "text", body: "Reçu. Je fais la sélection demain matin et je pousse dans Apollon." },
-    { d: "Lundi", a: "Lucas Dubois", t: "17:41", kind: "voice", dur: "0:23", seed: 5 },
+    { d: "Lundi", a: "Lucas Dubois", t: "17:41", kind: "text", body: "Je te fais un récap écrit dès que la sélection est prête." },
   ] },
 ];
 let hmCur = null;
@@ -3426,6 +3656,7 @@ function openConv(id) {
   if (c.real) { $("chatMessages").innerHTML = ""; chatLastId = 0; chatShownIds.clear(); chatTick(); }
   else renderFakeMsgs(c);
   renderConvList();
+  if (typeof renderSchedChips === "function") renderSchedChips();
 }
 const chatShownIds = new Set();                              // ids déjà affichés → anti-doublon
 function appendMessage(m) {
@@ -3577,19 +3808,24 @@ $("chatAttach").onclick = () => {
   };
   inp.click();
 };
-// Message vocal (démo) : clic = enregistre, re-clic = envoie
-let recStart = null;
-$("chatMic").onclick = () => {
-  if (hmWaCur) { $("chatInput").placeholder = "Messages vocaux WhatsApp non pris en charge pour l'instant"; setTimeout(() => { $("chatInput").placeholder = "Écris un message…"; }, 2500); return; }
-  if (!hmCur) return;
-  const btn = $("chatMic");
-  if (!recStart) { recStart = Date.now(); btn.classList.add("rec"); $("chatInput").placeholder = "Enregistrement en cours… re-clique pour envoyer"; return; }
-  const sec = Math.max(1, Math.round((Date.now() - recStart) / 1000));
-  recStart = null; btn.classList.remove("rec"); $("chatInput").placeholder = "Écris un message…";
-  const dur = Math.floor(sec / 60) + ":" + String(sec % 60).padStart(2, "0");
-  if (hmCur.real) { $("chatInput").value = "🎙 Message vocal (" + dur + ")"; sendMsg(); }
-  else pushLocal({ kind: "voice", dur, seed: Math.floor(Math.random() * 40) });
-};
+// IA + programmation (Hermès) : réutilise le moteur des bulles, câblé sur la conversation courante.
+function hmAiCtx() {
+  return {
+    participants: hmCur ? hmCur.name : "",
+    priceEl: $("chatAiPrice"),
+    gather: async () => {
+      if (!hmCur) return [];
+      if (hmCur.real) {
+        const r = await window.olympus.chatList(0).catch(() => ({ ok: false }));
+        return ((r.ok && r.messages) || []).map((m) => ({ who: m.user_id === currentUserId ? "Moi" : (m.author_name || hmCur.name), text: m.body })).filter((x) => x.text);
+      }
+      return (hmCur.msgs || []).map((m) => ({ who: m.mine ? "Moi" : (m.a || hmCur.name), text: (m.kind === "text" || !m.kind) ? m.body : (m.cap || m.name || "") })).filter((x) => x.text);
+    },
+  };
+}
+$("chatAiBtn").onclick = (e) => aiPrepareReply("chat", $("chatInput"), e.currentTarget, "draft", hmAiCtx());
+$("chatImpBtn").onclick = (e) => aiPrepareReply("chat", $("chatInput"), e.currentTarget, "improve", hmAiCtx());
+$("chatSchedBtn").onclick = (e) => rbSchedOpen("chat", $("chatInput"), e.currentTarget, { conv: hmCur });
 // Nouveau groupe
 $("hmNewGroup").onclick = () => { const f = $("hmGroupForm"); f.style.display = f.style.display === "none" ? "" : "none"; if (f.style.display === "") $("hmGroupName").focus(); };
 $("hmGroupCreate").onclick = () => {
@@ -4226,29 +4462,42 @@ window.olympus.onChronosAppleRefreshed(() => {
 
 // ══════════ COLONNE DROITE (infos) + présence ══════════
 let rbTimer = null;
+// Ligne d'événement enrichie : heure début→fin, durée, et marqueur multi-jours.
+const rbDM = (iso) => { const d = new Date(iso + "T00:00"); return d.getDate() + "/" + (d.getMonth() + 1); };
+function rbEvMeta(e, mode) {
+  const multi = e.end_date && e.end_date > e.date;
+  const st = e.time ? e.time.slice(0, 5) : "", en = e.end_time ? e.end_time.slice(0, 5) : "";
+  if (e.all_day || (!st && !en)) return multi ? `Du ${rbDM(e.date)} au ${rbDM(e.end_date)}` : "Toute la journée";
+  if (multi) return `${rbDM(e.date)}${st ? " " + st : ""} → ${rbDM(e.end_date)}${en ? " " + en : ""}`;
+  let dur = "";
+  if (st && en) { const [sh, sm] = st.split(":").map(Number), [eh, em] = en.split(":").map(Number); const mins = (eh * 60 + em) - (sh * 60 + sm); if (mins > 0) { const h = Math.floor(mins / 60), m = mins % 60; dur = " · " + (h ? h + "h" + (m ? String(m).padStart(2, "0") : "") : m + "min"); } }
+  if (mode === "today") return (en ? "→ " + en : "dès " + st) + dur;
+  return (st && en ? `${st} – ${en}` : st ? `dès ${st}` : "→ " + en) + dur;
+}
+let rbEvById = {};
+function rbEvRow(e, mode) {
+  const multi = e.end_date && e.end_date > e.date;
+  const lead = mode === "today" ? (e.time && !e.all_day ? e.time.slice(0, 5) : "—") : rbDM(e.date);
+  const meta = rbEvMeta(e, mode);
+  return `<div class="rb-ev${multi ? " multi" : ""}"${e.id != null ? ` data-rbev="${escapeHtml(String(e.id))}"` : ""}><span class="rb-time">${escapeHtml(lead)}</span><div class="rb-einfo"><span class="rb-t">${escapeHtml(e.title)}${multi ? ' <span class="rb-multi">plusieurs jours</span>' : ""}</span>${meta ? `<span class="rb-emeta">${escapeHtml(meta)}</span>` : ""}</div></div>`;
+}
 async function refreshRightbar() {
   const now = new Date();
   const today = isoD(now.getFullYear(), now.getMonth(), now.getDate());
-  const in30 = new Date(now.getTime() + 30 * 864e5);
-  const to = isoD(in30.getFullYear(), in30.getMonth(), in30.getDate());
+  const far = new Date(now.getTime() + 730 * 864e5); // fenêtre large → tous les événements à venir
+  const to = isoD(far.getFullYear(), far.getMonth(), far.getDate());
   const r = await window.olympus.chronosList(today, to);
   const evs = (r.ok ? r.events : []).filter((e) => !e.done);
-  const todayEvs = evs.filter((e) => e.date === today);
-  const soonEvs = evs.filter((e) => e.date > today).slice(0, 5);
+  rbRenderMe(); // en-tête "toi + état" partagé par toutes les vues de la colonne
+  rbEvById = {}; for (const e of evs) if (e.id != null) rbEvById[e.id] = e;
+  const byTime = (a, b) => (a.time || "").localeCompare(b.time || "");
+  const todayEvs = evs.filter((e) => e.date === today).sort(byTime);
+  const soonEvs = evs.filter((e) => e.date > today).sort((a, b) => a.date.localeCompare(b.date) || byTime(a, b));
   $("rbToday").innerHTML = todayEvs.length
-    ? todayEvs.map((e) => `<div class="rb-ev"><span class="rb-time">${e.time ? e.time.slice(0, 5) : "—"}</span><span class="rb-t">${escapeHtml(e.title)}</span></div>`).join("")
+    ? todayEvs.map((e) => rbEvRow(e, "today")).join("")
     : '<div class="rb-empty">Rien de prévu.</div>';
   $("rbSoon").innerHTML = soonEvs.length
-    ? soonEvs.map((e) => { const d = new Date(e.date + "T00:00"); return `<div class="rb-ev"><span class="rb-time">${d.getDate()}/${d.getMonth() + 1}</span><span class="rb-t">${escapeHtml(e.title)}</span></div>`; }).join("")
-    : '<div class="rb-empty">—</div>';
-  const p = await window.olympus.presenceOnline();
-  const users = p.ok ? p.users : [];
-  const nowMs = Date.now();
-  for (const f of FAKE_MEMBERS) if (!users.some((u) => u.name === f.name)) users.push({ name: f.name, last_seen: f.online ? new Date().toISOString() : new Date(nowMs - 36e5).toISOString() });
-  const isOn = (u) => nowMs - new Date(u.last_seen).getTime() < 120000;
-  users.sort((a, b) => (isOn(b) - isOn(a)) || (a.name || "").localeCompare(b.name || ""));
-  $("rbOnline").innerHTML = users.length
-    ? users.map((u) => { const on = isOn(u); const n = u.name || "?"; return `<div class="rb-user"><div class="avatar-sm">${escapeHtml(n.charAt(0).toUpperCase())}</div><span style="flex:1${on ? "" : ";color:var(--muted)"}">${escapeHtml(n)}</span><span class="status-dot ${on ? "on" : "off"}"></span></div>`; }).join("")
+    ? soonEvs.map((e) => rbEvRow(e, "soon")).join("")
     : '<div class="rb-empty">—</div>';
   if (rbView === 1) rbRenderChat();
   else if (rbView === 2) rbRenderMail();
@@ -4267,38 +4516,434 @@ function rbSetView(i) {
   $("rbTabs").querySelectorAll("span").forEach((s) => s.classList.toggle("active", +s.dataset.rv === i));
   if (i === 1) rbRenderChat();
   else if (i === 2) rbRenderMail();
+  else if (i === 3) rbRenderAthenaConvs();
 }
 $("rbTabs").onclick = (e) => { const t = e.target.closest("[data-rv]"); if (t) rbSetView(+t.dataset.rv); };
-async function rbRenderChat() {
-  const r = await window.olympus.chatList(0);
-  const msgs = (r.ok ? r.messages : []).slice(-14);
-  const f = $("rbChatFeed");
-  f.innerHTML = msgs.length
-    ? msgs.map((m) => `<div class="rb-cmsg${m.user_id === currentUserId ? " me" : ""}"><div class="a">${escapeHtml(m.author_name || "?")} · ${fmtTime(m.created_at)}</div><div class="b">${escapeHtml(m.body)}</div></div>`).join("")
-    : '<div class="rb-empty">Aucun message — lance la conversation.</div>';
-  f.scrollTop = f.scrollHeight;
-}
-$("rbChatInput").addEventListener("keydown", async (e) => {
-  if (e.key !== "Enter") return;
-  const v = $("rbChatInput").value.trim(); if (!v) return;
-  $("rbChatInput").value = "";
-  await window.olympus.chatSend(v);
-  rbRenderChat();
+// Conversations Athéna : reprendre (clic) · supprimer (✕) · nouvelle
+$("rbAthenaConvs").addEventListener("click", (e) => {
+  const del = e.target.closest("[data-atdel]");
+  if (del) { e.stopPropagation(); const id = del.dataset.atdel; atSaveConvs(atLoadConvs().filter((c) => c.id !== id)); if (id === atConvId) atConvId = null; rbRenderAthenaConvs(); return; }
+  const it = e.target.closest("[data-atconv]"); if (it) atOpenConv(it.dataset.atconv);
 });
+$("rbNewAthena").onclick = atStartNew;
+// Glisser à la souris : maintenir le clic gauche et glisser horizontalement pour changer de vue.
+(() => {
+  const car = document.querySelector(".rb-carousel"), slider = $("rbSlider");
+  if (!car || !slider) return;
+  let dragging = false, moved = false, sx = 0, sy = 0, sv = 0, w = 0;
+  const onMove = (e) => {
+    if (!dragging) return;
+    const dx = e.clientX - sx, dy = e.clientY - sy;
+    if (!moved) {
+      if (Math.abs(dx) > 6 && Math.abs(dx) > Math.abs(dy)) { moved = true; slider.classList.add("rb-dragging"); slider.style.transition = "none"; }
+      else if (Math.abs(dy) > 12) { onUp(e); return; }        // geste vertical → on abandonne
+    }
+    if (moved) {
+      let off = -sv * w + dx;
+      if (off > 0) off *= 0.35;                               // résistance élastique aux bords
+      if (off < -2 * w) off = -2 * w + (off + 2 * w) * 0.35;
+      slider.style.transform = `translateX(${off}px)`;
+      e.preventDefault();
+    }
+  };
+  const onUp = (e) => {
+    document.removeEventListener("mousemove", onMove);
+    document.removeEventListener("mouseup", onUp);
+    slider.classList.remove("rb-dragging");
+    slider.style.transition = "";
+    if (dragging && moved) {
+      const dx = e.clientX - sx;
+      let t = sv;
+      if (dx < -w * 0.2) t = Math.min(3, sv + 1);             // glissé vers la gauche → vue suivante
+      else if (dx > w * 0.2) t = Math.max(0, sv - 1);         // glissé vers la droite → vue précédente
+      rbSetView(t);                                           // accroche à la vue (transform en %)
+      const swallow = (ev) => { ev.stopPropagation(); ev.preventDefault(); }; // avale le clic post-glissé
+      window.addEventListener("click", swallow, true);
+      setTimeout(() => window.removeEventListener("click", swallow, true), 60);
+    }
+    dragging = false; moved = false;
+  };
+  car.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
+    dragging = true; moved = false; sx = e.clientX; sy = e.clientY; sv = rbView; w = car.clientWidth || 1;
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  });
+})();
+// États de présence choisis par l'utilisateur (Hors ligne = automatique quand il n'est pas sur Olympus).
+const RB_STATUS = { libre: { label: "Libre", color: "#3fb950" }, focus: { label: "Focus", color: "#a06bd6" }, absent: { label: "Absent", color: "#e0a862" } };
+let rbMyStatus = (() => { try { const s = localStorage.getItem("olympusStatus"); return RB_STATUS[s] ? s : "libre"; } catch { return "libre"; } })();
+function rbRenderMe() {
+  const meEl = $("rbMe"); if (!meEl) return;
+  const st = RB_STATUS[rbMyStatus] || RB_STATUS.libre;
+  meEl.innerHTML = `<div class="rb-me">
+      <div class="avatar-sm rb-me-av">${escapeHtml(initialsOf(currentUserName || "?"))}<span class="rb-me-pres" style="background:${st.color}"></span></div>
+      <div class="rb-me-info"><span class="rb-me-name">${escapeHtml(currentUserName || "Moi")} <span class="rb-me-tag">toi</span></span>
+        <button class="rb-status" id="rbStatusBtn"><span class="rb-sdot" style="background:${st.color}"></span>${st.label}<span class="rb-scaret">▾</span></button></div>
+    </div>
+    <div class="rb-statusmenu" id="rbStatusMenu">${Object.entries(RB_STATUS).map(([k, v]) => `<div class="rb-sopt${k === rbMyStatus ? " on" : ""}" data-status="${k}"><span class="rb-sdot" style="background:${v.color}"></span>${v.label}</div>`).join("")}<div class="rb-sopt off" data-status-info><span class="rb-sdot" style="background:#8a8a90"></span>Hors ligne <span class="rb-sauto">auto quand tu quittes Olympus</span></div></div>`;
+  $("rbStatusBtn").onclick = (e) => { e.stopPropagation(); $("rbStatusMenu").classList.toggle("show"); };
+  $("rbStatusMenu").querySelectorAll("[data-status]").forEach((o) => o.onclick = () => { rbMyStatus = o.dataset.status; try { localStorage.setItem("olympusStatus", rbMyStatus); } catch {} rbRenderMe(); });
+}
+document.addEventListener("click", (e) => { const m = $("rbStatusMenu"); if (m && m.classList.contains("show") && !e.target.closest("#rbStatusMenu") && !e.target.closest("#rbStatusBtn")) m.classList.remove("show"); });
+// Vue Chat de la colonne droite = annuaire : TOI en haut (avec état) + équipe + groupes & canaux.
+async function rbRenderChat() {
+  rbRenderMe();
+  const teamEl = $("rbTeam"), groupsEl = $("rbGroups");
+  const p = await window.olympus.presenceOnline().catch(() => ({ ok: false }));
+  const users = (p.ok ? p.users : []).slice();
+  const nowMs = Date.now();
+  for (const f of FAKE_MEMBERS) if (!users.some((u) => u.name === f.name)) users.push({ name: f.name, last_seen: f.online ? new Date().toISOString() : new Date(nowMs - 36e5).toISOString() });
+  const isMe = (u) => u.user_id === currentUserId || (currentUserName && u.name === currentUserName);
+  const others = users.filter((u) => !isMe(u));
+  const isOn = (u) => nowMs - new Date(u.last_seen).getTime() < 120000;
+  others.sort((a, b) => (isOn(b) - isOn(a)) || (a.name || "").localeCompare(b.name || ""));
+  const dmOf = (name) => (hmConvs.find((c) => c.kind === "dm" && c.name === name) || {}).id || "";
+  if (teamEl) teamEl.innerHTML = others.length
+    ? others.map((u) => { const on = isOn(u), n = u.name || "?", dm = dmOf(n); return `<div class="rb-user"${dm ? ` data-rbconv="${dm}"` : ""}><div class="avatar-sm">${escapeHtml(initialsOf(n))}</div><span style="flex:1${on ? "" : ";color:var(--muted)"}">${escapeHtml(n)}</span><span class="status-dot ${on ? "on" : "off"}"></span></div>`; }).join("")
+    : '<div class="rb-empty">—</div>';
+  const gs = hmConvs.filter((c) => c.kind === "group" || c.kind === "channel");
+  if (groupsEl) groupsEl.innerHTML = gs.length
+    ? gs.map((c) => `<div class="rb-user" data-rbconv="${c.id}"><div class="avatar-sm">${c.kind === "channel" ? "#" : escapeHtml(initialsOf(c.name))}</div><span style="flex:1">${escapeHtml(c.name)}</span>${c.unread ? `<span class="rb-unread">${c.unread}</span>` : ""}</div>`).join("")
+    : '<div class="rb-empty">Aucun groupe.</div>';
+}
 function rbRenderMail() {
-  const unread = irMails.filter((m) => m.dir === "in" && m.unread && !m.trash).slice(0, 5);
+  const unread = irMails.filter((m) => m.dir === "in" && m.unread && !m.trash).slice(0, 6);
+  const cnt = $("rbMailCount"); if (cnt) cnt.textContent = unread.length || "";
   $("rbMailUnread").innerHTML = unread.length
-    ? unread.map((m) => `<div class="rb-mrow" data-rbmail="${m.id}"><span class="dotg"></span><div style="flex:1;min-width:0;"><b>${escapeHtml(m.toName)}</b><div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(m.subject)}</div></div></div>`).join("")
+    ? unread.map((m) => `<div class="rb-mrow" data-rbmail="${m.id}"><div class="avatar-sm">${escapeHtml(initialsOf(m.toName))}</div><div style="flex:1;min-width:0;"><div class="rb-mfrom">${escapeHtml(m.toName)}</div><div class="rb-msubj">${escapeHtml(m.subject)}</div></div></div>`).join("")
     : '<div class="rb-empty">✨ Boîte à zéro.</div>';
-  $("rbMailLive").innerHTML = irEventFeed().slice(0, 4).map(({ m, e, ts }) => `<div class="rb-mrow" data-rbmail="${m.id}"><span style="filter:grayscale(1);font-size:11px;">${IR_EV_ICON[e.k]}</span><div style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><b>${escapeHtml(m.toName)}</b> ${IR_EV_VERB[e.k].split(" ")[0]} « ${escapeHtml(m.subject.slice(0, 22))}… »</div><span style="font-size:9.5px;color:var(--dim);flex-shrink:0;">${irAgo(ts)}</span></div>`).join("") || '<div class="rb-empty">Aucune activité.</div>';
+  $("rbMailLive").innerHTML = irEventFeed().slice(0, 5).map(({ m, e, ts }) => `<div class="rb-mrow" data-rbmail="${m.id}"><span class="rb-mact">${IR_EV_ICON[e.k]}</span><div style="flex:1;min-width:0;"><div class="rb-mline"><b>${escapeHtml(m.toName)}</b> ${IR_EV_VERB[e.k]}</div><div class="rb-msubj">« ${escapeHtml(m.subject)} »</div></div><span class="rb-mago">${irAgo(ts)}</span></div>`).join("") || '<div class="rb-empty">Aucune activité.</div>';
 }
 $("rightbar").addEventListener("click", (e) => {
+  const c = e.target.closest("[data-rbconv]");
+  if (c) {
+    const id = c.dataset.rbconv;
+    // Dans Hermès : ouvre la conversation dans l'app. Ailleurs : ouvre la bulle flottante.
+    if ($("page-hermes") && $("page-hermes").classList.contains("show") && typeof openConv === "function") { $("rbChatBubble").classList.remove("show", "full"); openConv(id); }
+    else rbChatOpen(id);
+    return;
+  }
+  const ev = e.target.closest("[data-rbev]");
+  if (ev) { const o = rbEvById[ev.dataset.rbev]; if (o) rbEvOpen(o); return; }
   const r = e.target.closest("[data-rbmail]"); if (!r) return;
   const m = irMails.find((x) => x.id === r.dataset.rbmail); if (!m) return;
-  irFolder = m.dir === "in" ? "inbox" : "sent";
-  goTo("iris");
-  irMode(); renderIrFolders(); renderIrList(); renderIrDetail(m.id);
+  rbMailOpen(m.id);
 });
+
+// ══════════ Bulle de chat flottante (+ agrandir → modal plein écran) ══════════
+// État séparé de Hermès (n'interfère pas avec #chatMessages/hmCur). Réutilise chatList/chatSend
+// pour le canal réel « Équipe », et conv.msgs pour les conversations de démo (DM/groupes).
+let rbcConv = null, rbcTimer = null;
+function rbcNorm(c, realMsgs) {
+  if (c.real) return (realMsgs || []).map((m) => ({ mine: m.user_id === currentUserId, author: m.author_name || "?", body: m.body, time: fmtTime(m.created_at) }));
+  return (c.msgs || []).map((m) => ({ mine: !!m.mine, author: m.a || c.name, body: m.kind === "text" || !m.kind ? m.body : m.kind === "voice" ? "🎙 Message vocal" : m.kind === "image" ? "📷 Photo" : "📎 " + (m.name || "fichier"), time: m.t || "" }));
+}
+async function rbChatRefresh(scrollEnd) {
+  const c = rbcConv; if (!c) return;
+  let msgs;
+  if (c.real) { const r = await window.olympus.chatList(0).catch(() => ({ ok: false })); if (rbcConv !== c) return; msgs = rbcNorm(c, r.ok ? r.messages : []); }
+  else msgs = rbcNorm(c);
+  const box = $("rbcMsgs"); if (!box) return;
+  const near = box.scrollHeight - box.scrollTop - box.clientHeight < 90;
+  box.innerHTML = msgs.length
+    ? msgs.map((m) => `<div class="rbc-b ${m.mine ? "me" : "them"}">${!m.mine && c.kind !== "dm" && m.author ? `<div class="rbc-au">${escapeHtml(m.author)}</div>` : ""}<div class="rbc-bd">${escapeHtml(m.body)}</div><div class="rbc-tm">${escapeHtml(m.time)}</div></div>`).join("")
+    : `<div class="rb-empty" style="padding:14px 4px">Aucun message — lance la conversation.</div>`;
+  if (scrollEnd || near) box.scrollTop = box.scrollHeight;
+}
+function rbChatOpen(id) {
+  const c = hmConvs.find((x) => x.id === id); if (!c) return;
+  rbcConv = c; c.unread = 0;
+  $("rbcAv").textContent = c.kind === "channel" ? "◎" : initialsOf(c.name);
+  $("rbcName").textContent = c.name;
+  $("rbcSub").textContent = c.kind === "channel" ? (c.sub || "") : c.kind === "group" ? (c.members || []).join(" · ") : (c.online ? "en ligne" : "hors ligne");
+  $("rbEvBubble").classList.remove("show"); $("rbMailBubble").classList.remove("show", "full"); // pas deux bulles superposées
+  $("rbChatBubble").classList.add("show");
+  $("rbcMsgs").innerHTML = "";
+  rbChatRefresh(true);
+  if (rbcTimer) clearInterval(rbcTimer);
+  if (c.real) rbcTimer = setInterval(() => rbChatRefresh(false), 3000);
+  if (rbView === 1) rbRenderChat();
+  rbcAtts = []; if (typeof renderAttChips === "function") renderAttChips();
+  if (typeof renderSchedChips === "function") renderSchedChips();
+}
+function rbChatClose() {
+  $("rbChatBubble").classList.remove("show", "full");
+  $("rbcBackdrop").classList.remove("show");
+  if (rbcTimer) { clearInterval(rbcTimer); rbcTimer = null; }
+  rbcConv = null;
+}
+function rbChatSetFull(full) {
+  const el = $("rbChatBubble");
+  el.classList.toggle("full", full);
+  $("rbcBackdrop").classList.toggle("show", full);
+  $("rbcFull").textContent = full ? "⤡" : "⤢";
+  $("rbcFull").title = full ? "Réduire" : "Agrandir";
+  const box = $("rbcMsgs"); if (box) box.scrollTop = box.scrollHeight;
+}
+async function rbChatSend() {
+  const inp = $("rbcInput"), body = inp.value.trim();
+  if ((!body && !rbcAtts.length) || !rbcConv) return;
+  inp.value = "";
+  const atts = rbcAtts.slice(); rbcAtts = []; renderAttChips();
+  const hm = new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+  if (rbcConv.real) {
+    const txt = [body, ...atts.map((a) => "📎 " + a.name)].filter(Boolean).join("\n");
+    if (txt) { const r = await window.olympus.chatSend(txt); if (r && r.ok) rbChatRefresh(true); }
+  } else {
+    if (body) rbcConv.msgs.push({ kind: "text", body, mine: true, t: hm, d: "Aujourd'hui" });
+    for (const a of atts) rbcConv.msgs.push({ kind: "file", name: a.name, mine: true, t: hm, d: "Aujourd'hui" });
+    rbChatRefresh(true);
+  }
+  if (typeof renderConvList === "function") renderConvList();
+}
+$("rbcSend").onclick = rbChatSend;
+$("rbcInput").addEventListener("keydown", (e) => { if (e.key === "Enter") rbChatSend(); });
+$("rbcClose").onclick = rbChatClose;
+$("rbcFull").onclick = () => rbChatSetFull(!$("rbChatBubble").classList.contains("full"));
+$("rbcBackdrop").onclick = () => { if ($("rbMailBubble").classList.contains("full")) rbMailSetFull(false); else rbChatSetFull(false); };
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && $("rbChatBubble").classList.contains("show")) { if ($("rbChatBubble").classList.contains("full")) rbChatSetFull(false); else rbChatClose(); } });
+
+// ══════════ Bulle de détail d'un événement (clic sur un événement de l'agenda) ══════════
+const CAT_LABEL = { call: "Appel", rdv: "Rendez-vous", reunion: "Réunion", shoot: "Shooting", rendu: "Rendu", campagne: "Campagne", client: "Client", deadline: "Deadline", divers: "Divers", general: "Général", client_meeting: "RDV client", apple: "Agenda Apple" };
+let rbEvCur = null;
+function rbEvWeekday(iso) { try { return new Date(iso + "T00:00").toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" }); } catch { return iso; } }
+function rbEvSchedule(e) {
+  const st = e.time ? e.time.slice(0, 5) : "", en = e.end_time ? e.end_time.slice(0, 5) : "";
+  const multi = e.end_date && e.end_date > e.date;
+  if (multi) { const a = (e.all_day || !st) ? rbEvWeekday(e.date) : `${rbEvWeekday(e.date)} à ${st}`; const b = (e.all_day || !en) ? rbEvWeekday(e.end_date) : `${rbEvWeekday(e.end_date)} à ${en}`; return `Du ${a}\nau ${b}`; }
+  if (e.all_day || (!st && !en)) return `${rbEvWeekday(e.date)}\nToute la journée`;
+  let dur = "";
+  if (st && en) { const [sh, sm] = st.split(":").map(Number), [eh, em] = en.split(":").map(Number); const m = (eh * 60 + em) - (sh * 60 + sm); if (m > 0) { const h = Math.floor(m / 60), mm = m % 60; dur = " (" + (h ? h + "h" + (mm ? String(mm).padStart(2, "0") : "") : mm + "min") + ")"; } }
+  return `${rbEvWeekday(e.date)}\n${st && en ? `${st} – ${en}` : st ? `dès ${st}` : "→ " + en}${dur}`;
+}
+function rbEvOpen(ev) {
+  rbEvCur = ev;
+  $("rbChatBubble").classList.remove("show", "full"); $("rbMailBubble").classList.remove("show", "full"); $("rbcBackdrop").classList.remove("show"); // pas deux bulles en même temps
+  $("rbevDot").style.background = ev.is_personal ? "var(--err)" : catColor(ev.category);
+  $("rbevTitle").textContent = ev.title || "Événement";
+  $("rbevCat").textContent = ev.is_personal ? "Personnel" : (CAT_LABEL[ev.category] || ev.category || "Événement");
+  const val = (v) => (Array.isArray(v) ? v.filter(Boolean).join(", ") : (v == null ? "" : String(v))).trim();
+  const row = (ic, v) => { const s = val(v); return s ? `<div class="rbev-row"><span class="rbev-ic">${ic}</span><span class="rbev-v">${escapeHtml(s)}</span></div>` : ""; };
+  let html = row("📅", rbEvSchedule(ev)) + row("👤", ev.assignee) + row("📍", ev.location) + row("🏢", ev.client) + row("🎬", ev.shoot_type) + row("👥", ev.participants) + (ev.delivery_date ? row("📦", "Livraison le " + rbEvWeekday(ev.delivery_date)) : "");
+  if (ev.objectives) html += `<div class="rbev-notes"><b>Objectifs</b>\n${escapeHtml(ev.objectives)}</div>`;
+  if (ev.shotlist) html += `<div class="rbev-notes"><b>Shotlist</b>\n${escapeHtml(ev.shotlist)}</div>`;
+  if (ev.notes) html += `<div class="rbev-notes">${escapeHtml(ev.notes)}</div>`;
+  $("rbevBody").innerHTML = html;
+  $("rbEvBubble").classList.add("show");
+}
+function rbEvClose() { $("rbEvBubble").classList.remove("show"); rbEvCur = null; }
+$("rbevClose").onclick = rbEvClose;
+$("rbevOpen").onclick = () => { rbEvClose(); goTo("chronos"); };
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && $("rbEvBubble").classList.contains("show")) rbEvClose(); });
+
+// ══════════ Bulle mail : fil de discussion + réponse (façon Gmail), + agrandir ══════════
+let rbmCur = null;
+function rbMailRenderThread() {
+  const m = rbmCur; if (!m) return;
+  const thread = irThreadOf(m);
+  $("rbmThread").innerHTML = thread.map((t) => {
+    const mine = t.dir !== "in";
+    const who = mine ? (t.by || "Moi") : (t.toName || t.to || "?");
+    const atts = (t.atts || []).length ? `<div class="rbm-atts">${t.atts.map((a) => `<span class="rbm-att">📎 ${escapeHtml(a.name || "pièce jointe")}</span>`).join("")}</div>` : "";
+    return `<div class="rbm-msg${mine ? " me" : ""}"><div class="rbm-mh"><span class="rbm-who">${escapeHtml(who)}</span><span class="rbm-when">${escapeHtml(t.when || "")}</span></div><div class="rbm-mb">${escapeHtml(t.body || t.preview || "")}</div>${atts}</div>`;
+  }).join("");
+  const box = $("rbmThread"); box.scrollTop = box.scrollHeight;
+}
+function rbMailOpen(id) {
+  const m = irMails.find((x) => x.id === id); if (!m) return;
+  rbmCur = m; m.unread = false;
+  $("rbChatBubble").classList.remove("show", "full"); $("rbEvBubble").classList.remove("show"); $("rbcBackdrop").classList.remove("show");
+  $("rbmAv").textContent = "✉";
+  $("rbmName").textContent = m.toName || m.to || "Mail";
+  $("rbmSub").textContent = m.subject || "";
+  $("rbMailBubble").classList.add("show");
+  rbMailRenderThread();
+  try { renderIrStats && renderIrStats(); renderIrFolders && renderIrFolders(); if (typeof irSel !== "undefined" && document.querySelector("#page-iris")) renderIrList(); } catch {}
+  rbRenderMail();
+  rbmAtts = []; if (typeof renderAttChips === "function") renderAttChips();
+  if (typeof renderSchedChips === "function") renderSchedChips();
+}
+function rbMailAutosize() { const t = $("rbmReplyText"); if (!t) return; t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 120) + "px"; }
+function rbMailReply() {
+  const t = $("rbmReplyText"), body = t.value.trim();
+  if ((!body && !rbmAtts.length) || !rbmCur) return;
+  t.value = ""; rbMailAutosize();
+  const atts = rbmAtts.map((a) => ({ name: a.name, size: a.size })); rbmAtts = []; renderAttChips();
+  const now = new Date();
+  const when = now.getDate() + " " + MON_ABBR[now.getMonth()] + " · " + now.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+  const nm = { id: "m" + Date.now(), to: rbmCur.to, toName: rbmCur.toName || rbmCur.to, client: rbmCur.client || "", cc: [], by: "Sacha", when, subject: /^re\s*:/i.test(rbmCur.subject || "") ? rbmCur.subject : "Re: " + (rbmCur.subject || ""), preview: (body || (atts[0] ? "📎 " + atts[0].name : "")).replace(/^\s+/, "").slice(0, 90), body, atts, events: [{ k: "sent", w: when }], labels: (rbmCur.labels || []).slice() };
+  irMails.unshift(nm);
+  rbmCur = nm; // rester sur le fil (même thread key)
+  rbMailRenderThread();
+  atToast("✅ Réponse ajoutée au fil.");
+  try { irApplyRules && irApplyRules(); renderIrStats && renderIrStats(); renderIrFolders && renderIrFolders(); if (document.querySelector("#page-iris")) renderIrList(); } catch {}
+  rbRenderMail();
+}
+function rbMailSetFull(full) {
+  const el = $("rbMailBubble");
+  el.classList.toggle("full", full);
+  $("rbcBackdrop").classList.toggle("show", full);
+  $("rbmFull").textContent = full ? "⤡" : "⤢";
+  $("rbmFull").title = full ? "Réduire" : "Agrandir";
+  const b = $("rbmThread"); if (b) b.scrollTop = b.scrollHeight;
+}
+function rbMailClose() { $("rbMailBubble").classList.remove("show", "full"); $("rbcBackdrop").classList.remove("show"); rbmCur = null; }
+$("rbmClose").onclick = rbMailClose;
+$("rbmFull").onclick = () => rbMailSetFull(!$("rbMailBubble").classList.contains("full"));
+$("rbmReplySend").onclick = rbMailReply;
+$("rbmReplyText").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); rbMailReply(); } });
+$("rbmReplyText").addEventListener("input", rbMailAutosize);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && $("rbMailBubble").classList.contains("show")) { if ($("rbMailBubble").classList.contains("full")) rbMailSetFull(false); else rbMailClose(); } });
+
+// ══════════ « Préparer une réponse » — brouillon rédigé par l'API Claude (clé stockée par Olympus) ══════════
+async function aiEnsureKey() { const h = await window.olympus.aiHasKey().catch(() => ({ has: false })); return (h && h.has) ? true : aiKeyModal(); }
+function aiKeyModal() {
+  return new Promise((resolve) => {
+    const ov = document.createElement("div"); ov.className = "modal-overlay show";
+    ov.innerHTML = `<div class="modal-panel" style="width:470px;max-width:92vw;"><div class="modal-body" style="padding:22px;">
+      <h2 style="font-size:15px;margin:0 0 6px;">Clé API Claude</h2>
+      <p style="font-size:12.5px;color:var(--muted);line-height:1.55;margin:0 0 14px;">macOS chiffre la clé de Zevs <b>par application</b> — Olympus ne peut pas la lire directement. Colle-la ici une seule fois : Olympus la stocke chiffrée (Keychain), elle ne quitte jamais ta machine sauf pour appeler l'API Claude.</p>
+      <input id="aiKeyInput" type="password" placeholder="sk-ant-..." autocomplete="off" spellcheck="false" style="width:100%;border:1px solid var(--line);background:var(--bg);border-radius:10px;padding:10px 12px;font-size:13px;color:var(--txt);outline:none;">
+      <div id="aiKeyMsg" style="font-size:11.5px;color:var(--err);min-height:15px;margin:6px 2px 12px;"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;"><button class="btn sec" data-no>Annuler</button><button class="btn" data-yes>Enregistrer</button></div>
+    </div></div>`;
+    document.body.appendChild(ov);
+    const inp = ov.querySelector("#aiKeyInput"), msg = ov.querySelector("#aiKeyMsg");
+    setTimeout(() => inp.focus(), 30);
+    const done = (v) => { ov.remove(); resolve(v); };
+    ov.querySelector("[data-no]").onclick = () => done(false);
+    const save = async () => { const r = await window.olympus.aiSetKey(inp.value).catch((e) => ({ ok: false, error: String(e) })); if (r && r.ok) done(true); else msg.textContent = (r && r.error) || "Échec."; };
+    ov.querySelector("[data-yes]").onclick = save;
+    inp.addEventListener("keydown", (e) => { if (e.key === "Enter") save(); });
+    ov.onclick = (e) => { if (e.target === ov) done(false); };
+  });
+}
+// Coût d'une requête IA : centimes d'euro si < 0,01 €, sinon en euros.
+function aiFmtCost(c) {
+  if (!c || c.eur == null) return "";
+  return c.eur < 0.01 ? `≈ ${(c.eur * 100).toFixed(2).replace(".", ",")} ¢` : `≈ ${c.eur.toFixed(3).replace(".", ",")} €`;
+}
+async function aiPrepareReply(kind, insertEl, btn, mode, ctx) {
+  if (!insertEl) return;
+  mode = mode || "draft";
+  const draft = (ctx && typeof ctx.draftText === "function") ? ctx.draftText() : insertEl.value.trim();
+  if (mode === "improve" && !draft) { if (typeof atToast === "function") atToast("Écris d'abord un message à améliorer."); return; }
+  if (!(await aiEnsureKey())) return;
+  let participants = "", messages = [];
+  if (ctx && typeof ctx.gather === "function") {
+    participants = ctx.participants || "";
+    messages = (await ctx.gather()) || [];
+  } else if (kind === "mail") {
+    const m = rbmCur; if (!m) return;
+    participants = m.toName || m.to || "";
+    messages = irThreadOf(m).map((t) => ({ who: t.dir !== "in" ? "Moi" : (t.toName || t.to || "?"), text: t.body || t.preview || "" }));
+  } else {
+    const c = rbcConv; if (!c) return;
+    participants = c.name || "";
+    let msgs;
+    if (c.real) { const r = await window.olympus.chatList(0).catch(() => ({ ok: false })); msgs = rbcNorm(c, r.ok ? r.messages : []); } else msgs = rbcNorm(c);
+    messages = msgs.map((m) => ({ who: m.mine ? "Moi" : (m.author || participants), text: m.body }));
+  }
+  if (mode === "draft" && !messages.length) { if (typeof atToast === "function") atToast("Rien à lire dans cette conversation."); return; }
+  const priceEl = (ctx && ctx.priceEl) ? ctx.priceEl : $(kind === "mail" ? "rbmAiPrice" : "rbcAiPrice");
+  if (btn) { btn.disabled = true; btn.classList.add("busy"); }
+  if (priceEl) { priceEl.textContent = "…"; priceEl.title = ""; }
+  const r = await window.olympus.aiDraftReply({ kind, participants, messages, mode, draft }).catch((e) => ({ ok: false, error: String(e) }));
+  if (btn) { btn.disabled = false; btn.classList.remove("busy"); }
+  if (!r || !r.ok) {
+    if (priceEl) priceEl.textContent = "";
+    if (r && r.needKey) { if (await aiKeyModal()) return aiPrepareReply(kind, insertEl, btn, mode, ctx); return; }
+    if (typeof atToast === "function") atToast("Échec IA : " + ((r && r.error) || "inconnu")); else alert("Échec : " + ((r && r.error) || ""));
+    return;
+  }
+  if (priceEl && r.cost) { priceEl.textContent = aiFmtCost(r.cost); priceEl.title = `Entrée ${r.cost.inTok} tokens · sortie ${r.cost.outTok} tokens (estimé)`; }
+  if (ctx && typeof ctx.apply === "function") ctx.apply(r.text, mode); else insertEl.value = r.text;
+  insertEl.focus();
+  if (insertEl.id === "rbmReplyText" && typeof rbMailAutosize === "function") rbMailAutosize();
+}
+$("rbcAiBtn").onclick = (e) => aiPrepareReply("chat", $("rbcInput"), e.currentTarget, "draft");
+$("rbcImpBtn").onclick = (e) => aiPrepareReply("chat", $("rbcInput"), e.currentTarget, "improve");
+$("rbmAiBtn").onclick = (e) => aiPrepareReply("mail", $("rbmReplyText"), e.currentTarget, "draft");
+$("rbmImpBtn").onclick = (e) => aiPrepareReply("mail", $("rbmReplyText"), e.currentTarget, "improve");
+
+// ══════════ Programmer l'envoi (chat + mail) — file locale, exécutée tant qu'Olympus est ouvert ══════════
+let rbSched = (() => { try { return JSON.parse(localStorage.getItem("rbSched") || "[]"); } catch { return []; } })();
+const rbSchedSave = () => { try { localStorage.setItem("rbSched", JSON.stringify(rbSched)); } catch {} };
+function rbSchedFmt(ts) { const d = new Date(ts), hm = d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }); return d.toDateString() === new Date().toDateString() ? hm : `${d.getDate()}/${d.getMonth() + 1} ${hm}`; }
+function renderSchedChips() {
+  const fill = (el, list) => { if (!el) return; el.innerHTML = list.map((e) => `<span class="rbc-schedchip">🕐 Programmé ${rbSchedFmt(e.when)} <b data-schedcancel="${e.id}">✕</b></span>`).join(""); };
+  fill($("rbcSchedChips"), rbcConv ? rbSched.filter((e) => e.kind === "chat" && e.convId === rbcConv.id) : []);
+  fill($("rbmSchedChips"), rbmCur ? rbSched.filter((e) => e.kind === "mail" && e.mailKey === rbmCur.id) : []);
+  fill($("chatSchedChips"), (typeof hmCur !== "undefined" && hmCur) ? rbSched.filter((e) => e.kind === "chat" && e.convId === hmCur.id) : []);
+}
+function rbSchedFire() {
+  const now = Date.now(); let fired = false;
+  for (const e of rbSched.slice()) {
+    if (e.when > now) continue;
+    try {
+      if (e.kind === "mail") {
+        const when = new Date().getDate() + " " + MON_ABBR[new Date().getMonth()] + " · " + new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+        irMails.unshift({ id: "m" + Date.now(), to: e.to, toName: e.toName || e.to, client: e.client || "", cc: [], by: "Sacha", when, subject: e.subject, preview: (e.body || "").slice(0, 90), body: e.body, atts: [], events: [{ k: "sent", w: when }], labels: e.labels || [] });
+        if (rbmCur && rbmCur.id === e.mailKey) rbMailRenderThread();
+      } else {
+        const c = hmConvs.find((x) => x.id === e.convId);
+        if (c && c.real) window.olympus.chatSend(e.body);
+        else if (c) { c.msgs.push({ kind: "text", body: e.body, mine: true, t: new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }), d: "Aujourd'hui" }); if (rbcConv && rbcConv.id === e.convId) rbChatRefresh(true); if (typeof hmCur !== "undefined" && hmCur && hmCur.id === e.convId) renderFakeMsgs(hmCur); }
+      }
+      if (typeof atToast === "function") atToast("🕐 Message programmé envoyé.");
+    } catch {}
+    rbSched = rbSched.filter((x) => x.id !== e.id); fired = true;
+  }
+  if (fired) { rbSchedSave(); renderSchedChips(); }
+}
+function rbSchedOpen(kind, insertEl, anchorBtn, ctx) {
+  const body = insertEl.value.trim();
+  if (!body) { if (typeof atToast === "function") atToast("Écris d'abord un message à programmer."); return; }
+  const conv = (ctx && ctx.conv) || rbcConv;
+  if (kind === "chat" && !conv) return;
+  if (kind === "mail" && !rbmCur) return;
+  document.querySelectorAll(".rb-schedpop").forEach((p) => p.remove());
+  const at = (h, m, nextDay) => { const d = new Date(); d.setHours(h, m, 0, 0); if (nextDay || d.getTime() <= Date.now()) d.setDate(d.getDate() + 1); return d.getTime(); };
+  const presets = [{ label: "Dans 1 heure", ts: Date.now() + 3600e3 }, { label: "Ce soir 18:00", ts: at(18, 0, false) }, { label: "Demain 9:00", ts: at(9, 0, true) }];
+  const pop = document.createElement("div"); pop.className = "rb-schedpop";
+  pop.innerHTML = presets.map((p) => `<div class="rb-schedopt" data-ts="${p.ts}">${p.label}<span>${rbSchedFmt(p.ts)}</span></div>`).join("") + `<div class="rb-schedcustom"><input type="datetime-local" id="rbSchedDt"><button id="rbSchedGo">Programmer</button></div>`;
+  document.body.appendChild(pop);
+  const r = anchorBtn.getBoundingClientRect();
+  pop.style.left = Math.max(10, Math.min(r.left - 60, window.innerWidth - pop.offsetWidth - 10)) + "px";
+  pop.style.top = (r.top - pop.offsetHeight - 8) + "px";
+  const schedule = (ts) => {
+    if (!ts || ts <= Date.now()) { if (typeof atToast === "function") atToast("Choisis une heure future."); return; }
+    const entry = { id: "s" + Date.now(), kind, when: ts, body };
+    if (kind === "mail") { entry.mailKey = rbmCur.id; entry.to = rbmCur.to; entry.toName = rbmCur.toName; entry.client = rbmCur.client || ""; entry.labels = (rbmCur.labels || []).slice(); entry.subject = /^re\s*:/i.test(rbmCur.subject || "") ? rbmCur.subject : "Re: " + (rbmCur.subject || ""); }
+    else entry.convId = conv.id;
+    rbSched.push(entry); rbSchedSave();
+    insertEl.value = ""; if (insertEl.id === "rbmReplyText" && typeof rbMailAutosize === "function") rbMailAutosize();
+    if (typeof atToast === "function") atToast("🕐 Envoi programmé — " + rbSchedFmt(ts));
+    pop.remove(); renderSchedChips();
+  };
+  pop.querySelectorAll("[data-ts]").forEach((o) => o.onclick = () => schedule(+o.dataset.ts));
+  pop.querySelector("#rbSchedGo").onclick = () => { const v = pop.querySelector("#rbSchedDt").value; if (v) schedule(new Date(v).getTime()); };
+  setTimeout(() => { const close = (ev) => { if (!ev.target.closest(".rb-schedpop") && ev.target !== anchorBtn) { pop.remove(); document.removeEventListener("mousedown", close, true); } }; document.addEventListener("mousedown", close, true); }, 0);
+}
+$("rbcSchedBtn").onclick = (e) => rbSchedOpen("chat", $("rbcInput"), e.currentTarget);
+$("rbmSchedBtn").onclick = (e) => rbSchedOpen("mail", $("rbmReplyText"), e.currentTarget);
+["rbcSchedChips", "rbmSchedChips", "chatSchedChips"].forEach((id) => { const el = $(id); if (el) el.addEventListener("click", (e) => { const c = e.target.closest("[data-schedcancel]"); if (!c) return; rbSched = rbSched.filter((x) => x.id !== c.dataset.schedcancel); rbSchedSave(); renderSchedChips(); if (typeof atToast === "function") atToast("Programmation annulée."); }); });
+setInterval(rbSchedFire, 15000); rbSchedFire();
+
+// ══════════ Pièces jointes (chat + mail) ══════════
+let rbcAtts = [], rbmAtts = [];
+const rbFmtBytes = (n) => n < 1024 ? n + " o" : n < 1048576 ? Math.round(n / 1024) + " Ko" : (n / 1048576).toFixed(1).replace(".", ",") + " Mo";
+function renderAttChips() {
+  const fill = (el, list, w) => { if (!el) return; el.innerHTML = list.map((a, i) => `<span class="rbc-attchip" title="${escapeHtml(a.name)}">📎 ${escapeHtml(a.name.length > 24 ? a.name.slice(0, 22) + "…" : a.name)} <span style="color:var(--dim)">${rbFmtBytes(a.size)}</span> <b data-attrm="${w}:${i}">✕</b></span>`).join(""); };
+  fill($("rbcAttChips"), rbcAtts, "c"); fill($("rbmAttChips"), rbmAtts, "m");
+}
+function rbAttAdd(which, fileList) { const arr = which === "m" ? rbmAtts : rbcAtts; for (const f of fileList) arr.push({ name: f.name, size: f.size, file: f }); renderAttChips(); }
+$("rbcAttBtn").onclick = () => $("rbcFileInput").click();
+$("rbmAttBtn").onclick = () => $("rbmFileInput").click();
+$("rbcFileInput").onchange = (e) => { rbAttAdd("c", e.target.files); e.target.value = ""; };
+$("rbmFileInput").onchange = (e) => { rbAttAdd("m", e.target.files); e.target.value = ""; };
+["rbcAttChips", "rbmAttChips"].forEach((id) => { const el = $(id); if (el) el.addEventListener("click", (e) => { const b = e.target.closest("[data-attrm]"); if (!b) return; const [w, i] = b.dataset.attrm.split(":"); (w === "m" ? rbmAtts : rbcAtts).splice(+i, 1); renderAttChips(); }); });
 
 // ══════════ IRIS (mailing + tracking) ══════════
 const IR_LBL = { sent: "Envoyé", open: "Ouvert", read: "Lu en entier", dl: "PJ téléchargée", click: "Lien cliqué" };
@@ -5141,6 +5786,23 @@ $("irAttachBtn").onclick = () => {
   inp.click();
 };
 $("irAttachList").onclick = (e) => { const rm = e.target.closest("[data-rmatt]"); if (rm) { irAtts.splice(+rm.dataset.rmatt, 1); renderIrAtts(); } };
+// IA (Iris) : rédige/améliore la réponse au-dessus du fil cité, sans écraser la citation.
+function irSplitBody() { const v = $("irBody").value; const i = v.indexOf("\n\n— Le "); return i === -1 ? { typed: v, quote: "" } : { typed: v.slice(0, i), quote: v.slice(i) }; }
+function irAiCtx() {
+  return {
+    participants: $("irToName").value.trim() || $("irTo").value.trim() || "",
+    priceEl: $("irAiPrice"),
+    draftText: () => irSplitBody().typed.trim(),
+    apply: (text) => { const { quote } = irSplitBody(); $("irBody").value = text + quote; $("irBody").focus(); $("irBody").setSelectionRange(0, 0); },
+    gather: async () => {
+      const m = irMails.find((x) => x.id === irReplyMailId);
+      if (!m) return [];
+      return irThreadOf(m).map((t) => ({ who: t.dir !== "in" ? "Moi" : (t.toName || t.to || "?"), text: t.body || t.preview || "" })).filter((x) => x.text);
+    },
+  };
+}
+$("irAiBtn").onclick = (e) => aiPrepareReply("mail", $("irBody"), e.currentTarget, "draft", irAiCtx());
+$("irImpBtn").onclick = (e) => aiPrepareReply("mail", $("irBody"), e.currentTarget, "improve", irAiCtx());
 $("irSend").onclick = async () => {
   const d = { to: $("irTo").value.trim(), toName: $("irToName").value.trim(), subject: $("irSubject").value.trim(), body: $("irBody").value.trim() };
   const msg = $("irMsg"), btn = $("irSend");
@@ -5172,40 +5834,74 @@ const sparkSvg = (arr, w = 130, h = 34) => {
 // Argos v2 — social media management : marques, publication, inbox, écoute, ads,
 // concurrence, rapport, connexions. Le renderer consomme les IPC argos:* ; tant que
 // les plateformes ne sont pas connectées, le main sert des données de démo (demo:true).
-let arState = null, arBrand = null, arView = "apercu", arPeriod = 30, arWeekOff = 0;
+let arState = null, arBrand = null, arCat = "meta", arView = "apercu", arPeriod = 30, arWeekOff = 0;
 const arCache = {};
-const AR_VIEWS = [
-  { id: "apercu", ic: "◎", label: "Aperçu" },
-  { id: "audience", ic: "◐", label: "Audience" },
-  { id: "publication", ic: "🗓", label: "Publication" },
-  { id: "inbox", ic: "💬", label: "Inbox" },
-  { id: "ecoute", ic: "🜂", label: "Écoute" },
-  { id: "ads", ic: "▸", label: "Publicité" },
-  { id: "concurrence", ic: "⚖", label: "Concurrence" },
-  { id: "rapport", ic: "▤", label: "Rapport" },
+// Niveau 1 (sidebar) : catégories par plateforme. Niveau 2 (sous-onglets en haut du contenu) :
+// les outils de la catégorie. Une catégorie à un seul outil n'affiche pas de sous-onglets.
+const AR_CATS = [
+  { id: "meta", ic: "📣", label: "Meta", tools: ["apercu", "audience", "publication", "inbox", "ecoute", "ads_meta"] },
+  { id: "google", ic: "🔎", label: "Google", tools: ["web", "seo", "ads_google", "tendance", "notoriete"] },
+  { id: "linkedin", ic: "💼", label: "LinkedIn", tools: ["li_apercu", "li_publication", "li_audience", "li_ads"] },
+  { id: "veille", ic: "⚖", label: "Veille concurrentielle", tools: ["veille_meta", "veille_linkedin"] },
+  { id: "rapport", ic: "▤", label: "Rapport", tools: ["rapport_gen", "rapport_planif", "rapport_exports"] },
 ];
+const AR_TOOLS = {
+  apercu: { label: "Aperçu", ic: "◎" }, audience: { label: "Audience", ic: "◐" },
+  publication: { label: "Publication", ic: "🗓" }, inbox: { label: "Inbox", ic: "💬" },
+  ecoute: { label: "Écoute", ic: "🜂" }, ads_meta: { label: "Publicité", ic: "▸" },
+  web: { label: "Site web", ic: "🌐" }, seo: { label: "SEO", ic: "🔍" }, ads_google: { label: "Publicité", ic: "▸" },
+  tendance: { label: "Tendance", ic: "📈" }, notoriete: { label: "Notoriété", ic: "⭐" },
+  li_apercu: { label: "Aperçu", ic: "◎" }, li_publication: { label: "Publication", ic: "🗓" }, li_audience: { label: "Audience", ic: "◐" }, li_ads: { label: "Publicité", ic: "▸" },
+  veille_meta: { label: "Meta", ic: "📣" }, veille_linkedin: { label: "LinkedIn", ic: "💼" },
+  rapport_gen: { label: "Générateur", ic: "▤" }, rapport_planif: { label: "Rapports programmés", ic: "🗓" }, rapport_exports: { label: "Exports", ic: "⬇" },
+};
+const arCatOf = (viewId) => AR_CATS.find((c) => c.tools.includes(viewId)) || AR_CATS[0];
+// Connexion requise par outil (au moins un de ces réseaux dans les assets du client). Outil absent = pas de dépendance.
+const AR_TOOL_REQ = {
+  apercu: ["facebook", "instagram"], audience: ["facebook", "instagram"], publication: ["facebook", "instagram"], inbox: ["facebook", "instagram"], ecoute: ["facebook", "instagram"], ads_meta: ["meta_ads"],
+  web: ["google_analytics", "search_console"], seo: ["search_console"], ads_google: ["google_ads"], tendance: ["google_ads"], notoriete: ["google_ads"],
+  li_apercu: ["linkedin"], li_publication: ["linkedin"], li_audience: ["linkedin"], li_ads: ["linkedin"],
+};
+const arToolConnected = (b, t) => { const req = AR_TOOL_REQ[t]; if (!req || !b) return true; return (b.assets || []).some((a) => req.includes(a.network)); };
 const AR_NETS = {
   instagram: { ic: "📷", label: "Instagram" }, facebook: { ic: "👥", label: "Facebook" },
   tiktok: { ic: "🎵", label: "TikTok" }, linkedin: { ic: "💼", label: "LinkedIn" },
   x: { ic: "𝕏", label: "X" }, youtube: { ic: "▶️", label: "YouTube" },
   meta_ads: { ic: "📣", label: "Meta Ads" }, google_ads: { ic: "🔎", label: "Google Ads" }, web: { ic: "🌐", label: "Web" },
+  google_analytics: { ic: "📊", label: "Analytics" }, search_console: { ic: "🔍", label: "Search Console" }, google_business: { ic: "📍", label: "Google Business" },
 };
 const arNet = (n) => AR_NETS[n] || { ic: "·", label: n };
+// Navigue vers un outil (sous-vue), en synchronisant la catégorie parente + la colonne d'outils.
+function arGoView(viewId) { arCat = arCatOf(viewId).id; arView = viewId; arSideRender(); arToolsRender(); arRenderView(); }
+// Colonne de navigation : TOUTES les catégories empilées, chacune avec ses outils. Toujours
+// visible. Une catégorie mono-outil s'affiche comme un item direct (pas d'en-tête redondant).
+const arToolItem = (t, ic, label, b) => { const conn = arToolConnected(b, t); return `<div class="ir-folder${arView === t ? " active" : ""}${conn ? "" : " notconn"}" data-tool="${t}"${conn ? "" : ` data-locked="1" title="Connecter le client pour accéder à la vue"`}><span class="fic">${ic}</span><span class="lname">${escapeHtml(label)}</span></div>`; };
+function arToolsRender() {
+  const el = $("arTools"); if (!el) return;
+  const b = arBrandOf();
+  el.innerHTML = AR_CATS.map((c) => {
+    if (c.tools.length < 2) return arToolItem(c.tools[0], c.ic, c.label, b);
+    return `<div class="ar-cat" style="margin:14px 2px 6px;">${escapeHtml(c.label)}</div>` +
+      c.tools.map((t) => { const tt = AR_TOOLS[t] || { label: t, ic: "·" }; return arToolItem(t, tt.ic, tt.label, b); }).join("");
+  }).join("");
+  el.querySelectorAll(".ir-folder").forEach((bt) => bt.onclick = () => { if (bt.dataset.locked) return; if (arView === bt.dataset.tool) return; arView = bt.dataset.tool; arCat = arCatOf(bt.dataset.tool).id; arToolsRender(); arRenderView(); });
+}
 const arAgo = (h) => h < 1 ? "à l'instant" : h < 24 ? `il y a ${h} h` : `il y a ${Math.round(h / 24)} j`;
 const AR_DOW = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
 function arInvalidate(brandId) { Object.keys(arCache).forEach((k) => (!brandId || k.startsWith(brandId + ":")) && delete arCache[k]); }
 async function arGet(key, fn) { if (arCache[key] === undefined) arCache[key] = await fn(); return arCache[key]; }
-// À CHAQUE visite d'une vue mappée à un vrai compte, on affiche le cache tout de suite (instantané)
-// PUIS on relance un vrai appel Meta en tâche de fond (pas plus d'une fois toutes les 45s par clé,
-// pour ne pas marteler l'API si on navigue vite) — si la donnée a changé, on ré-affiche avec un
-// flash de mise à jour plutôt qu'un remplacement silencieux.
+// Cache-first (Obj 1) : revoir une vue N'appelle PLUS l'API. On sert le cache instantanément, et on
+// ne relance un vrai appel en tâche de fond QUE si la donnée est PÉRIMÉE (> 6 h — drapeau `stale`
+// posé côté main par argosCached), pas à chaque visite. Les données fraîches ne sont jamais re-fetchées.
 const arLastRefresh = {};
 function arFlashStage() { const s = $("arStage"); if (!s) return; s.classList.remove("ar-flash"); void s.offsetWidth; s.classList.add("ar-flash"); }
 function arKickRefresh(key, stillHere, forceFetch) {
+  const cur = arCache[key];
+  if (!cur || !cur.stale) return; // cache frais → aucun appel (c'est tout l'intérêt du cache persistant)
   const now = Date.now();
   if (arLastRefresh[key] && now - arLastRefresh[key] < 45000) return;
   arLastRefresh[key] = now;
-  const before = JSON.stringify(arCache[key]);
+  const before = JSON.stringify(cur);
   forceFetch().then((fresh) => {
     if (!fresh || JSON.stringify(fresh) === before) return;
     arCache[key] = fresh;
@@ -5228,7 +5924,9 @@ async function argosPrewarmAll() {
     targets.forEach((b) => {
       if (netOf(b, "facebook") || netOf(b, "instagram")) { window.olympus.argosOverview(b.id, 30).catch(() => {}); window.olympus.argosInbox(b.id).catch(() => {}); }
       if (netOf(b, "instagram")) window.olympus.argosAudience(b.id).catch(() => {});
-      if (netOf(b, "meta_ads")) window.olympus.argosAds(b.id).catch(() => {});
+      if (netOf(b, "meta_ads") || netOf(b, "google_ads")) window.olympus.argosAds(b.id).catch(() => {});
+      if (netOf(b, "google_analytics")) window.olympus.argosWeb(b.id, 30).catch(() => {});
+      if (netOf(b, "search_console")) window.olympus.argosSeo(b.id, 30).catch(() => {});
     });
   } catch {}
 }
@@ -5238,6 +5936,7 @@ async function renderArgos() {
   const visible = arVisibleBrands();
   if ((!arBrand || !visible.find((b) => b.id === arBrand)) && visible.length) arBrand = visible[0].id;
   arSideRender();
+  arToolsRender();
   arRenderView();
 }
 function arSideRender() {
@@ -5248,11 +5947,8 @@ function arSideRender() {
       <div style="flex:1;min-width:0;"><div class="bn">${escapeHtml(b.name)}</div><div class="bs">${escapeHtml(b.secteur || "")}</div></div>
       <button class="ar-bedit" data-editbrand="${b.id}" title="Modifier la marque">✎</button>
     </div>`).join("") || '<div class="bs" style="padding:4px 2px;color:var(--dim);">Aucune marque — crée la première.</div>';
-  $("arViews").innerHTML = AR_VIEWS.map((v) => `
-    <div class="ir-folder${arView === v.id ? " active" : ""}" data-arview="${v.id}"><span class="fic">${v.ic}</span><span class="lname">${v.label}</span></div>`).join("");
-  document.querySelectorAll("#arBrands .ar-brand").forEach((el) => el.onclick = (e) => { if (e.target.closest("[data-editbrand]")) return; arBrand = el.dataset.brand; arSideRender(); arRenderView(); });
+  document.querySelectorAll("#arBrands .ar-brand").forEach((el) => el.onclick = (e) => { if (e.target.closest("[data-editbrand]")) return; arBrand = el.dataset.brand; arSideRender(); arToolsRender(); arRenderView(); });
   document.querySelectorAll("#arBrands [data-editbrand]").forEach((el) => el.onclick = (e) => { e.stopPropagation(); const b = brands.find((x) => x.id === el.dataset.editbrand); if (b) arBrandModal(b); });
-  document.querySelectorAll("#arViews .ir-folder").forEach((el) => el.onclick = () => { arView = el.dataset.arview; arSideRender(); arRenderView(); });
 }
 function arBrandOf() { return arVisibleBrands().find((b) => b.id === arBrand) || null; }
 function arConnected() { return Object.values((arState && arState.connections) || {}).some((c) => c.status === "connected"); }
@@ -5290,7 +5986,7 @@ async function arRenderView() {
   const box = $("arStage");
   const b = arBrandOf();
   const tok = ++arRenderGen;
-  if (!b) { box.innerHTML = `<div class="ga-note">Crée une marque pour commencer (bouton en bas de la colonne).</div>`; return; }
+  if (!b) { box.innerHTML = `<div class="ga-note">Crée une marque pour commencer (Réglages → Argos — Clients → Nouvelle marque).</div>`; return; }
   box.innerHTML = `<div class="ga-note">Chargement…</div>`;
   try {
     if (arView === "apercu") await arViewApercu(box, b, tok);
@@ -5298,12 +5994,34 @@ async function arRenderView() {
     else if (arView === "publication") await arViewPublication(box, b, tok);
     else if (arView === "inbox") await arViewInbox(box, b, tok);
     else if (arView === "ecoute") await arViewEcoute(box, b, tok);
-    else if (arView === "ads") await arViewAds(box, b, tok);
-    else if (arView === "concurrence") await arViewConcurrence(box, b, tok);
-    else if (arView === "rapport") await arViewRapport(box, b, tok);
+    else if (arView === "ads_meta") await arViewAds(box, b, tok, "meta");
+    else if (arView === "ads_google") await arViewAds(box, b, tok, "google");
+    else if (arView === "tendance") await arViewTendance(box, b, tok);
+    else if (arView === "notoriete") await arViewNotoriete(box, b, tok);
+    else if (arView === "web") await arViewWeb(box, b, tok);
+    else if (arView === "seo") await arViewSeo(box, b, tok);
+    else if (arView === "li_apercu") arViewSoon(box, "LinkedIn — Aperçu", "Vue d'ensemble de la présence LinkedIn (abonnés, portée, engagement). Disponible une fois l'API LinkedIn connectée.", "💼");
+    else if (arView === "li_publication") arViewSoon(box, "LinkedIn — Publication", "Planification et publication de posts LinkedIn.", "🗓");
+    else if (arView === "li_audience") arViewSoon(box, "LinkedIn — Audience", "Démographie et croissance de l'audience LinkedIn.", "◐");
+    else if (arView === "li_ads") arViewSoon(box, "LinkedIn — Publicité", "Campagnes LinkedIn Ads (dépense, impressions, leads).", "▸");
+    else if (arView === "veille_meta") await arViewVeilleMeta(box, b, tok);
+    else if (arView === "veille_linkedin") arViewSoon(box, "Veille LinkedIn", "Suivi des pages et de l'activité LinkedIn des concurrents. Nécessite l'API LinkedIn.", "💼");
+    else if (arView === "rapport_gen") await arViewRapport(box, b, tok);
+    else if (arView === "rapport_planif") arViewSoon(box, "Rapports programmés", "Génération et envoi automatiques de rapports clients (hebdo/mensuel).", "🗓");
+    else if (arView === "rapport_exports") arViewSoon(box, "Exports", "Exports PDF marque blanche, Excel multi-onglets et CSV.", "⬇");
     if (arRenderAlive(tok)) mArrive(box);
   } catch (e) { if (arRenderAlive(tok)) box.innerHTML = `<div class="ga-note">Erreur : ${escapeHtml(e.message || String(e))}</div>`; }
   if (arRenderAlive(tok)) arWireCommon(box);
+}
+// Placeholder d'un outil pas encore branché (LinkedIn, SEA concurrente, exports…).
+function arViewSoon(box, title, desc, ic) {
+  box.innerHTML = arHead(title, "bientôt disponible", "", false) +
+    `<div class="ga-panel" style="text-align:center;padding:48px 24px;">
+      <div style="font-size:34px;opacity:.5;margin-bottom:12px;">${escapeHtml(ic || AR_CATS.find((c) => c.label === title)?.ic || "…")}</div>
+      <div style="font-size:15px;font-weight:600;margin-bottom:8px;">${escapeHtml(title)}</div>
+      <div class="ga-note" style="max-width:460px;margin:0 auto;">${escapeHtml(desc || "")}</div>
+      <div class="ar-demo" style="margin-top:18px;border-style:solid;">◌ Fonctionnalité à venir</div>
+    </div>`;
 }
 
 // ── Aperçu : la console de la marque ──
@@ -5369,7 +6087,7 @@ async function arViewApercu(box, b, tok) {
     if (!row || arView !== "apercu" || arBrandOf()?.id !== b.id) return;
     const eur = (n) => n.toLocaleString("fr-FR") + " €";
     const tiles = [];
-    if (adsR?.ok) tiles.push(arResumeTile("▸", "Publicité", eur(adsR.data.totals.spend), `ROAS ×${adsR.data.totals.roas} · ${adsR.data.campaigns.length} campagne(s)`, "ads"));
+    if (adsR?.ok) tiles.push(arResumeTile("▸", "Publicité", eur(adsR.data.totals.spend), `ROAS ×${adsR.data.totals.roas} · ${adsR.data.campaigns.length} campagne(s)`, "ads_meta"));
     if (audR?.ok && (audR.data.followerAge.length || audR.data.followerCountry.length)) {
       const topAge = audR.data.followerAge[0], topCountry = audR.data.followerCountry[0];
       tiles.push(arResumeTile("◐", "Audience", topAge ? topAge.label + " ans" : "—", topCountry ? `1ᵉʳ pays : ${topCountry.label}` : "", "audience"));
@@ -5380,7 +6098,7 @@ async function arViewApercu(box, b, tok) {
     }
     if (!tiles.length) return;
     row.innerHTML = tiles.join(""); row.style.display = "";
-    row.querySelectorAll("[data-gotoview]").forEach((el) => el.onclick = () => { arView = el.dataset.gotoview; arSideRender(); arRenderView(); });
+    row.querySelectorAll("[data-gotoview]").forEach((el) => el.onclick = () => arGoView(el.dataset.gotoview));
   });
 }
 
@@ -5630,24 +6348,70 @@ async function arViewEcoute(box, b, tok) {
   const saveKws = async (list) => { await window.olympus.argosKeywords(b.id, list); arState = null; delete arCache[b.id + ":listen"]; await renderArgos(); };
   box.querySelectorAll("[data-delkw]").forEach((el) => el.onclick = () => { const l = kws.slice(); l.splice(+el.dataset.delkw, 1); saveKws(l); });
   const ki = $("arKwIn"); if (ki) ki.addEventListener("keydown", (e) => { if (e.key === "Enter" && ki.value.trim()) saveKws([...kws, ki.value.trim()]); });
-  box.querySelectorAll("[data-reply-mention]").forEach((el) => el.onclick = () => { arView = "inbox"; arSideRender(); arRenderView(); });
+  box.querySelectorAll("[data-reply-mention]").forEach((el) => el.onclick = () => arGoView("inbox"));
 }
 
-// ── Publicité ──
-async function arViewAds(box, b, tok) {
+// ── Publicité (filtrée par plateforme : "meta" ou "google") ──
+// La donnée argosAds contient TOUTES les campagnes (Meta + Google fusionnées) ; on filtre à
+// l'affichage selon l'onglet. En démo (aucun compte mappé) on ne filtre pas — illustratif.
+function arFilterAds(d, platform) {
+  if (d.demo !== false) return d;
+  const isG = (c) => c.platform === "google_ads";
+  const campaigns = (d.campaigns || []).filter((c) => platform === "google" ? isG(c) : !isG(c));
+  const spend = campaigns.reduce((n, c) => n + c.spend, 0);
+  const conversions = campaigns.reduce((n, c) => n + c.conversions, 0);
+  const roas = spend ? +(campaigns.reduce((n, c) => n + c.roas * c.spend, 0) / spend).toFixed(1) : 0;
+  const platformSplit = (d.platformSplit || []).filter((p) => platform === "google" ? p.platform === "google_ads" : p.platform !== "google_ads");
+  return { ...d, campaigns, totals: { spend, conversions, roas }, platformSplit, demoSplit: platform === "google" ? [] : (d.demoSplit || []) };
+}
+async function arViewAds(box, b, tok, platform = "meta") {
+  // Google + compte mappé : vue RICHE (cartes campagne complètes + marché/concurrents), période choisie.
+  if (platform === "google" && (b.assets || []).some((a) => a.network === "google_ads")) {
+    const st = await window.olympus.siStatus().catch(() => null);
+    if (tok !== undefined && !arRenderAlive(tok)) return;
+    const connected = !!(st?.ok && st.connected);
+    const priceOf = (id) => (st?.pricing?.find((p) => p.id === id) || {}).eur;
+    const mcCost = priceOf("serp") != null ? +((priceOf("serp") || 0) + (priceOf("keyword_volume") || 0) * 8).toFixed(3) : null;
+    const sandboxBadge = !connected ? "" : (st.sandbox ? `<span class="pg-pill" style="font-size:11px;">🧪 Sandbox (gratuit)</span>` : `<span class="pg-pill" style="font-size:11px;">budget ${siEur(st.budget.spent)} / ${siEur(st.budget.hard)}</span>`);
+    const analyzeInner = connected
+      ? `<button class="btn sec" id="arAdsRichBtn">Analyser marché &amp; concurrents${mcCost != null ? ` <span class="si-cost">(≈ ${siEur(mcCost)})</span>` : ""}</button><span class="msg" id="arAdsRichMsg" style="margin-left:8px;"></span>`
+      : `<span class="ga-note" style="margin:0;display:inline-block;">Connecte un fournisseur dans <b data-goconn>Titan → Search Intelligence</b> pour ajouter le marché & les concurrents à chaque campagne.</span>`;
+    let html = arHead("Publicité", "campagnes Google Ads — " + arAdsPeriodLabel(), arAdsPeriodControl(), false);
+    html += `<div class="ga-panel flat"><div class="ga-panel-h">Campagnes${connected && sandboxBadge ? `<span class="ga-panel-x">${sandboxBadge}</span>` : ""}</div>
+       <p class="desc" style="margin-bottom:12px;">Tes campagnes Google Ads en détail (type, budget, mots-clés & position, audiences, emplacements, zones). Lance l'analyse pour ajouter <b>dans chaque carte</b> le marché et les <b>vrais concurrents locaux</b>.</p>
+       <div style="margin-bottom:12px;">${analyzeInner}</div>
+       <div id="arAdsRichActive"><div class="ga-note" style="opacity:.6;">Chargement des campagnes…</div></div></div>`;
+    if (tok !== undefined && !arRenderAlive(tok)) return;
+    box.innerHTML = html;
+    arWireAdsPeriod(box);
+    const gc = box.querySelector("[data-goconn]"); if (gc) gc.onclick = () => goTo("titan");
+    arMountRichCampaigns(box.querySelector("#arAdsRichActive"), b, { summary: true, connected, mktBtn: box.querySelector("#arAdsRichBtn"), msgEl: box.querySelector("#arAdsRichMsg") });
+    return;
+  }
   const adsKey = b.id + ":ads";
   const r = await arGet(adsKey, () => window.olympus.argosAds(b.id));
   if (!r.ok) { box.innerHTML = `<div class="ga-note">${escapeHtml(r.error)}</div>`; return; }
-  const d = r.data;
-  if (d.demo === false) arKickRefresh(adsKey, () => arView === "ads" && arBrandOf()?.id === b.id, () => window.olympus.argosAds(b.id, true));
+  const d0 = r.data;
+  if (d0.demo === false) arKickRefresh(adsKey, () => (arView === "ads_meta" || arView === "ads_google") && arBrandOf()?.id === b.id, () => window.olympus.argosAds(b.id, true));
+  const d = arFilterAds(d0, platform);
   const eur = (n) => n.toLocaleString("fr-FR") + " €";
-  let html = arHead("Publicité", "campagnes Meta Ads et Google Ads", "", d.demo !== false);
+  let html = arHead("Publicité", platform === "google" ? "campagnes Google Ads" : "campagnes Meta Ads", "", d0.demo !== false);
   if (r.warning) html += `<div class="ar-alerts"><div class="ar-alert warn"><span class="ai">△</span><span>${escapeHtml(r.warning)}</span></div></div>`;
-  if (!d.campaigns.length) html += `<div class="ga-note">${d.demo === false ? "Aucune campagne active sur les 30 derniers jours pour ce compte." : ""}</div>`;
+  if (!d.campaigns.length) html += `<div class="ga-note">${d0.demo === false ? (platform === "google" ? "Aucune campagne Google Ads — vérifie que le compte est mappé et que l'accès Basic est accordé." : "Aucune campagne Meta active sur les 30 derniers jours.") : ""}</div>`;
+  const totalImpr = (d.campaigns || []).reduce((n, c) => n + (c.impressions || 0), 0);
+  const totalClicks = (d.campaigns || []).reduce((n, c) => n + (c.clicks || 0), 0);
+  // KPIs adaptés à l'objectif : sans conversion (notoriété/Display) le ROAS n'a pas de sens →
+  // on montre portée (impressions), CPM et CTR ; avec conversions → Conversions + ROAS.
+  const awareness = (d.totals.conversions || 0) === 0 && d.totals.spend > 0;
   html += `<div class="ga-cards">
     ${pgScore("Dépense", eur(d.totals.spend), "", "sur la période")}
-    ${pgScore("Conversions", String(d.totals.conversions))}
-    ${pgScore("ROAS moyen", "×" + d.totals.roas)}
+    ${awareness
+      ? pgScore("Impressions", pgFmtN(totalImpr), "", "portée payante") +
+        pgScore("CPM", (totalImpr ? (d.totals.spend / totalImpr * 1000) : 0).toFixed(2) + " €", "", "coût / 1000 impressions") +
+        pgScore("Clics", pgFmtN(totalClicks), "", "CTR " + (totalImpr ? (totalClicks / totalImpr * 100).toFixed(1) : 0) + " %")
+      : pgScore("Conversions", String(d.totals.conversions)) +
+        pgScore("ROAS moyen", "×" + d.totals.roas) +
+        pgScore("Clics", pgFmtN(totalClicks))}
   </div>`;
   html += pgPanel("Campagnes", (d.campaigns || []).map((c) => `
     <div class="ar-camp">
@@ -5657,7 +6421,7 @@ async function arViewAds(box, b, tok) {
         <div class="s">${arNet(c.platform).label} · CPC ${String(c.cpc).replace(".", ",")} € · ${pgFmtN(c.impressions)} impressions · ${pgFmtN(c.clicks)} clics</div>
         <div class="ar-budget"><i style="width:${Math.min(100, Math.round((c.spend / (c.budget || 1)) * 100))}%"></i></div>
       </div>
-      <div class="cv"><div class="b">${eur(c.spend)} / ${eur(c.budget)}</div><div class="s">ROAS ×${c.roas} · ${c.conversions} conv.</div></div>
+      <div class="cv"><div class="b">${eur(c.spend)} / ${eur(c.budget)}</div><div class="s">${c.conversions ? "ROAS ×" + c.roas + " · " + c.conversions + " conv." : "CPM " + (c.impressions ? (c.spend / c.impressions * 1000).toFixed(2) : "0") + " € · CTR " + (c.impressions ? (c.clicks / c.impressions * 100).toFixed(1) : "0") + " %"}</div></div>
     </div>`).join(""));
   if (d.platformSplit?.length || d.demoSplit?.length) {
     html += `<div class="ga-breaks">`;
@@ -5673,12 +6437,1576 @@ async function arViewAds(box, b, tok) {
   box.innerHTML = html;
 }
 
-// ── Concurrence ──
-async function arViewConcurrence(box, b, tok) {
+// ── Site web : trafic Google Analytics 4 de la propriété mappée ──
+async function arViewWeb(box, b, tok) {
+  const key = b.id + ":web:" + arPeriod;
+  const r = await arGet(key, () => window.olympus.argosWeb(b.id, arPeriod));
+  if (!r.ok) { box.innerHTML = `<div class="ga-note">${escapeHtml(r.error)}</div>`; return; }
+  const d = r.data;
+  if (d.demo === false) arKickRefresh(key, () => arView === "web" && arBrandOf()?.id === b.id, () => window.olympus.argosWeb(b.id, arPeriod, true));
+  const per = `<div class="ga-period">${[[7, "7 j"], [30, "30 j"], [90, "90 j"]].map(([n, l]) => `<button class="ga-per${arPeriod === n ? " on" : ""}" data-per="${n}">${l}</button>`).join("")}</div>`;
+  let html = arHead("Site web", `trafic Google Analytics · Core Web Vitals · audit technique — ${arPeriod} derniers jours`, per, d.demo !== false);
+  if (r.warning) html += `<div class="ar-alerts"><div class="ar-alert warn"><span class="ai">△</span><span>${escapeHtml(r.warning)}</span></div></div>`;
+  const t = d.totals || {};
+  const conv = (t.sessions ? (t.conversions / t.sessions * 100) : 0);
+  html += `<div class="ga-cards">
+    ${pgScore("Sessions", pgFmtN(t.sessions || 0), "", "sur la période")}
+    ${pgScore("Utilisateurs", pgFmtN(t.users || 0))}
+    ${pgScore("Pages vues", pgFmtN(t.pageviews || 0))}
+    ${pgScore("Conversions", pgFmtN(t.conversions || 0), "", conv ? conv.toFixed(1).replace(".", ",") + " % des sessions" : "")}
+  </div>`;
+  html += pgPanel("Sessions par jour", pgAreaChart((d.byDay || []).map((x) => ({ label: pgDayLabel(x.date), value: x.sessions }))));
+  html += `<div class="ga-breaks">`;
+  html += pgPanel("Canaux d'acquisition", (d.channels || []).length ? pgDonut(d.channels.map((c) => ({ label: c.label, value: c.value })), { centerLabel: "sessions" }) : `<div class="ga-note">—</div>`);
+  html += pgPanel("Pages les plus vues", (d.topPages || []).length ? pgBreak(d.topPages.map((p) => ({ label: p.label, value: p.value })), { color: "#7fb2e8" }) : `<div class="ga-note">—</div>`);
+  html += `</div>`;
+  html += `<div id="arWebPgAudience"></div>`;               // Audience (Pegasus)
+  html += `<div id="arWebVitals"><div class="ga-note" style="opacity:.6;">Mesure des Core Web Vitals (PageSpeed)…</div></div>`;
+  html += `<div id="arWebPgPerf"></div>`;                    // Performance (Pegasus · PageSpeed)
+  html += `<div id="arWebAudit"></div>`;                     // Audit technique (crawl)
+  html += `<div id="arWebPgSecu"></div>`;                    // Sécurité (Pegasus)
+  if (tok !== undefined && !arRenderAlive(tok)) return;
+  box.innerHTML = html;
+  box.querySelectorAll(".ga-per").forEach((bt) => bt.onclick = () => { arPeriod = +bt.dataset.per; arRenderView(); });
+  arMountAudit(box.querySelector("#arWebAudit"), b); // audit technique fusionné dans Site web
+  // Composants Pegasus (Audience / Performance / Sécurité) — appariés au site du client, grisés si plugin absent.
+  (async () => {
+    const site = await arPegasusSite(b); const installed = await arPegasusInstalled(site);
+    if (arView !== "web" || arBrandOf()?.id !== b.id) return;
+    arMountPgAudience(box.querySelector("#arWebPgAudience"), b, site, installed);
+    arMountPgTab(box.querySelector("#arWebPgPerf"), b, site, installed, { state: pgPerf, run: (k) => window.olympus.pegasusSitePerf(k, "mobile"), tab: pgTabPerf, btn: "pgPerfBtn", view: "web", needPlugin: false, title: "Performance (Pegasus · PageSpeed)" });
+    arMountPgTab(box.querySelector("#arWebPgSecu"), b, site, installed, { state: pgDiag, run: (k) => window.olympus.pegasusSiteDiag(k), tab: pgTabSecu, btn: "pgSecuBtn", view: "web", needPlugin: true, title: "Sécurité du site (Pegasus)" });
+  })();
+  // Core Web Vitals (PageSpeed, gratuit) — chargés en async (l'API met ~15-40 s).
+  arGet(b.id + ":vitals", () => window.olympus.argosVitals(b.id)).then((rv) => {
+    if (arView !== "web" || arBrandOf()?.id !== b.id) return;
+    const host = box.querySelector("#arWebVitals"); if (!host) return;
+    if (!rv?.ok) { host.innerHTML = ""; return; }
+    host.innerHTML = arVitalsPanel(rv.data);
+    mArrive(host);
+  }).catch(() => { const host = box.querySelector("#arWebVitals"); if (host) host.innerHTML = ""; });
+}
+// Jauges Core Web Vitals (mobile / ordinateur) avec seuils Google (bon / à améliorer / mauvais).
+function arVitalsRating(metric, v) {
+  if (v == null) return "na";
+  const th = { lcp: [2500, 4000], inp: [200, 500], cls: [0.1, 0.25], score: [90, 50] }[metric];
+  if (!th) return "na";
+  if (metric === "score") return v >= th[0] ? "good" : v >= th[1] ? "warn" : "poor";
+  return v <= th[0] ? "good" : v <= th[1] ? "warn" : "poor";
+}
+function arVitalsCell(metric, label, v, fmt) {
+  const rate = arVitalsRating(metric, v);
+  return `<div class="cwv-cell ${rate}"><div class="cwv-l">${label}</div><div class="cwv-v">${v == null ? "—" : fmt(v)}</div></div>`;
+}
+function arVitalsCol(title, s) {
+  if (!s) return "";
+  return `<div class="cwv-col"><div class="cwv-h">${title}<span class="cwv-score ${arVitalsRating("score", s.score)}">${s.score}</span></div>
+    <div class="cwv-grid">
+      ${arVitalsCell("lcp", "LCP", s.lcp, (v) => (v / 1000).toFixed(1).replace(".", ",") + " s")}
+      ${arVitalsCell("inp", "INP", s.inp, (v) => Math.round(v) + " ms")}
+      ${arVitalsCell("cls", "CLS", s.cls, (v) => (+v).toFixed(2).replace(".", ","))}
+    </div></div>`;
+}
+function arVitalsPanel(d) {
+  return pgPanel("Core Web Vitals — vitesse & stabilité" + (d.url ? "" : " (démo)"),
+    `<div class="cwv-wrap">${arVitalsCol("📱 Mobile", d.mobile)}${arVitalsCol("🖥 Ordinateur", d.desktop)}</div>
+     <p class="desc" style="font-size:11px;margin-top:10px;">LCP = chargement · INP = réactivité · CLS = stabilité visuelle. Seuils Google : <b style="color:#8fd6a6">bon</b> · <b style="color:#e8c268">à améliorer</b> · <b style="color:#e0868f">mauvais</b>.</p>`);
+}
+// ── SEO : performance de recherche Google Search Console du site mappé ──
+// Tableau des mots-clés Search Console (Requête · Pos. moy · Clics · Impressions + loupe classement
+// live). Partagé par la vue SEO et la Veille SEO. queries = [{keyword, position, clicks, impressions}].
+function arSeoKwTable(out, b, queries) {
+  if (!out) return;
+  const posB = (p) => p == null ? "" : p <= 3 ? "Top 3" : p <= 10 ? "1ʳᵉ page" : p <= 20 ? "2ᵉ page" : "21+";
+  const q = (queries || []).filter((x) => x.keyword).slice(0, 15);
+  if (!q.length) { out.innerHTML = `<div class="ga-note">Aucune requête Search Console — vérifie que le site est bien associé et a du trafic.</div>`; return; }
+  out.innerHTML = `<div class="si-kwhead"><span class="ga-tl">Requête</span><span class="c1" title="Position moyenne sur la période (Search Console)">Pos. moy.</span><span class="c2">Clics</span><span class="cx">Impressions</span><span class="c3"></span></div>
+    ${q.map((k, i) => `<div class="si-kw"><div class="si-kwrow">
+      <span class="ga-tl">${escapeHtml(k.keyword)} <span style="color:var(--dim);font-size:10px;">${posB(Math.round(k.position))}</span></span>
+      <span class="c1"><b>${k.position != null ? String(+(+k.position).toFixed(1)).replace(".", ",") : "—"}</b></span>
+      <span class="c2">${pgFmtN(k.clicks || 0)}</span>
+      <span class="cx">${pgFmtN(k.impressions || 0)}</span>
+      <span class="c3"><button class="btn sec si-serpbtn" data-kw="${i}" title="Voir le classement Google">🔍 liste</button></span>
+    </div></div>`).join("")}`;
+  out.querySelectorAll(".si-serpbtn").forEach((bt) => { const i = +bt.dataset.kw, k = q[i]; if (!k) return; bt.onclick = (e) => { e.preventDefault(); e.stopPropagation(); arSerpModal(b, k); }; });
+  mArrive(out);
+}
+async function arViewSeo(box, b, tok) {
+  const key = b.id + ":seo:" + arPeriod;
+  const r = await arGet(key, () => window.olympus.argosSeo(b.id, arPeriod));
+  if (!r.ok) { box.innerHTML = `<div class="ga-note">${escapeHtml(r.error)}</div>`; return; }
+  const d = r.data;
+  if (d.demo === false) arKickRefresh(key, () => arView === "seo" && arBrandOf()?.id === b.id, () => window.olympus.argosSeo(b.id, arPeriod, true));
+  const per = `<div class="ga-period">${[[7, "7 j"], [30, "30 j"], [90, "90 j"]].map(([n, l]) => `<button class="ga-per${arPeriod === n ? " on" : ""}" data-per="${n}">${l}</button>`).join("")}</div>`;
+  let html = arHead("SEO", `recherche Google · ${arPeriod} derniers jours`, per, d.demo !== false);
+  if (r.warning) html += `<div class="ar-alerts"><div class="ar-alert warn"><span class="ai">△</span><span>${escapeHtml(r.warning)}</span></div></div>`;
+  const t = d.totals || {};
+  html += `<div class="ga-cards">
+    ${pgScore("Clics", pgFmtN(t.clicks || 0), "", "sur la période")}
+    ${pgScore("Impressions", pgFmtN(t.impressions || 0))}
+    ${pgScore("CTR", String(t.ctr || 0).replace(".", ",") + " %")}
+    ${pgScore("Position moy.", String(t.position || 0).replace(".", ","))}
+  </div>`;
+  html += pgPanel("Clics par jour", pgAreaChart((d.byDay || []).map((x) => ({ label: pgDayLabel(x.date), value: x.clicks }))));
+  html += pgPanel("Vos mots-clés (Search Console)",
+    `<p class="desc" style="margin-bottom:8px;">Les vraies requêtes Google qui amènent du trafic à <b>${escapeHtml(b.name)}</b> : <b>position moyenne</b>, clics et impressions. La <b>loupe 🔍</b> ouvre le classement en direct.</p>
+     <div id="arSeoKwList"><div class="ga-note" style="opacity:.6;">Chargement…</div></div>`);
+  html += pgPanel("Pages les plus visibles", (d.topPages || []).length ? pgBreak(d.topPages.map((p) => ({ label: p.label, value: p.clicks })), { color: "#8fd6a6" }) : `<div class="ga-note">—</div>`);
+  html += `<div id="arSeoIntel"><div class="ga-note" style="opacity:.6;">Analyse SEO en cours…</div></div>`;
+  html += `<div id="arSeoPg"></div>`; // Audit SEO on-page (Pegasus)
+  html += pgPanel("Vue d'ensemble du domaine & backlinks", `<div id="arSeoOv"><div class="ga-note" style="opacity:.6;">Chargement…</div></div>`);
+  html += pgPanel("Concurrents SEO du secteur", `<div id="arSeoComp"><div class="ga-note" style="opacity:.6;">Chargement…</div></div>`, `<span class="pg-pill" style="font-size:11px;">via Notoriété</span>`);
+  if (tok !== undefined && !arRenderAlive(tok)) return;
+  box.innerHTML = html;
+  arSeoKwTable(box.querySelector("#arSeoKwList"), b, (d.topQueries || []).map((x) => ({ keyword: x.label, position: x.position, clicks: x.clicks, impressions: x.impressions })));
+  box.querySelectorAll(".ga-per").forEach((bt) => bt.onclick = () => { arPeriod = +bt.dataset.per; arRenderView(); });
+  // Vue d'ensemble domaine/backlinks + concurrents SEO ré-alignés (vrais concurrents locaux) — SI connecté.
+  window.olympus.siStatus().then((sst) => {
+    if (arView !== "seo" || arBrandOf()?.id !== b.id) return;
+    const ovc = box.querySelector("#arSeoOv"), cont = box.querySelector("#arSeoComp");
+    if (!sst?.ok || !sst.connected) {
+      const note = `<div class="ga-note">Connecte un fournisseur de données dans <b data-goconn>Titan → Search Intelligence</b> pour ces analyses SEO.</div>`;
+      if (ovc) ovc.innerHTML = note; if (cont) cont.innerHTML = note;
+      const g = box.querySelector("[data-goconn]"); if (g) g.onclick = () => goTo("titan"); return;
+    }
+    const priceOf = (id) => (sst.pricing.find((p) => p.id === id) || {}).eur;
+    arMountSeoDomainOv(ovc, b, priceOf);
+    arMountSeoCompetitors(cont, b, priceOf);
+  }).catch(() => {});
+  // Audit SEO on-page Pegasus (title/meta/H1/canonical/OG/alt + sitemap/robots) — grisé si plugin absent.
+  (async () => {
+    const site = await arPegasusSite(b); const installed = await arPegasusInstalled(site);
+    if (arView !== "seo" || arBrandOf()?.id !== b.id) return;
+    arMountPgTab(box.querySelector("#arSeoPg"), b, site, installed, { state: pgSeo, run: (k) => window.olympus.pegasusSiteSeo(k, 10), tab: pgTabSeo, btn: "pgSeoBtn", view: "seo", needPlugin: true, title: "Audit SEO on-page (Pegasus)" });
+  })();
+  // Intelligence SEO (cannibalisation · quick-wins · chutes) — chargée en async, 100% gratuite (GSC).
+  const iKey = b.id + ":seoIntel:" + arPeriod;
+  arGet(iKey, () => window.olympus.argosSeoIntel(b.id, arPeriod)).then((ri) => {
+    if (arView !== "seo" || arBrandOf()?.id !== b.id) return;
+    const host = box.querySelector("#arSeoIntel"); if (!host) return;
+    if (!ri?.ok) { host.innerHTML = ""; return; }
+    const di = ri.data;
+    let h = "";
+    // Quick-wins
+    const qw = (di.quickWins || []).map((x) => `<div class="ga-tr">
+      <span class="ga-tl">${escapeHtml(x.query)}</span>
+      <span class="ga-tbar"><span class="ga-tbar-f" style="width:${Math.min(100, Math.round(x.impressions / ((di.quickWins[0]?.impressions) || 1) * 100))}%;background:#f6b26b"></span></span>
+      <span class="ga-tv">${pgFmtN(x.impressions)}<span class="ga-tpct">pos. ${(+x.position).toFixed(1).replace(".", ",")}</span></span></div>`).join("");
+    h += pgPanel("Opportunités — quick wins (position 4-20, fort volume)", qw || `<div class="ga-note">Aucune requête en position d'attaque sur la période.</div>`);
+    // Cannibalisation
+    const cn = (di.cannibal || []).map((c) => `<div class="ga-cnb">
+      <div class="ga-cnb-h"><b>${escapeHtml(c.query)}</b><span>${c.pages} pages · ${pgFmtN(c.impressions)} impr.</span></div>
+      <div class="ga-cnb-u">${c.urls.map((u) => `<span>${escapeHtml(u.url)} <em>pos. ${String(u.position).replace(".", ",")}</em></span>`).join("")}</div></div>`).join("");
+    h += pgPanel("Cannibalisation — plusieurs pages sur la même requête", cn || `<div class="ga-note">Aucune cannibalisation détectée. 👍</div>`);
+    // Chutes A/B
+    const dr = (di.drops || []).map((x) => `<div class="ga-tr">
+      <span class="ga-tl">${escapeHtml(x.query)}</span>
+      <span class="ga-tv" style="margin-left:auto;">${x.dClicks} clic${x.dClicks <= -2 ? "s" : ""}<span class="ga-tpct">${x.dPos > 0 ? "▼ " + String(x.dPos).replace(".", ",") + " pos." : "position stable"}</span></span></div>`).join("");
+    h += pgPanel("Chutes vs période précédente", dr || `<div class="ga-note">Aucune chute significative. 👍</div>`);
+    host.innerHTML = h;
+    mArrive(host);
+  }).catch(() => { const host = box.querySelector("#arSeoIntel"); if (host) host.innerHTML = ""; });
+}
+// Vue d'ensemble du domaine du client (estimation DataForSEO : mots-clés référencés, trafic, positions)
+// + backlinks — re-logée depuis l'ex-Veille SEO dans Google > SEO. Payant au clic, peek gratuit à l'ouverture.
+async function arMountSeoDomainOv(host, b, priceOf) {
+  if (!host) return;
+  const ovCost = priceOf("domain_overview") != null ? +((priceOf("domain_overview") || 0) + (priceOf("backlinks_sum") || 0)).toFixed(4) : null;
+  host.innerHTML = `<p class="desc" style="margin-bottom:12px;">Estimations <b>tierces</b> de <b>${escapeHtml(b.name)}</b> par DataForSEO (même méthode pour tous, faites pour <b>comparer aux concurrents</b>). Pour un petit site local cet index est partiel : la source officielle reste <b>Search Console</b> ci-dessus.</p>
+    ${siCostBtn("arSeoOvBtn", "Analyser le domaine", ovCost)}<div id="arSeoOvResult" style="margin-top:14px;"></div>`;
+  const out = host.querySelector("#arSeoOvResult");
+  const kw = (n) => `${n} mot${n > 1 ? "s" : ""}-clé${n > 1 ? "s" : ""}`;
+  const renderOv = (o, bd) => {
+    if (!out) return; o = o || {};
+    const total = o.count || 0;
+    const buckets = [
+      { label: "Top 3", sub: "positions 1 à 3 · haut de la 1ʳᵉ page", value: (o.pos1 || 0) + (o.pos23 || 0) },
+      { label: "Reste de la 1ʳᵉ page", sub: "positions 4 à 10", value: o.pos410 || 0 },
+      { label: "2ᵉ page", sub: "positions 11 à 20", value: o.pos1120 || 0 },
+      { label: "Au-delà", sub: "positions 21 à 50", value: (o.pos2130 || 0) + (o.pos3140 || 0) + (o.pos4150 || 0) },
+    ];
+    const sumD = buckets.reduce((n, x) => n + x.value, 0) || 1, maxD = Math.max(1, ...buckets.map((x) => x.value));
+    out.innerHTML = `<div class="ga-cards" style="margin:0 0 14px;">
+        ${pgScore("Mots-clés référencés", pgFmtN(total), "", "indexés par DataForSEO dans Google")}
+        ${pgScore("Trafic SEO estimé", pgFmtN(o.etv || 0), "", "visites organiques estimées / mois")}
+        ${pgScore("Valeur du trafic", o.value ? pgFmtN(o.value) + " €" : "—", "", o.value ? "coût équivalent en Google Ads / mois" : "requêtes de marque/locales : ~0 enchère")}
+        ${pgScore("Sites référents", bd && bd.referringDomains != null ? pgFmtN(bd.referringDomains) : "—", "", bd && bd.backlinks != null ? "sites distincts qui font un lien (" + pgFmtN(bd.backlinks) + " liens)" : "sites qui font un lien vers celui-ci")}
+      </div>
+      ${pgPanel("Où se classent les mots-clés du site dans Google", `<p class="desc" style="margin-bottom:12px;">Les <b>${total}</b> mots-clés que DataForSEO indexe pour ${escapeHtml(b.name)}, répartis par position. Plus une position est haute, plus elle rapporte de clics.</p>
+        <div class="ga-tbl">${buckets.map((x) => `<div class="ga-tr"><span class="ga-tl">${x.label}<span style="display:block;color:var(--dim);font-size:11px;">${x.sub}</span></span><span class="ga-tbar"><span class="ga-tbar-f" style="width:${Math.round(x.value / maxD * 100)}%;background:#7fb2e8"></span></span><span class="ga-tv">${kw(x.value)}<span class="ga-tpct">${Math.round(x.value / sumD * 100)} %</span></span></div>`).join("")}</div>`)}
+      ${bd ? pgPanel("Popularité du site (backlinks)", `<p class="desc" style="margin-bottom:12px;">Les backlinks sont les liens d'autres sites vers celui-ci : un signal de confiance majeur pour Google.</p>
+        ${pgKV([["Autorité du domaine", bd.rank ? pgFmtN(bd.rank) + " / 1000" : "pas encore évaluée", false], ["Sites différents qui font un lien", pgFmtN(bd.referringDomains || 0), false], ["Nombre total de liens entrants", pgFmtN(bd.backlinks || 0), false], ["Liens cassés (côté sites liants)", pgFmtN(bd.brokenBacklinks || 0), false]])}`) : ""}`;
+    mArrive(out);
+  };
+  host.querySelector("#arSeoOvBtn").onclick = async (e) => {
+    const btn = e.currentTarget; btn.disabled = true; btn.innerHTML = "Analyse…";
+    const [ov, bl] = await Promise.all([window.olympus.siDomainOverview(b.id), window.olympus.siBacklinks(b.id)]);
+    btn.disabled = false; btn.innerHTML = `Actualiser <span class="si-cost">(${siEur(ovCost)})</span>`;
+    if (!ov?.ok) { out.innerHTML = `<div class="ga-note">${escapeHtml(ov?.error || "Échec")}${ov?.budgetBlocked ? " — règle le budget dans Titan." : ""}</div>`; return; }
+    renderOv(ov.data.organic, bl?.ok ? bl.data : null);
+  };
+  Promise.all([window.olympus.siDomainOverview(b.id, true), window.olympus.siBacklinks(b.id, true)]).then(([ov, bl]) => { if (ov?.ok && ov.data) renderOv(ov.data.organic, bl?.ok ? bl.data : null); });
+}
+// Concurrents SEO RÉ-ALIGNÉS sur les VRAIS concurrents locaux (même secteur, Google Maps via Notoriété)
+// — fini les médias/aggregateurs hors secteur (Monaco Info, tripadvisor…). Poids SEO + content gap.
+async function arMountSeoCompetitors(host, b, priceOf) {
+  if (!host) return;
+  host.innerHTML = `<div class="ga-note" style="opacity:.6;">Chargement des concurrents du secteur…</div>`;
+  const rr = await window.olympus.siLocalCompetitors(b.id, true, 100); // peek Notoriété (gratuit)
+  if (arView !== "seo" || arBrandOf()?.id !== b.id) return;
+  const all = (rr?.ok && rr.data && rr.data.competitors) || [];
+  const seen = new Set();
+  const comps = all.filter((c) => c.domain && !c.mine && !seen.has(c.domain) && seen.add(c.domain)).slice(0, 12);
+  if (!comps.length) {
+    host.innerHTML = `<div class="ga-note">Pour voir tes vrais concurrents SEO, lance d'abord l'analyse dans <b data-goto-noto>Notoriété</b> (concurrents locaux du même secteur). ${all.length ? "Aucun de tes concurrents locaux n'a de site web référencé." : ""}</div>`;
+    const g = host.querySelector("[data-goto-noto]"); if (g) g.onclick = () => arGoView("notoriete");
+    return;
+  }
+  const ovCost = priceOf("domain_overview");
+  const gapCost = priceOf("content_gap");
+  const weightTxt = (d) => d && d.organic ? `${d.organic.count != null ? pgFmtN(d.organic.count) + " mots-clés" : ""}${d.organic.etv != null ? " · ~" + pgFmtN(d.organic.etv) + " visites/mois" : ""}` : "";
+  const renderGap = (i, dom, ks) => { const go = host.querySelector("#arScGap" + i); if (!go) return; ks = ks || []; if (!ks.length) { go.innerHTML = `<div class="ga-note">Aucun mot-clé manquant vs ${escapeHtml(dom)}. 👍</div>`; return; } go.innerHTML = `<div class="ga-note" style="margin:6px 0;">${ks.length} mots-clés que <b>${escapeHtml(dom)}</b> capte et pas toi :</div><div class="ga-tbl">${ks.map((k) => `<div class="ga-tr"><span class="ga-tl">${escapeHtml(k.keyword)}</span><span class="ga-tv" style="margin-left:auto;">${k.volume != null ? pgFmtN(k.volume) + " vol." : "—"}<span class="ga-tpct">${k.position != null ? "eux pos. " + k.position : ""}</span></span></div>`).join("")}</div>`; };
+  host.innerHTML = `<div class="ga-note" style="margin:0 0 10px;font-size:11.5px;">Tes <b>vrais concurrents locaux</b> (même secteur, issus de Google Maps via <b>Notoriété</b>) qui ont un site web. « <b>Poids SEO</b> » = leur nombre de mots-clés référencés + trafic estimé ; « <b>Content gap</b> » = les mots-clés qu'ils captent et pas toi.</div>
+    <div style="margin-bottom:10px;">${siCostBtn("arScAllBtn", "Charger le poids SEO de tous", ovCost != null ? +(ovCost * comps.length).toFixed(3) : null)}</div>
+    <div class="ga-tbl">${comps.map((c, i) => `
+      <div class="ar-seocomp" data-comp="${escapeHtml(c.domain)}">
+        <div class="ar-seocomp-h">
+          <span class="d">${escapeHtml(c.domain)}${c.title ? ` <span style="color:var(--dim);font-size:10px;">${escapeHtml(c.title)}</span>` : ""}</span>
+          <span class="m" id="arScW${i}"></span>
+          ${siCostBtn("arScGapBtn" + i, "Content gap", gapCost, "btn sec")}
+        </div>
+        <div class="ar-gap-out" id="arScGap${i}"></div>
+      </div>`).join("")}</div>`;
+  const setW = (i, sr) => { const w = host.querySelector("#arScW" + i); if (w && sr?.ok && sr.data) w.textContent = weightTxt(sr.data); };
+  comps.forEach((c, i) => {
+    window.olympus.siDomainOverview(b.id, true, c.domain).then((sr) => setW(i, sr)); // peek du poids (gratuit si déjà en cache)
+    const gb = host.querySelector("#arScGapBtn" + i);
+    gb.onclick = async () => {
+      gb.disabled = true; gb.innerHTML = "…";
+      const gr = await window.olympus.siContentGap(b.id, c.domain);
+      gb.disabled = false; gb.innerHTML = `Content gap <span class="si-cost">(${siEur(gapCost)})</span>`;
+      if (!gr?.ok) { host.querySelector("#arScGap" + i).innerHTML = `<div class="ga-note">${escapeHtml(gr?.error || "Échec")}${gr?.budgetBlocked ? " — règle le budget dans Titan." : ""}</div>`; return; }
+      renderGap(i, c.domain, gr.data.items);
+    };
+  });
+  const allBtn = host.querySelector("#arScAllBtn");
+  allBtn.onclick = async () => {
+    allBtn.disabled = true; allBtn.innerHTML = "Analyse…";
+    await Promise.all(comps.map((c, i) => window.olympus.siDomainOverview(b.id, false, c.domain).then((sr) => setW(i, sr))));
+    allBtn.disabled = false; allBtn.innerHTML = `Actualiser <span class="si-cost">(${siEur(+(ovCost * comps.length).toFixed(3))})</span>`;
+  };
+  mArrive(host);
+}
+
+// ── Audit technique : crawl du site client (gratuit), Health Score + tickets d'action ──
+function arCrawlResultHtml(d) {
+  const rate = d.healthScore >= 90 ? "good" : d.healthScore >= 70 ? "warn" : "poor";
+  const sevLabel = { high: "Critique", med: "Important", low: "Mineur" };
+  let h = `<div class="ga-cards">
+    ${pgScore("Health Score", `<span class="cwv-score ${rate}" style="font-size:22px;padding:4px 14px;">${d.healthScore}</span>`, "", "/100")}
+    ${pgScore("Pages analysées", String(d.pages))}
+    ${pgScore("Pages indexables", String(d.indexable))}
+    ${pgScore("Tickets", String((d.tickets || []).length))}
+  </div>`;
+  h += pgPanel("Tickets d'action priorisés", (d.tickets || []).length ? (d.tickets || []).map((t, i) => `
+    <div class="ar-ticket ${t.sev}">
+      <div class="ar-ticket-h" data-tk="${i}">
+        <span class="ar-ticket-sev">${sevLabel[t.sev]}</span>
+        <span class="ar-ticket-l">${escapeHtml(t.label)}</span>
+        <span class="ar-ticket-c">${t.count}</span>
+      </div>
+      ${(t.sample || []).length ? `<div class="ar-ticket-s" id="arTk${i}" style="display:none;">${t.sample.map((u) => `<span>${escapeHtml((u || "").replace(/^https?:\/\/[^/]+/, "") || "/")}</span>`).join("")}</div>` : ""}
+    </div>`).join("") : `<div class="ga-note">Aucun problème technique détecté. 🎉</div>`);
+  return h;
+}
+// Audit technique (crawl du site) — FUSIONNÉ dans la vue Site web (`arViewWeb`), monté en panneau.
+// Le crawl part de l'URL du site Search Console ; sans SC mappé, on invite à l'associer.
+async function arMountAudit(host, b) {
+  if (!host) return;
+  const hasSC = (b.assets || []).some((a) => a.network === "search_console");
+  if (!hasSC) { host.innerHTML = pgPanel("Audit technique du site", `<div class="ga-note">Associe un site <b>Search Console</b> à ce client dans <b data-goto-settings3>Réglages</b> pour lancer l'audit technique (crawl gratuit du site).</div>`); const g = host.querySelector("[data-goto-settings3]"); if (g) g.onclick = () => goTo("settings"); return; }
+  const peek = await arGet(b.id + ":crawl", () => window.olympus.argosCrawl(b.id, false, true));
+  const has = peek?.ok && peek.data;
+  const when = peek?.at ? " · dernier audit " + new Date(peek.at).toLocaleDateString("fr-FR") : "";
+  host.innerHTML = `<div class="ga-panel"><div class="ga-panel-h">Audit technique du site<span style="color:var(--dim);font-weight:400;font-size:12px;">${when}</span><span class="ga-panel-x"><button class="btn${has ? " sec" : ""}" id="arCrawlBtn">${has ? "Relancer l'audit" : "Lancer l'audit du site"}</button></span></div>
+    <div id="arCrawlOut">${has ? arCrawlResultHtml(peek.data) : `<div class="ga-note">Analyse jusqu'à 80 pages du site : erreurs 404, redirections, balises manquantes, images sans ALT, contenu léger… puis un Health Score et des tickets d'action. Gratuit.</div>`}</div></div>`;
+  const wire = () => { host.querySelectorAll("[data-tk]").forEach((el) => el.onclick = () => { const s = host.querySelector("#arTk" + el.dataset.tk); if (s) s.style.display = s.style.display === "none" ? "" : "none"; }); };
+  wire();
+  const btn = host.querySelector("#arCrawlBtn");
+  btn.onclick = async () => {
+    btn.disabled = true; btn.textContent = "Crawl en cours… (jusqu'à 1 min)";
+    const out = host.querySelector("#arCrawlOut"); out.innerHTML = `<div class="ga-note" style="opacity:.7;">Analyse des pages du site…</div>`;
+    const rr = await window.olympus.argosCrawl(b.id, true);
+    if (arView !== "web" || arBrandOf()?.id !== b.id) return;
+    btn.disabled = false; btn.textContent = "Relancer l'audit"; btn.classList.add("sec");
+    if (!rr?.ok) { out.innerHTML = `<div class="ga-note">${escapeHtml(rr?.error || "Échec du crawl.")}</div>`; return; }
+    arCache[b.id + ":crawl"] = { ok: true, data: rr.data, at: Date.now() };
+    out.innerHTML = arCrawlResultHtml(rr.data); wire(); mArrive(out);
+  };
+}
+// ── Réutilisation des composants Pegasus (Audience/SEO/Performance/Sécurité) dans les vues Argos ──
+// Un composant qui exige le plugin Pegasus installé sur le site du client est grisé (texte rouge) tant
+// que le plugin n'est pas joignable. Appariement marque↔site Pegasus par domaine Search Console.
+let _arPgSitesCache = null; const _arPgInstalled = {};
+async function arPegasusSites() {
+  if (pgSites && pgSites.length) return pgSites;
+  if (_arPgSitesCache) return _arPgSitesCache;
+  try { const r = await window.olympus.pegasusSites(); _arPgSitesCache = (r && r.ok && r.sites) || []; } catch { _arPgSitesCache = []; }
+  return _arPgSitesCache;
+}
+const arDomHost = (u) => (u || "").replace(/^https?:\/\//, "").replace(/^sc-domain:/, "").replace(/^www\./, "").replace(/\/.*$/, "").toLowerCase();
+async function arPegasusSite(b) {
+  const sc = (b.assets || []).find((a) => a.network === "search_console");
+  const host = arDomHost(sc && sc.id); if (!host) return null;
+  const sites = await arPegasusSites();
+  return sites.find((s) => arDomHost(s.host || s.base_url) === host || arDomHost(s.base_url) === host) || null;
+}
+async function arPegasusInstalled(site) {
+  if (!site) return false;
+  if (_arPgInstalled[site.key] !== undefined) return _arPgInstalled[site.key];
+  try { const h = await window.olympus.pegasusSiteHealth(site.key); _arPgInstalled[site.key] = !!(h && h.ok); } catch { _arPgInstalled[site.key] = false; }
+  return _arPgInstalled[site.key];
+}
+// Carte grisée « plugin requis » (fond gris + texte rouge). L'action à faire est côté client :
+// installer le plugin Pegasus sur son WordPress — ensuite le composant s'active tout seul.
+function arPegasusGate(host, title, why) {
+  if (!host) return;
+  host.innerHTML = `<div class="ga-panel locked"><div class="ga-panel-h">${escapeHtml(title)}</div>
+    <div class="ga-note lockmsg">${why || "Installe le plugin Pegasus sur le WordPress du client pour avoir accès à cette fonctionnalité (elle s'active alors automatiquement)."}</div></div>`;
+}
+// Réutilise un onglet Pegasus (perf/secu/seo) dans un conteneur Argos : peuple son état, rend le
+// builder pur (pgTabPerf/Secu/Seo) et recâble son bouton « Lancer/Relancer ».
+function arMountPgTab(host, b, site, installed, cfg) {
+  if (!host) return;
+  if (!site || (cfg.needPlugin && !installed)) { arPegasusGate(host, cfg.title); return; }
+  const key = site.key, st = cfg.state;
+  const render = () => { if (arView !== cfg.view || arBrandOf()?.id !== b.id) return; host.innerHTML = `<div class="ar-pgsec">${cfg.tab(site)}</div>`; wire(); mArrive(host); };
+  const wire = () => { const bt = host.querySelector("#" + cfg.btn); if (bt) bt.onclick = async () => { st[key] = { loading: true }; render(); st[key] = await cfg.run(key); render(); }; };
+  render();
+}
+// Audience Pegasus (visites mesurées par le plugin) — panneau compact dans Site web.
+async function arMountPgAudience(host, b, site, installed) {
+  if (!host) return;
+  if (!site || !installed) { arPegasusGate(host, "Audience du site (Pegasus)"); return; }
+  host.innerHTML = `<div class="ga-note" style="opacity:.6;">Lecture de l'audience du site…</div>`;
+  const r = await window.olympus.pegasusAudiencePegasus(site.key, 30);
+  if (arView !== "web" || arBrandOf()?.id !== b.id) return;
+  if (!r || (!r.ok && /404|rest_no_route|no_route/i.test(r.error || ""))) { arPegasusGate(host, "Audience du site (Pegasus)", "Le traqueur d'audience nécessite la dernière version du plugin Pegasus sur le site."); return; }
+  if (!r.ok) { host.innerHTML = `<div class="ar-pgsec">${pgGaHead("Audience du site", { label: site.label })}<div class="ga-note">Lecture impossible : ${escapeHtml(r.error || "")}</div></div>`; return; }
+  const d = r.data || {};
+  let html = `<div class="ar-pgsec">${pgGaHead("Audience du site", { label: site.label })}`;
+  if (!d.total) { html += `<div class="ga-note">Aucune visite mesurée pour l'instant — la mesure Pegasus vient de démarrer, les visites s'accumulent au fil du trafic.</div></div>`; host.innerHTML = html; mArrive(host); return; }
+  const mobile = (d.devices || []).find((x) => x.label === "mobile"); const mobilePct = d.total ? Math.round((mobile?.value || 0) / d.total * 100) : 0;
+  html += `<div class="ga-cards">
+      ${pgScore("Visites", pgFmtN(d.total), "", "30 j · mesuré par Pegasus")}
+      ${pgScore("Visiteurs uniques", pgFmtN(d.uniques || 0))}
+      ${pgScore("Part mobile", mobilePct + " %")}
+    </div>`;
+  html += pgPanel("Visites par jour", pgAreaChart((d.byDay || []).map((x) => ({ label: pgDayLabel(x.date), value: x.hits }))));
+  html += `<div class="ga-breaks">`;
+  if (d.sources?.length) html += pgPanel("Provenance", pgDonut(d.sources.map((x) => ({ label: x.label, value: x.value })), { centerLabel: "visites" }));
+  if (d.pages?.length) html += pgPanel("Pages les plus vues", pgBreak(d.pages.map((x) => ({ label: x.label, value: x.value })), { color: "var(--ok)" }));
+  html += `</div></div>`;
+  host.innerHTML = html; mArrive(host);
+}
+
+// ── Veille SEA : présence publicitaire Google Ads (client vs concurrents) via DataForSEO ──
+// Carte campagne Google Ads RICHE (partagée par « Mots-clés Ads » et la Veille SEA) : type, statut,
+// budget, dépense, CPC, impressions, clics, conversions + mots-clés + audiences + zones géographiques.
+function arAdsCampCard(c, ck, ca, cg, totalSpend, market, competitors, placements, compMeta) {
+  const matchLbl = (m) => ({ EXACT: "exact", PHRASE: "expression", BROAD: "large" }[m] || (m || "").toLowerCase());
+  const compLbl = (x) => ({ LOW: "faible", MEDIUM: "moyenne", HIGH: "forte" }[x] || (x || "—").toLowerCase());
+  const sharePct = totalSpend ? Math.round((c.spend || 0) / totalSpend * 100) : 0;
+  const head = `<div class="ar-adscamp-h">
+      <span class="nm">${escapeHtml(c.name)}</span>
+      <span class="ty">${escapeHtml(c.channelLabel)}</span>
+      <span class="ar-adscamp-st ${c.current ? "on" : "off"}">${c.current ? "active" : "en pause"}</span>
+      ${c.optScore != null ? `<span class="ar-adscamp-score ${c.optScore >= 80 ? "hi" : c.optScore >= 60 ? "mid" : "lo"}" title="Score d'optimisation Google Ads de la campagne">optim. ${c.optScore}%</span>` : ""}
+      <span class="meta">${c.dailyBudget != null ? "budget " + siEurNum(c.dailyBudget) + " €/j · " : ""}${pgFmtN(Math.round(c.spend))} € · CPC ${siEurNum(c.cpc)} € · ${pgFmtN(c.impressions)} impr. · ${pgFmtN(c.clicks)} clics${c.conversions ? " · " + pgFmtN(c.conversions) + " conv." : ""}</span>
+    </div>
+    ${totalSpend ? `<div class="ar-adscamp-bar" title="${sharePct}% de la dépense de la période"><i style="width:${Math.max(2, sharePct)}%"></i></div>` : ""}`;
+  // Cohérence : part servie par le CIBLAGE AUTOMATIQUE (= total campagne − critères explicites). Sur du
+  // Display/Notoriété, Google diffuse l'essentiel via l'optimized targeting, au-delà de tes signaux.
+  const sumKwClicks = ck.reduce((n, k) => n + (k.clicks || 0), 0), sumKwCost = ck.reduce((n, k) => n + (k.cost || 0), 0);
+  const sumAudClicks = ca.reduce((n, a) => n + (a.clicks || 0), 0), sumAudCost = ca.reduce((n, a) => n + (a.cost || 0), 0);
+  const autoClicks = Math.max(0, (c.clicks || 0) - sumKwClicks - sumAudClicks);
+  const autoCost = Math.max(0, +((c.spend || 0) - sumKwCost - sumAudCost).toFixed(2));
+  const hasPlc = placements && placements.length;
+  const showAuto = autoClicks > (c.clicks || 0) * 0.05 && !hasPlc; // les emplacements réels remplacent l'approximation
+  let body;
+  if (!ck.length) {
+    body = `<div class="ga-note" style="margin:8px 0 0;">${c.usesKeywords ? "Aucun mot-clé actif sur cette campagne." : "Campagne <b>" + escapeHtml(c.channelLabel) + "</b> — ciblage par audience" + (ca.length ? " (voir ci-dessous)" : "") + ", pas de mots-clés d'enchère."}</div>`;
+  } else {
+    // Colonnes adaptatives : perf client (seulement en Search — inutile en Display) + marché (après analyse).
+    const showPerf = !!c.usesKeywords, showMkt = !!(market && ck.length);
+    const posDisp = (m) => (m && m.position != null) ? m.position + "ᵉ" : (m && ("position" in m)) ? `<span style="color:var(--dim);">non</span>` : "—";
+    const g = `grid-template-columns:minmax(120px,1.4fr) 80px${showPerf ? " 66px 66px 56px 56px" : ""}${showMkt ? " 78px 66px 84px 76px" : ""};`;
+    const signalNote = !c.usesKeywords ? `<div class="ga-note" style="margin:0 0 8px;font-size:11px;">Ces mots-clés sont des <b>signaux de ciblage</b> (campagne ${escapeHtml(c.channelLabel)}) : Google s'en sert pour trouver l'audience, ils ne sont pas facturés au clic.${showMkt ? " « Ta position » = ton rang Google réel sur ce mot-clé ; « non » = hors du top 20." : ""}</div>` : "";
+    body = signalNote + `<div class="ar-adskw-head" style="${g}"><span class="k">Mot-clé</span><span class="m">Corresp.</span>${showPerf ? `<span class="c">CPC</span><span class="c">Coût</span><span class="c">Clics</span><span class="c">Conv.</span>` : ""}${showMkt ? `<span class="c">Ta position</span><span class="c">Volume</span><span class="c">CPC marché</span><span class="c">Concur.</span>` : ""}</div>
+      ${ck.map((k) => { const m = showMkt ? market[(k.keyword || "").toLowerCase()] : null; return `<div class="ar-adskw-row" style="${g}">
+        <span class="k">${escapeHtml(k.keyword)}</span>
+        <span class="m">${matchLbl(k.matchType)}</span>
+        ${showPerf ? `<span class="c">${k.cpc ? siEurNum(k.cpc) + " €" : "—"}</span><span class="c">${k.cost ? pgFmtN(Math.round(k.cost)) + " €" : "—"}</span><span class="c">${pgFmtN(k.clicks)}</span><span class="c">${k.conversions ? pgFmtN(k.conversions) : "—"}</span>` : ""}
+        ${showMkt ? `<span class="c">${posDisp(m)}</span><span class="c">${m && m.volume != null ? pgFmtN(m.volume) : "—"}</span><span class="c">${m && m.cpc != null ? siEurNum(m.cpc) + " €" : "—"}</span><span class="c">${m ? compLbl(m.competition) : "—"}</span>` : ""}
+      </div>`; }).join("")}`;
+  }
+  let audBlock = "";
+  if (ca.length || showAuto) {
+    audBlock = `<div class="ar-adsaud"><div class="ar-adsaud-t">Segments d'audience ciblés</div>
+      ${ca.map((a) => `<div class="ar-adsaud-row"><span class="ty">${escapeHtml(a.typeLabel || "")}</span><span class="nm">${escapeHtml(a.name)}</span><span class="mt">${pgFmtN(a.clicks)} clics${a.cost ? " · " + siEurNum(a.cost) + " €" : ""}</span></div>`).join("")}
+      ${showAuto ? `<div class="ar-adsaud-row auto"><span class="ty">auto</span><span class="nm">Ciblage automatique de Google (au-delà de tes signaux)</span><span class="mt">${pgFmtN(autoClicks)} clics · ${siEurNum(autoCost)} €</span></div>` : ""}</div>`;
+  }
+  // Où est parti le budget : emplacements RÉELS (sites/apps/YouTube). Remplace l'approximation « auto ».
+  let plcBlock = "";
+  if (hasPlc) {
+    const plcName = (p) => ((p.name || p.url || "").replace(/^Mobile App:\s*/i, "").replace(/\s*\((iTunes App Store|Google Play)\).*$/i, "").trim() || p.url || "—");
+    const fmtD = (d) => d ? d.slice(8, 10) + "/" + d.slice(5, 7) : "—";
+    const top = placements.slice(0, 12);
+    const plcTotal = placements.reduce((n, p) => n + (p.cost || 0), 0);
+    const g = "grid-template-columns:92px 1fr 60px 74px 50px 72px;";
+    plcBlock = `<div class="ar-adsplc"><div class="ar-adsaud-t">Où est parti ton budget — emplacements réels</div>
+      ${arPlacementsSummaryHtml(placements, c.name)}
+      <div class="ar-adskw-head" style="${g}"><span class="k">Type</span><span class="k">Emplacement</span><span class="c">Début</span><span class="c">Fin</span><span class="c">Clics</span><span class="c">Coût</span></div>
+      ${top.map((p) => `<div class="ar-adskw-row" style="${g}"><span class="m">${escapeHtml(p.typeLabel || "")}</span><span class="k">${escapeHtml(plcName(p))}</span><span class="c">${fmtD(p.firstDate)}</span><span class="c">${p.ongoing ? `<span class="ar-plc-st on">en cours</span>` : fmtD(p.lastDate)}</span><span class="c">${pgFmtN(p.clicks)}</span><span class="c">${p.cost ? siEurNum(p.cost) + " €" : "—"}</span></div>`).join("")}
+      <div class="ga-note" style="margin-top:6px;font-size:11px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;"><span>${placements.length > 12 ? "+ " + (placements.length - 12) + " autres emplacements · " : ""}total listé : <b>${siEurNum(plcTotal)} €</b>${c.spend ? " sur " + pgFmtN(Math.round(c.spend)) + " € de la campagne" : ""}. « Début » = 1er jour sur la période ; « en cours » = actif ces 2 derniers jours.</span>${placements.length > 12 ? `<button class="btn sec" data-plc-modal="${escapeHtml(c.name)}" style="padding:3px 10px;font-size:11px;">Voir les ${placements.length} emplacements</button>` : ""}</div></div>`;
+  }
+  let geoBlock = "";
+  if (cg && (cg.locations.length || cg.excluded.length)) {
+    const chip = (l) => `<span class="ar-adsgeo-z${l.proximity ? " prox" : ""}" title="${escapeHtml(l.name)}">${l.proximity ? "📍 " : ""}${escapeHtml(l.name.split(",")[0])}</span>`;
+    geoBlock = `<div class="ar-adsgeo"><div class="ar-adsaud-t">Zones géographiques ciblées${cg.locations.length ? " (" + cg.locations.length + ")" : ""}</div>
+      <div class="ar-adsgeo-zs">${cg.locations.map(chip).join("") || `<span class="ga-note" style="margin:0;">Aucune (national)</span>`}</div>
+      ${cg.excluded.length ? `<div class="ar-adsgeo-excl">Exclues : ${cg.excluded.map((l) => escapeHtml(l.name.split(",")[0])).join(", ")}</div>` : ""}</div>`;
+  }
+  // Concurrents LOCAUX réels (Google Maps) — bloc partagé (aussi utilisé par la vue Notoriété).
+  const mktBlock = arLocalCompetitorsHTML(competitors, compMeta, 14);
+  return `<div class="ga-panel ar-adscamp">${head}${body}${audBlock}${plcBlock}${geoBlock}${mktBlock}</div>`;
+}
+// Tableau « Ta position vs concurrents locaux » (Google Maps) : le client (toi) + concurrents, barre =
+// popularité (avis), ★note, avis ; lignes concurrentes cliquables → estimation SEA. Partagé carte campagne + vue Notoriété.
+// Couleur des barres du classement selon le tri actif (une couleur par métrique).
+const AR_SORT_COLORS = { distance: "#5b9bd5", reviews: "#f6b26b", rating: "#5cb98b" };
+function arLocalCompetitorsHTML(competitors, compMeta, limit, barMode, rankMe, filterHtml) {
+  if (!competitors || !competitors.length) return "";
+  // Le client peut figurer dans ses propres résultats Maps (mine:true).
+  // Ligne de référence « toi » TOUJOURS détachée en tête (compMeta.me sinon l'entrée mine)…
+  const mineComp = competitors.find((c) => c.mine);
+  let me = (compMeta && compMeta.me) || mineComp || null;
+  // La carte héro (référence) est à distance 0 de toi-même — récupère la distance de l'entrée mine (≈ 0) sinon 0.
+  if (me && me.distance == null) me = { ...me, distance: (mineComp && mineComp.distance != null) ? mineComp.distance : 0 };
+  const others = competitors.filter((c) => !c.mine);
+  // …et si rankMe, on la RÉAFFICHE aussi à son vrai rang dans le classement (sinon on l'exclut).
+  const rows = (rankMe ? competitors : others).slice(0, limit || 14);
+  const mode = barMode || "reviews";
+  const maxRev = Math.max(1, ...rows.map((r) => r.reviews || 0), (me && me.reviews) || 0);
+  const maxDist = Math.max(0.0001, ...rows.map((r) => r.distance || 0), (me && me.distance) || 0);
+  // Remplissage 0..1 selon la métrique AFFICHÉE : avis (popularité), note (/5), distance (proche = plus rempli).
+  const barFrac = (r, mine) => {
+    if (mode === "rating") return Math.max(0, Math.min(1, (r.rating || 0) / 5));
+    if (mode === "distance") { const d = mine ? 0 : (r.distance != null ? r.distance : maxDist); return Math.max(0, 1 - d / maxDist); }
+    return (r.reviews || 0) / maxRev;
+  };
+  const barLabel = { reviews: "popularité (nombre d'avis)", rating: "note Google (sur 5)", distance: "proximité (le plus proche = le plus rempli)" }[mode];
+  // Au bout de la barre : UNIQUEMENT la donnée du filtre actif.
+  const metricHtml = (r) => mode === "distance" ? (r.distance != null ? String(r.distance).replace(".", ",") + " km" : "—")
+    : mode === "rating" ? (r.rating != null ? "★ " + String(r.rating).replace(".", ",") : "—")
+    : (r.reviews != null ? pgFmtN(r.reviews) + " avis" : "—");
+  // Ancienneté (âge du domaine) : mois jusqu'à 3 ans, puis années. undefined = pas encore chargé, null = « NC ».
+  const ageHtml = (r) => { const m = r.ageMonths; if (m === undefined) return ""; if (m === null) return "NC"; return m < 36 ? m + " mois" : Math.floor(m / 12) + " ans"; };
+  // Métrique COMPLÉMENTAIRE sous la principale (Notoriété only) : vue Avis → note · vue Note → nb d'avis.
+  const complHtml = (r) => {
+    if (!rankMe) return "";
+    if (mode === "reviews") return r.rating != null ? "★ " + String(r.rating).replace(".", ",") : "";
+    if (mode === "rating") return r.reviews != null ? pgFmtN(r.reviews) + " avis" : "";
+    return "";
+  };
+  const barColor = AR_SORT_COLORS[mode] || "#f6b26b"; // couleur des barres concurrents = métrique triée
+  const q = compMeta && compMeta.keyword ? ` · « ${escapeHtml(compMeta.keyword)} »${compMeta.auto && compMeta.auto.length ? " (auto)" : ""}` : "";
+  // variant : "pin" = ligne de référence détachée en tête · "rank" = même établissement à son rang · "" = concurrent.
+  const rank = (r) => (rankMe && others.length ? others.filter((o) => sortLt(o, r, mode)).length + 1 : null);
+  const rowHtml = (r, mine, variant) => `<div class="ga-tr${mine ? "" : " ar-comp-row"}${variant === "pin" ? " me-pin" : variant === "rank" ? " me-rank" : ""}"${mine ? "" : ` data-comp-name="${escapeHtml(r.title)}" data-comp-domain="${escapeHtml(r.domain || "")}" data-comp-rating="${r.rating != null ? r.rating : ""}" data-comp-reviews="${r.reviews != null ? r.reviews : ""}" data-comp-category="${escapeHtml(r.category || "")}" data-comp-place="${escapeHtml(r.place_id || "")}" data-comp-rank="${rank(r) || ""}" data-comp-distance="${r.distance != null ? r.distance : ""}" title="Voir les avis de ${escapeHtml(r.title)}"`}><span class="ga-tl">${mine ? "◂ " : ""}${escapeHtml(r.title)}${mine ? " (toi)" : ""}${variant === "rank" && rank(r) ? ` <span style="color:var(--accent2);font-weight:600;font-size:10px;">#${rank(r)}</span>` : ""}${r.category ? ` <span style="color:var(--dim);font-size:10px;">${escapeHtml(r.category)}</span>` : ""}${mine ? "" : ` <span class="ar-comp-hint">🔎</span>`}</span><span class="ga-tbar"><span class="ga-tbar-f" style="width:${Math.round(barFrac(r, mine) * 100)}%;background:${mine ? "var(--accent2)" : barColor}"></span></span><span class="ga-tv">${metricHtml(r)}${complHtml(r) ? `<span class="ga-tage">${complHtml(r)}</span>` : ""}${ageHtml(r) ? `<span class="ga-tage">${ageHtml(r)}</span>` : ""}</span></div>`;
+  const meCard = me ? `<div class="ar-me-hero"><span class="ar-me-tag">Ton établissement</span>${rowHtml(me, true, "pin")}</div>
+    <div class="ar-rank-sep"><span>Le classement du secteur${others.length ? ` · ${others.length} concurrents` : ""}</span></div>` : "";
+  return `<div class="ar-adsmkt"><div class="ar-adsaud-t">Ta position vs concurrents locaux (${others.length})${q}</div>
+    <div class="ga-note" style="margin:0 0 6px;font-size:11px;">Ton établissement et tes concurrents sur <b>Google Maps</b> (secteur + zone). La <b>barre = ${barLabel}</b>. <b>Clique une ligne</b> pour l'<b>estimation SEA</b> du concurrent (mots-clés payants + budget estimé).</div>
+    ${meCard}${filterHtml || ""}<div class="ga-tbl">${rows.map((r) => rowHtml(r, r.mine, r.mine ? "rank" : "")).join("")}</div></div>`;
+}
+// Ordre de tri identique à sortComps (Notoriété) pour calculer le rang réel de l'établissement.
+function sortLt(a, b, mode) {
+  if (mode === "distance") { const da = a.distance == null ? Infinity : a.distance, db = b.distance == null ? Infinity : b.distance; return da < db; }
+  if (mode === "rating") { if ((b.rating || 0) !== (a.rating || 0)) return (a.rating || 0) > (b.rating || 0); return (a.reviews || 0) > (b.reviews || 0); }
+  return (a.reviews || 0) > (b.reviews || 0); // reviews
+}
+// Modale scrollable : liste COMPLÈTE des emplacements d'une campagne (où est parti le budget).
+// Moteur d'efficacité + tendance des emplacements (spec issue du panel de conception, 23/07/2026) :
+// score empirical-Bayes piloté par le CPM (coût de portée) + CTR/conv, borne de Wilson anti-clics
+// accidentels, matérialité, et recommandation Continuer/Surveiller/Arrêter sur fenêtres R vs P.
+// Annote chaque placement avec p._eff = { score, tier, tc, effTip, trend, trc, trendTip }.
+function arScorePlacements(placements) {
+  const EPS = 1e-9, clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
+  const median = (a) => { if (!a.length) return null; const s = a.slice().sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+  const f = (r) => clamp(50 + 25 * Math.log2(Math.max(r, EPS)), 0, 100);
+  const convSupported = placements.some((p) => p.convSupported);
+  const W = (placements[0] && placements[0].windowDays) || null;
+  // ── Stats campagne ──
+  const tImpr = placements.reduce((n, p) => n + p.impressions, 0);
+  const tClk = placements.reduce((n, p) => n + p.clicks, 0);
+  const tCost = placements.reduce((n, p) => n + p.cost, 0);
+  const tConv = placements.reduce((n, p) => n + (p.conv || 0), 0);
+  const p0 = Math.max(tClk / Math.max(tImpr, 1), 0.0005);
+  let varW = 0; for (const p of placements) { const w = p.impressions / Math.max(tImpr, 1), ctr = p.clicks / Math.max(p.impressions, 1); varW += w * (ctr - p0) ** 2; }
+  let M = 300; if (varW > 0 && isFinite(varW) && placements.length >= 5) M = clamp(p0 * (1 - p0) / varW - 1, 100, 2000);
+  const cpms = placements.filter((p) => p.impressions >= 100).map((p) => p.cost / p.impressions * 1000);
+  const medCPM = cpms.length ? median(cpms) : (tCost / Math.max(tImpr, 1) * 1000 || 1);
+  const cpcs = placements.filter((p) => p.clicks > 0).map((p) => p.cost / p.clicks);
+  const medCPC = cpcs.length ? median(cpcs) : null; // médiane CPC campagne → base de la lecture « Google / CPC »
+  // Impressions RÉELLEMENT vues (Active View). ~1/3 des impressions display ne sont jamais vues
+  // (IAS 2025) et le taux varie fortement par emplacement → base de coût bien plus honnête que
+  // l'impression brute. Visibilité bornée à 1 (l'API peut renvoyer >100 % par artefact de mesure).
+  // On applique le TAUX de visibilité (vues / mesurables) au total des impressions : les impressions
+  // non mesurables sont supposées aussi visibles que les mesurées, plutôt que comptées comme non vues
+  // — sinon on pénaliserait un trou de mesure au lieu d'un vrai défaut de visibilité.
+  const vRateOf = (p) => (p.avSupported && p.avMeas > 0) ? Math.min(1, p.avImpr / p.avMeas) : null;
+  const vImprOf = (p) => { const r = vRateOf(p); return r == null ? null : p.impressions * r; };
+  const vcpms = placements.filter((p) => (vImprOf(p) || 0) >= 100).map((p) => p.cost / vImprOf(p) * 1000);
+  const medVCPM = vcpms.length ? median(vcpms) : null;
+  const cpe0 = tConv / Math.max(tCost, 1);
+  const useConv = convSupported && tConv >= 10;
+  // ── Constantes ──
+  // Seuils de suspicion : plus stricts sur les applis (×2,5 vs ×4 sur le web) — appuyé sur la mesure
+  // Pixalate T3 2025 (33 % de trafic invalide in-app contre 21 % sur le web). Le seuil ABSOLU vaut
+  // 3× le CTR display de référence (~0,5 %) : au-delà, un CTR display est statistiquement anormal.
+  const DISPLAY_CTR_BENCH = 0.005;
+  const M_CPM = 500, C0 = 20, Z = 1.96, SUS_APP = 2.5, SUS_WEB = 4.0, SUS_CTR_ABS = 3 * DISPLAY_CTR_BENCH, MIN_SUS_CLICKS = 5, S_RAMP_TOP = 8, PEN_MAX = 0.65;
+  const W_CONV = 0.60, W_CPM_CV = 0.25, W_ENG_CV = 0.15, W_CPM_AW = 0.65, W_ENG_AW = 0.35;
+  const COST_MAT = 2.0, SHARE_MAT = 0.01, SUS_COST = 1.0, SUS_SHARE = 0.005, MW_CTR = 150, MW_CPM = 300;
+  const eur = (v) => siEurNum(v), pc = (v, d = 1) => v.toFixed(d).replace(".", ","), dP = (r) => { const v = Math.round((r - 1) * 100); return (v >= 0 ? "+" : "") + v + " %"; };
+  for (const p of placements) {
+    const n = Math.max(p.impressions, 1);
+    const pHat = (p.clicks + p0 * M) / (p.impressions + M);
+    // Coût de la portée : mesuré sur les impressions VUES quand Active View est disponible.
+    const vI = vImprOf(p), useV = vI != null && medVCPM != null;
+    const basisImpr = useV ? vI : p.impressions, basisMed = useV ? medVCPM : medCPM;
+    const viewability = vRateOf(p);
+    const cpmHat = (p.cost + basisMed / 1000 * M_CPM) / (basisImpr + M_CPM) * 1000;
+    const cpeHat = ((p.conv || 0) + cpe0 * C0) / (p.cost + C0);
+    const ph = p.clicks / n, wLB = (ph + Z * Z / (2 * n) - Z * Math.sqrt(ph * (1 - ph) / n + Z * Z / (4 * n * n))) / (1 + Z * Z / n);
+    const isApp = p.typeLabel === "Application", T = isApp ? SUS_APP : SUS_WEB;
+    const gate = p.clicks >= MIN_SUS_CLICKS && (wLB > T * p0 || (isApp && wLB >= SUS_CTR_ABS)) && !((p.conv || 0) > 0);
+    const S = gate ? clamp((pHat / p0 - T) / (S_RAMP_TOP - T), 0.25, 1) : 0;
+    const compCost = f(basisMed / Math.max(cpmHat, EPS));
+    const compEng = S > 0 ? 50 : f(pHat / p0);
+    const compConv = f(cpeHat / Math.max(cpe0, EPS));
+    const raw = useConv ? W_CONV * compConv + W_CPM_CV * compCost + W_ENG_CV * compEng : W_CPM_AW * compCost + W_ENG_AW * compEng;
+    const score = Math.round(raw * (1 - PEN_MAX * S));
+    const material = p.cost >= COST_MAT || p.cost / Math.max(tCost, 1) >= SHARE_MAT;
+    const susMaterial = p.cost >= SUS_COST || p.cost / Math.max(tCost, 1) >= SUS_SHARE;
+    // ── Tier (ordre strict) ──
+    let tier, tc;
+    if (p.impressions < 100 && p.cost < 2) { tier = "Volume insuffisant"; tc = "na"; }
+    else if (S >= 0.7 && susMaterial) { tier = "À exclure"; tc = "lo"; }
+    else if (score >= 70) { tier = "Efficace"; tc = "hi"; }
+    else if (score >= 45) { tier = "Correct"; tc = "mid"; }
+    else if (score >= 25) { tier = "Faible"; tc = "warn"; }
+    else if (material) { tier = "À exclure"; tc = "lo"; }
+    else { tier = "Faible"; tc = "warn"; }
+    // ── Tooltip efficacité ──
+    let effTip;
+    if (tier === "Volume insuffisant") effTip = `Seulement ${pgFmtN(p.impressions)} impressions et ${eur(p.cost)} € : estimation ramenée vers la moyenne de la campagne, échantillon insuffisant pour juger seul.`;
+    else if (S > 0) effTip = `CTR ${pc(ph * 100, 2)} % ≈ ${(pHat / p0).toFixed(1)}× la référence campagne sur une application, sans aucune conversion. Ce profil (CTR anormalement élevé + 0 conversion sur du display in-app) est celui des clics accidentels et du trafic invalide — Pixalate mesure 33 % de trafic invalide sur l'inventaire mobile in-app (T3 2025). Score pénalisé, exclusion conseillée.`;
+    else { const cheaper = cpmHat <= basisMed, portee = basisMed ? Math.abs((1 - cpmHat / basisMed) * 100) : 0;
+      const lbl = useV ? "CPM visible" : "CPM";
+      effTip = `${lbl} ${eur(cpmHat)} € vs ${eur(basisMed)} € (médiane campagne) : portée ${pc(portee, 0)} % ${cheaper ? "moins chère" : "plus chère"}.`;
+      if (useV) effTip += ` Calculé sur les impressions réellement vues (visibilité ${pc(viewability * 100, 0)} %)${viewability < 0.7 ? ` — attention, ${pc((1 - viewability) * 100, 0)} % des impressions facturées ici ne sont jamais vues` : ""}.`;
+      effTip += ` CTR ajusté ${pc(pHat * 100, 2)} % (base ${pc(p0 * 100, 2)} %). ${pc(p.cost / Math.max(tCost, 1) * 100, 1)} % du budget.`;
+      if (useConv) effTip += ` ${(p.conv || 0).toFixed(1)} conv. pour ${eur(p.cost)} €.`;
+    }
+    // ── Tendance (fenêtres R vs P, taux shrinkés) ──
+    const R = p.R || { impr: 0, clicks: 0, cost: 0, conv: 0 }, P = p.P || { impr: 0, clicks: 0, cost: 0, conv: 0 };
+    const sCTR = (w) => (w.clicks + pHat * MW_CTR) / (w.impr + MW_CTR);
+    const sCPM = (w) => (w.cost + cpmHat / 1000 * MW_CPM) / (w.impr + MW_CPM) * 1000;
+    const dCPM = sCPM(R) / Math.max(sCPM(P), EPS), dCTR = sCTR(R) / Math.max(sCTR(P), EPS);
+    const dCost = P.cost > 0 ? R.cost / P.cost : 1;
+    const dCPA = (useConv && R.conv > 0 && P.conv > 0) ? (R.cost / R.conv) / (P.cost / P.conv) : null;
+    const deltas = `CPM ${dP(dCPM)}, CTR ajusté ${dP(dCTR)}, coût ${dP(dCost)}${dCPA != null ? ", CPA " + dP(dCPA) : ""}`;
+    let trend, trc, reason;
+    if (!p.ongoing) { trend = "Terminé"; trc = "na"; reason = `Placement inactif depuis ${p.daysSinceLast != null ? p.daysSinceLast : "?"} j (${p.current ? "diffusion terminée" : "campagne en pause"}). Coût total : ${eur(p.cost)} €.`; }
+    else if (tier === "À exclure") { trend = "Arrêter"; trc = "lo"; reason = (S >= 0.7 ? "Suspicion de clics accidentels" : "Efficience très faible pour un coût significatif") + ` — ${deltas}.`; }
+    else if (P.impr < 50) { trend = "Surveiller"; trc = "warn"; reason = `Nouveau placement, historique insuffisant (${deltas}).`; }
+    else if (R.impr < 50) { trend = "Surveiller"; trc = "warn"; reason = `Activité en forte baisse (${deltas}).`; }
+    else if (R.impr + P.impr < 200) { trend = score >= 45 ? "Continuer" : "Surveiller"; trc = score >= 45 ? "hi" : "warn"; reason = `Volume trop faible pour une tendance fiable (${deltas}).`; }
+    else if (dCPA != null && dCPA > 1.75) { trend = "Arrêter"; trc = "lo"; reason = `CPA en dérive forte — ${deltas}.`; }
+    else if (tier === "Faible" && dCost >= 1.5) { trend = "Arrêter"; trc = "lo"; reason = `Coût en accélération sur un placement faible — ${deltas}.`; }
+    else if (dCPM > 1.30 || dCTR < 0.70 || (dCPA != null && dCPA > 1.30)) { trend = score < 45 ? "Arrêter" : "Surveiller"; trc = score < 45 ? "lo" : "warn"; reason = `Dégradation — ${deltas}.`; }
+    else if (score >= 45) { trend = "Continuer"; trc = "hi"; reason = `Stable — ${deltas}.`; }
+    else { trend = "Surveiller"; trc = "warn"; reason = `Efficience médiocre mais stable — ${deltas}.`; }
+    const trendTip = p.ongoing ? `Sur les ${W || "?"} derniers jours vs précédents : ${reason}` : reason;
+    // Détail chiffré complet — alimente la fiche au clic (arPlacementDetailModal).
+    const detail = {
+      ph, pHat, p0, wLB, S, isApp, T,
+      cpm: p.impressions ? p.cost / p.impressions * 1000 : null, cpmHat, medCPM,
+      useV, viewability, vcpm: (vI ? p.cost / vI * 1000 : null), medVCPM, basisMed,
+      cpc: p.clicks ? p.cost / p.clicks : null, medCPC,
+      compCost, compEng, compConv, raw, useConv, cpeHat, cpe0,
+      budgetShare: p.cost / Math.max(tCost, 1), material, susMaterial,
+      dCPM, dCTR, dCost, dCPA, R, P, W, reason,
+    };
+    p._eff = { score, tier, tc, effTip, trend, trc, trendTip, detail };
+    // ── Éval. « Google / CPC » : la lecture naïve (clics pas chers = bien) que corrige l'efficacité réelle ──
+    let gLabel = "—", gc = "na", gRank = 0, gTip = "Aucun clic sur la période : la lecture « coût par clic » n'a rien à évaluer.";
+    if (p.clicks > 0 && medCPC) {
+      const cpcv = p.cost / p.clicks, ratio = cpcv / medCPC;
+      if (ratio <= 0.6) { gLabel = "Bon"; gc = "hi"; gRank = 3; }
+      else if (ratio <= 1.4) { gLabel = "Moyen"; gc = "warn"; gRank = 2; }
+      else { gLabel = "Cher"; gc = "lo"; gRank = 1; }
+      gTip = `Lecture « coût par clic » de Google : CPC ${eur(cpcv)} € vs ${eur(medCPC)} € (médiane campagne) → clics ${ratio <= 1 ? "bon marché" : "chers"}. ⚠ Un CPC bas ne dit rien de la QUALITÉ du trafic (clics accidentels, zéro conversion…) : compare toujours avec l'efficacité réelle.`;
+    }
+    p._goog = { label: gLabel, gc, rank: gRank, tip: gTip };
+  }
+  return placements;
+}
+// Résumé visuel « où est parti le budget » : barre empilée du coût par palier d'efficacité + KPIs +
+// phrase de synthèse. Transforme 300 lignes en une lecture instantanée. Idempotent (re-score OK).
+function arPlacementsSummaryHtml(placements, campName) {
+  if (!placements || !placements.length) return "";
+  arScorePlacements(placements);
+  const COL = { hi: "var(--ok)", mid: "color-mix(in srgb, var(--ok) 50%, var(--line))", warn: "var(--warn)", lo: "var(--err)", na: "color-mix(in srgb, var(--txt) 20%, var(--line))" };
+  const TIERS = [{ key: "Efficace", cls: "hi" }, { key: "Correct", cls: "mid" }, { key: "Faible", cls: "warn" }, { key: "À exclure", cls: "lo" }, { key: "Volume insuffisant", cls: "na" }];
+  const byTier = {}; let total = 0;
+  for (const p of placements) { const t = (p._eff && p._eff.tier) || "Volume insuffisant"; (byTier[t] = byTier[t] || { cost: 0, n: 0 }); byTier[t].cost += p.cost || 0; byTier[t].n++; total += p.cost || 0; }
+  if (total <= 0) return "";
+  const c = (k) => (byTier[k] && byTier[k].cost) || 0;
+  const good = c("Efficace") + c("Correct"), bad = c("Faible") + c("À exclure"), excl = c("À exclure");
+  let vCost = 0, vSeen = 0; for (const p of placements) { const v = (p.avSupported && p.avMeas > 0) ? Math.min(1, p.avImpr / p.avMeas) : null; if (v != null) { vCost += p.cost || 0; vSeen += (p.cost || 0) * v; } }
+  const viewPct = vCost > 0 ? Math.round(vSeen / vCost * 100) : null;
+  const active = placements.filter((p) => p.ongoing), activeEur = active.reduce((n, p) => n + (p.cost || 0), 0);
+  // « Bons mais arrêtés » : efficaces (Correct/Efficace) que Google a cessé de diffuser — l'opportunité perdue.
+  const goodStopped = placements.filter((p) => !p.ongoing && ["Efficace", "Correct"].includes(p._eff && p._eff.tier));
+  const gsEur = goodStopped.reduce((n, p) => n + (p.cost || 0), 0);
+  const eur = (v) => siEurNum(v) + " €", pc = (v) => Math.round(v / total * 100) + " %";
+  const present = TIERS.filter((t) => c(t.key) > 0);
+  const hint = campName ? " · Cliquer pour voir ces emplacements" : " · Cliquer pour filtrer";
+  const seg = present.map((t) => `<span class="clickable" data-eff-tier="${escapeHtml(t.key)}" style="width:${(c(t.key) / total * 100).toFixed(2)}%;background:${COL[t.cls]};" data-tip="${escapeHtml(t.key)} : ${eur(c(t.key))} (${pc(c(t.key))}) · ${byTier[t.key].n} emplacement(s)${hint}"></span>`).join("");
+  const legend = present.map((t) => `<span class="ar-plcsum-lg clickable" data-eff-tier="${escapeHtml(t.key)}" data-tip="${escapeHtml(t.key)}${hint}"><i style="background:${COL[t.cls]}"></i>${escapeHtml(t.key)} <b>${eur(c(t.key))}</b> <span>${pc(c(t.key))}</span></span>`).join("");
+  const kpi = (l, v, cls) => `<div class="ar-plcsum-kpi ${cls || ""}"><span class="ar-plcsum-kl">${l}</span><span class="ar-plcsum-kv">${v}</span></div>`;
+  return `<div class="ar-plcsum"${campName ? ` data-camp="${escapeHtml(campName)}"` : ""}>
+    <div class="ar-plcsum-kpis">
+      ${kpi("Budget total", eur(total))}
+      ${kpi("Efficace / Correct", `${eur(good)} · ${pc(good)}`, "good")}
+      ${kpi("Faible / À exclure", `${eur(bad)} · ${pc(bad)}`, "bad")}
+      ${viewPct != null ? kpi("Part réellement vue", viewPct + " %", viewPct < 70 ? "bad" : "") : ""}
+      ${kpi("Diffusent encore", `${active.length} · ${eur(activeEur)}`)}
+      ${goodStopped.length ? `<div class="ar-plcsum-kpi op clickable" data-eff-tier="__goodstopped__" data-tip="Emplacements efficaces (Correct/Efficace) que Google a cessé de diffuser tout seul${campName ? " · Cliquer pour les voir" : " · Cliquer pour filtrer"}."><span class="ar-plcsum-kl">★ Bons mais arrêtés</span><span class="ar-plcsum-kv">${goodStopped.length} · ${eur(gsEur)}</span></div>` : ""}
+    </div>
+    <div class="ar-plcsum-bar">${seg}</div>
+    <div class="ar-plcsum-legend">${legend}</div>
+    ${bad > 0 ? `<p class="ar-plcsum-head">Sur ${eur(total)}, <b>${eur(bad)} (${pc(bad)})</b> sont partis dans des emplacements « Faible » ou « À exclure »${excl > 0 ? `, dont <b>${eur(excl)}</b> clairement à exclure` : ""}.</p>` : ""}
+  </div>`;
+}
+function arPlacementsModal(campName, placements, initialEffFilter) {
+  arScorePlacements(placements);
+  const plcName = (p) => ((p.name || p.url || "").replace(/^Mobile App:\s*/i, "").replace(/\s*\((iTunes App Store|Google Play)\).*$/i, "").trim() || p.url || "—");
+  const fmtD = (d) => d ? d.slice(8, 10) + "/" + d.slice(5, 7) : "—";
+  const g = "grid-template-columns:80px 1fr 46px 56px 50px 64px 46px 52px 62px 66px 92px 34px 108px 88px 96px 34px;";
+  // Durée de diffusion : du début à la dernière activité (ou à aujourd'hui si l'emplacement est en cours).
+  const dur = (p) => {
+    if (!p.firstDate) return "—";
+    const end = p.ongoing ? new Date().toISOString().slice(0, 10) : (p.lastDate || p.firstDate);
+    const days = Math.max(1, Math.round((new Date(end) - new Date(p.firstDate)) / 86400000) + 1);
+    return days < 14 ? days + " j" : days < 70 ? Math.round(days / 7) + " sem" : Math.round(days / 30) + " mois";
+  };
+  const cpc = (p) => p.clicks ? siEurNum(p.cost / p.clicks) + " €" : "—";        // coût par clic
+  const cpm = (p) => p.impressions ? siEurNum(p.cost / p.impressions * 1000) + " €" : "—"; // coût / 1000 impressions
+  // Efficacité (tier + score) et tendance (recommandation) — calculés par arScorePlacements → p._eff.
+  const SHORT_TIER = { "Volume insuffisant": "Vol. faible" };
+  const MORE = "Clique pour la fiche complète";
+  const tipAttr = (txt) => `data-tip="${escapeHtml(txt)}" data-tip-more="${MORE}"`;
+  const effHtml = (p) => { const e = p._eff; if (!e) return "—"; const lbl = SHORT_TIER[e.tier] || e.tier; return `<span class="ar-eff act ${e.tc}" ${tipAttr(e.effTip)} data-plc-det="${p._i}">${escapeHtml(lbl)}${e.tc !== "na" ? " " + e.score : ""}</span>`; };
+  const trendHtml = (p) => { const e = p._eff; if (!e) return "—"; return `<span class="ar-eff act ${e.trc}" ${tipAttr(e.trendTip)} data-plc-det="${p._i}">${escapeHtml(e.trend)}</span>`; };
+  // Éval. Google (lecture CPC naïve) + flèche-loupe de divergence entre les deux lectures.
+  const googHtml = (p) => { const gg = p._goog; if (!gg) return "—"; return `<span class="ar-eff act ${gg.gc}" ${tipAttr(gg.tip)} data-plc-det="${p._i}">${escapeHtml(gg.label)}</span>`; };
+  const REAL_RANK = { "Efficace": 4, "Correct": 3, "Faible": 2, "À exclure": 1, "Volume insuffisant": 0 };
+  const divHtml = (p) => {
+    const e = p._eff, gg = p._goog; if (!e || !gg) return `<span class="ar-div dim">→</span>`;
+    if (gg.rank >= 2 && (e.tier === "À exclure" || e.tier === "Faible")) {
+      const cls = e.tier === "À exclure" ? "lo" : "warn";
+      return `<span class="ar-div act ${cls}" ${tipAttr(`Google surévalue cet emplacement : côté CPC les clics sont « ${gg.label.toLowerCase()} », mais l'efficacité réelle est « ${e.tier} ». Se fier au seul CPC ferait maintenir une dépense peu utile.`)} data-plc-det="${p._i}">⚠→</span>`;
+    }
+    if (gg.rank === 1 && (e.tier === "Correct" || e.tier === "Efficace")) {
+      return `<span class="ar-div act hi" ${tipAttr(`Google sous-évalue cet emplacement : CPC élevé mais efficacité réelle « ${e.tier} » (bonne portée / conversions). Se fier au seul CPC ferait couper un bon emplacement.`)} data-plc-det="${p._i}">✓→</span>`;
+    }
+    return `<span class="ar-div act dim" ${tipAttr("Les deux lectures concordent sur cet emplacement.")} data-plc-det="${p._i}">→</span>`;
+  };
+  // Actions réelles (exclure / réactiver) — écrivent dans le compte Google Ads, avec confirmation.
+  placements.forEach((p, i) => { p._i = i; });
+  const EXCLUDABLE = ["WEBSITE", "MOBILE_APPLICATION", "YOUTUBE_VIDEO", "YOUTUBE_CHANNEL"];
+  const exKey = (p) => `${p.campaignId}|${p.type}|${p.placement}`;
+  const mgKey = (p) => `${p.adGroupId}|${p.type}|${p.placement}`;
+  let exclMap = {}, exclLoaded = false, managedMap = {}, managedLoaded = false;
+  const isGoodStopped = (p) => !p.ongoing && ["Efficace", "Correct"].includes((p._eff && p._eff.tier));
+  const actHtml = (p) => {
+    if (!p.campaignId || !p.placement || !EXCLUDABLE.includes(p.type)) return `<span class="ar-plc-act-na" data-tip="Emplacement non exclusible individuellement.">—</span>`;
+    if (!exclLoaded || !managedLoaded) return `<span class="ar-plc-act-na">…</span>`;
+    // Déjà relancé (ciblage explicite) → annuler la relance.
+    if (managedMap[mgKey(p)]) return `<button class="ar-plc-act relaunch" data-plc-act="untarget" data-plc-i="${p._i}" data-tip="Tu as relancé cet emplacement (ciblage explicite). Cliquer pour annuler la relance et revenir au ciblage automatique.">Relancé ✓</button>`;
+    // Exclu par toi → réactiver.
+    if (exclMap[exKey(p)]) return `<button class="ar-plc-act on" data-plc-act="reactivate" data-plc-i="${p._i}" data-tip="Tu as exclu cet emplacement — il ne diffuse plus. Cliquer pour le réactiver dans Google Ads.">Réactiver</button>`;
+    // Bon mais arrêté → proposer la relance (ciblage explicite).
+    if (isGoodStopped(p) && p.adGroupId) return `<button class="ar-plc-act relaunch" data-plc-act="target" data-plc-i="${p._i}" data-tip="Emplacement efficace que Google a arrêté. Le relancer le repasse en ciblage explicite pour inciter Google à le rediffuser (coup de pouce, pas une garantie). Écrit dans Google Ads, après confirmation.">Relancer</button>`;
+    // Sinon exclure — discret (ghost) si déjà inactif (exclusion seulement préventive).
+    const inactive = !p.ongoing;
+    return `<button class="ar-plc-act${inactive ? " ghost" : ""}" data-plc-act="exclude" data-plc-i="${p._i}" data-tip="${inactive ? `Déjà inactif${p.daysSinceLast != null ? " depuis " + p.daysSinceLast + " j" : ""} — Google a cessé d'y diffuser tout seul (l'emplacement n'est pas exclu). L'exclure ne sert qu'à empêcher une reprise future.` : "Exclure cet emplacement de la campagne. Écrit dans le compte Google Ads, après confirmation."}">Exclure</button>`;
+  };
+  const typeOf = (p) => p.typeLabel || "Autre";
+  // Types distincts (+ compte), triés par nombre décroissant — pour le filtre.
+  const typeMap = {};
+  for (const p of placements) { const t = typeOf(p); (typeMap[t] = typeMap[t] || { n: 0, cost: 0 }); typeMap[t].n++; typeMap[t].cost += (p.cost || 0); }
+  const types = Object.entries(typeMap).sort((a, b) => b[1].n - a[1].n);
+  let filter = "all";
+  const tierOf = (p) => (p._eff && p._eff.tier) || "Volume insuffisant";
+  // Filtres « intelligents » (croisent efficacité × statut) en plus des paliers simples.
+  const SMART_FILTERS = { __goodstopped__: { label: "Bons mais arrêtés", pred: (p) => !p.ongoing && ["Efficace", "Correct"].includes(tierOf(p)) } };
+  const effLabel = (k) => (SMART_FILTERS[k] && SMART_FILTERS[k].label) || k;
+  let effFilter = initialEffFilter || null; // filtre par palier d'efficacité OU filtre intelligent
+  // ── Tri par colonne (clic en-tête : ↓ décroissant → ↑ croissant → défaut) ──
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const durDays = (p) => { if (!p.firstDate) return null; const end = p.ongoing ? todayIso : (p.lastDate || p.firstDate); return Math.round((new Date(end) - new Date(p.firstDate)) / 86400000) + 1; };
+  const TREND_RANK = { "Continuer": 4, "Surveiller": 3, "Arrêter": 2, "Terminé": 1 };
+  const SORT_VAL = {
+    type: (p) => typeOf(p), name: (p) => plcName(p).toLowerCase(),
+    start: (p) => p.firstDate || null, end: (p) => p.ongoing ? "9999-99-99" : (p.lastDate || null),
+    dur: durDays, impr: (p) => p.impressions, clicks: (p) => p.clicks,
+    cpc: (p) => p.clicks ? p.cost / p.clicks : null, cpm: (p) => p.impressions ? p.cost / p.impressions * 1000 : null,
+    cost: (p) => p.cost, goog: (p) => p._goog ? p._goog.rank : null,
+    eff: (p) => p._eff ? p._eff.score : null, trend: (p) => p._eff ? (TREND_RANK[p._eff.trend] || 0) : null,
+  };
+  let sortCol = "cost", sortDir = "desc"; // défaut = coût décroissant (l'ordre livré par Google)
+  const isDefaultSort = () => sortCol === "cost" && sortDir === "desc";
+  const applySort = (arr) => {
+    const f = SORT_VAL[sortCol]; if (!f) return arr;
+    const dir = sortDir === "desc" ? -1 : 1;
+    return arr.slice().sort((a, b) => {
+      const va = f(a), vb = f(b);
+      if (va == null && vb == null) return b.cost - a.cost;
+      if (va == null) return 1; if (vb == null) return -1;         // valeurs manquantes toujours en bas
+      let r = typeof va === "string" ? va.localeCompare(vb, "fr") : (va - vb);
+      if (r === 0) return b.cost - a.cost;                          // départage stable par coût
+      return dir * r;
+    });
+  };
+  const ov = document.createElement("div"); ov.className = "modal-overlay show";
+  // Hauteur des lignes : s'adapte à l'écran (la modale doit remplir la fenêtre, pas un carré fixe).
+  const ROWS_H = Math.max(560, Math.min(1100, window.innerHeight - 300));
+  ov.innerHTML = `<div class="modal-panel" style="width:1680px;max-width:97vw;">
+    <div class="modal-head"><h2 style="font-size:15px;">Emplacements — ${escapeHtml(campName)} <span id="arPlcCount" style="color:var(--dim);font-weight:400;"></span></h2><button class="modal-x" data-x>✕</button></div>
+    <div class="modal-body">
+      ${arPlacementsSummaryHtml(placements)}
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
+        <div class="ar-seg" id="arPlcFilter" style="flex-wrap:wrap;margin:0;">
+          <button class="ar-seg-b on" data-plctype="all">Tous <span style="opacity:.55;">${placements.length}</span></button>
+          ${types.map(([t, m]) => `<button class="ar-seg-b" data-plctype="${escapeHtml(t)}">${escapeHtml(t)} <span style="opacity:.55;">${m.n}</span></button>`).join("")}
+        </div>
+        <span class="ar-eff-chip" id="arEffChip" style="display:none;"></span>
+        <button class="ar-sort-reset" id="arSortReset" style="margin-left:auto;display:none;" data-tip="Revenir au tri par défaut (coût décroissant)">↺ Réinitialiser le tri</button>
+      </div>
+      <div class="ar-adskw-head" id="arPlcHead" style="${g}"><span class="k s" data-sort="type" data-tip="Trier par type d'emplacement">Type<i class="ar-sar"></i></span><span class="k s" data-sort="name" data-tip="Trier par nom d'emplacement">Emplacement<i class="ar-sar"></i></span><span class="c s" data-sort="start" data-tip="Trier par date de début">Début<i class="ar-sar"></i></span><span class="c s" data-sort="end" data-tip="Trier par date de fin (en cours en tête)">Fin<i class="ar-sar"></i></span><span class="c s" data-sort="dur" data-tip="Trier par durée de diffusion">Durée<i class="ar-sar"></i></span><span class="c s" data-sort="impr" data-tip="Trier par impressions">Impr.<i class="ar-sar"></i></span><span class="c s" data-sort="clicks" data-tip="Trier par clics">Clics<i class="ar-sar"></i></span><span class="c s" data-sort="cpc" data-tip="Trier par coût par clic">CPC<i class="ar-sar"></i></span><span class="c s" data-sort="cpm" data-tip="Trier par CPM — coût pour 1000 impressions, le vrai prix de la portée.">CPM<i class="ar-sar"></i></span><span class="c s" data-sort="cost" data-tip="Trier par coût total">Coût<i class="ar-sar"></i></span><span class="c s" data-sort="goog" data-tip="Trier par éval. Google (lecture CPC — trompeuse prise seule).">Éval. Google<i class="ar-sar"></i></span><span class="c ar-eff-loupe" id="arEffLoupe" data-tip="Pourquoi l'efficacité réelle prime sur le CPC" data-tip-more="Clique pour l'explication et les études">🔎</span><span class="c s" data-sort="eff" data-tip="Trier par efficacité réelle (score calculé).">Efficacité réelle<i class="ar-sar"></i></span><span class="c s" data-sort="trend" data-tip="Trier par tendance (Continuer → Terminé).">Tendance<i class="ar-sar"></i></span><span class="c" data-tip="Exclure / réactiver l'emplacement directement dans le compte Google Ads.">Actions</span><span class="c" data-tip="Surveiller : épingle l'emplacement en haut de la liste (favori).">★</span></div>
+      <div id="arPlcRows" style="height:${ROWS_H}px;overflow-y:auto;"></div>
+    </div></div>`;
+  document.body.appendChild(ov);
+  const rowsHost = ov.querySelector("#arPlcRows"), countEl = ov.querySelector("#arPlcCount");
+  // ── Surveillance (favoris) : épingle des emplacements en haut, persistant via localStorage ──
+  const WKEY = "arWatch:" + campName;
+  const watchKey = (p) => p.placement || p.url || p.name || String(p._i);
+  let watched; try { watched = new Set(JSON.parse(localStorage.getItem(WKEY) || "[]")); } catch { watched = new Set(); }
+  const saveWatch = () => { try { localStorage.setItem(WKEY, JSON.stringify([...watched])); } catch {} };
+  const isWatched = (p) => watched.has(watchKey(p));
+  const watchHtml = (p) => `<span class="ar-watch${isWatched(p) ? " on" : ""}" data-plc-watch="${p._i}" data-tip="${isWatched(p) ? "Ne plus surveiller" : "Surveiller — épingle la ligne en haut de la liste"}">${isWatched(p) ? "★" : "☆"}</span>`;
+  // Modèle d'une ligne (réutilisé par la liste ET la section épinglée).
+  const rowHtml = (p) => `<div class="ar-adskw-row${exclLoaded && exclMap[exKey(p)] ? " ar-plc-excluded" : ""}${managedLoaded && managedMap[mgKey(p)] ? " ar-plc-relaunched" : ""}${isWatched(p) ? " ar-watched" : ""}" style="${g}"><span class="m">${escapeHtml(typeOf(p))}</span><span class="k">${escapeHtml(plcName(p))}</span><span class="c">${fmtD(p.firstDate)}</span><span class="c">${p.ongoing ? `<span class="ar-plc-st on">en cours</span>` : fmtD(p.lastDate)}</span><span class="c">${dur(p)}</span><span class="c">${pgFmtN(p.impressions)}</span><span class="c">${pgFmtN(p.clicks)}</span><span class="c">${cpc(p)}</span><span class="c">${cpm(p)}</span><span class="c">${p.cost ? siEurNum(p.cost) + " €" : "—"}</span><span class="c">${googHtml(p)}</span><span class="c">${divHtml(p)}</span><span class="c">${effHtml(p)}</span><span class="c">${trendHtml(p)}</span><span class="c">${actHtml(p)}</span><span class="c">${watchHtml(p)}</span></div>`;
+  const render = () => {
+    let base = filter === "all" ? placements : placements.filter((p) => typeOf(p) === filter);
+    if (effFilter) { const sf = SMART_FILTERS[effFilter]; base = base.filter(sf ? sf.pred : (p) => tierOf(p) === effFilter); }
+    const rows = applySort(base);
+    const total = rows.reduce((n, p) => n + (p.cost || 0), 0);
+    countEl.textContent = `(${rows.length} · ${siEurNum(total)} €)`;
+    // Section épinglée « Surveillés » — tous les favoris (indépendamment du filtre), collée en haut.
+    const pins = watched.size ? applySort(placements.filter(isWatched)) : [];
+    let html = "";
+    if (pins.length) html += `<div class="ar-watch-pin"><div class="ar-watch-h">★ Surveillés <span>${pins.length}</span></div>${pins.map(rowHtml).join("")}</div>`;
+    html += rows.map(rowHtml).join("") || `<div class="ga-note" style="padding:12px 2px;">Aucun emplacement de ce type.</div>`;
+    // Hauteur constante : on complète avec des lignes vides (mêmes bordures) jusqu'à remplir la zone.
+    const ROW_H = 33; // hauteur d'une ligne (padding 6px ×2 + contenu + bordure)
+    const fillers = Math.max(0, Math.ceil(ROWS_H / ROW_H) - rows.length - pins.length - (pins.length ? 1 : 0));
+    for (let i = 0; i < fillers; i++) html += `<div class="ar-adskw-row ar-plc-empty" style="${g}">${"<span></span>".repeat(16)}</div>`;
+    rowsHost.innerHTML = html;
+  };
+  ov.querySelectorAll("[data-plctype]").forEach((bt) => bt.onclick = () => { filter = bt.dataset.plctype; ov.querySelectorAll("[data-plctype]").forEach((x) => x.classList.toggle("on", x === bt)); render(); });
+  // ── Tri : en-têtes cliquables + bouton de réinitialisation ──
+  const head = ov.querySelector("#arPlcHead"), resetBtn = ov.querySelector("#arSortReset");
+  const paintSort = () => {
+    head.querySelectorAll("[data-sort]").forEach((el) => {
+      const on = el.dataset.sort === sortCol;
+      el.classList.toggle("sorted", on);
+      const ar = el.querySelector(".ar-sar"); if (ar) ar.textContent = on ? (sortDir === "desc" ? "↓" : "↑") : "↕";
+    });
+    resetBtn.style.display = isDefaultSort() ? "none" : "";
+  };
+  head.addEventListener("click", (e) => {
+    const el = e.target.closest("[data-sort]"); if (!el) return;
+    const col = el.dataset.sort;
+    if (sortCol === col) { if (sortDir === "desc") sortDir = "asc"; else { sortCol = "cost"; sortDir = "desc"; } } // 3e clic = défaut
+    else { sortCol = col; sortDir = "desc"; }
+    paintSort(); render();
+  });
+  resetBtn.onclick = () => { sortCol = "cost"; sortDir = "desc"; paintSort(); render(); };
+  paintSort();
+  // ── Filtre par palier d'efficacité : clic sur un segment/légende de la barre de synthèse ──
+  const effChip = ov.querySelector("#arEffChip"), summary = ov.querySelector(".ar-plcsum");
+  const paintEffFilter = () => {
+    if (effFilter) { effChip.style.display = ""; effChip.innerHTML = `${SMART_FILTERS[effFilter] ? "" : "Efficacité : "}<b>${escapeHtml(effLabel(effFilter))}</b> <span class="ar-eff-chip-x" data-tip="Retirer le filtre">✕</span>`; }
+    else effChip.style.display = "none";
+    if (summary) summary.querySelectorAll("[data-eff-tier]").forEach((el) => el.classList.toggle("sel", el.dataset.effTier === effFilter));
+  };
+  if (summary) summary.addEventListener("click", (e) => {
+    const el = e.target.closest("[data-eff-tier]"); if (!el) return;
+    effFilter = (effFilter === el.dataset.effTier) ? null : el.dataset.effTier; // bascule
+    paintEffFilter(); render();
+  });
+  effChip.addEventListener("click", () => { effFilter = null; paintEffFilter(); render(); });
+  paintEffFilter();
+  arTipInit();
+  const loupe = ov.querySelector("#arEffLoupe"); if (loupe) loupe.onclick = arEffExplainerModal;
+  // Clic sur une pastille (Éval. Google / divergence / Efficacité / Tendance) → fiche détaillée.
+  rowsHost.addEventListener("click", (e) => {
+    const el = e.target.closest("[data-plc-det]"); if (!el) return;
+    const p = placements[+el.dataset.plcDet]; if (p) arPlacementDetailModal(p, campName);
+  });
+  // Clic sur l'étoile → surveiller / ne plus surveiller (épingle en haut, persistant).
+  rowsHost.addEventListener("click", (e) => {
+    const el = e.target.closest("[data-plc-watch]"); if (!el) return;
+    const p = placements[+el.dataset.plcWatch]; if (!p) return;
+    const k = watchKey(p); if (watched.has(k)) watched.delete(k); else watched.add(k);
+    saveWatch(); render();
+  });
+  render();
+  // État exclusions + emplacements gérés (lecture seule) → reflète l'état des boutons.
+  if (arBrand) {
+    window.olympus.argosAdsExclusions(arBrand).then((r) => { exclLoaded = true; if (r && r.ok) exclMap = r.exclusions || {}; render(); }).catch(() => { exclLoaded = true; render(); });
+    window.olympus.argosAdsManaged(arBrand).then((r) => { managedLoaded = true; if (r && r.ok) managedMap = r.managed || {}; render(); }).catch(() => { managedLoaded = true; render(); });
+  } else { exclLoaded = true; managedLoaded = true; }
+  // Exclure / réactiver / relancer / annuler la relance (ÉCRITURE réelle Google Ads) — confirmation obligatoire.
+  const ACT_MSG = {
+    exclude: { msg: (nm) => `Exclure « ${nm} » de la campagne « ${campName} » ?\n\nCet emplacement ne diffusera plus dans le compte Google Ads du client. Action réversible (Réactiver) — l'historique de performance reste conservé par Google.`, ok: "Exclure", danger: true },
+    reactivate: { msg: (nm) => `Réactiver « ${nm} » ?\n\nL'emplacement pourra de nouveau diffuser dans le compte Google Ads du client.`, ok: "Réactiver", danger: false },
+    target: { msg: (nm) => `Relancer « ${nm} » ?\n\nCet emplacement efficace sera repassé en ciblage explicite (emplacement géré) pour inciter Google à le rediffuser.\n\n⚠️ C'est un coup de pouce, pas une garantie (dépend du budget, des enchères et de l'inventaire), et cela peut influencer le ciblage de tout le groupe d'annonces. Réversible. Écrit dans le compte Google Ads.`, ok: "Relancer", danger: false },
+    untarget: { msg: (nm) => `Annuler la relance de « ${nm} » ?\n\nL'emplacement repasse en ciblage automatique.`, ok: "Annuler la relance", danger: false },
+  };
+  rowsHost.addEventListener("click", async (e) => {
+    const bt = e.target.closest("[data-plc-act]"); if (!bt) return;
+    const p = placements[+bt.dataset.plcI]; if (!p) return;
+    const action = bt.dataset.plcAct, nm = plcName(p), cfg = ACT_MSG[action]; if (!cfg) return;
+    if (!(await arConfirm(cfg.msg(nm), cfg.ok, cfg.danger))) return;
+    bt.disabled = true; bt.textContent = "…";
+    const ek = exKey(p), mk = mgKey(p);
+    const spec = action === "exclude" ? { campaignId: p.campaignId, type: p.type, placement: p.placement, url: p.url }
+      : action === "reactivate" ? { resourceName: (exclMap[ek] || {}).resourceName }
+      : action === "target" ? { adGroupId: p.adGroupId, type: p.type, placement: p.placement, url: p.url }
+      : { resourceName: (managedMap[mk] || {}).resourceName };
+    const r = await window.olympus.argosAdsPlacementAction(arBrand, action, spec).catch((err) => ({ ok: false, error: String(err && err.message || err) }));
+    if (!r || !r.ok) {
+      bt.disabled = false; render();
+      const pending = /DEVELOPER_TOKEN_NOT_APPROVED|not approved|explorer access|PERMISSION_DENIED|USER_PERMISSION_DENIED/i.test((r && r.error) || "");
+      arNotice(pending
+        ? "Écriture Google Ads en attente d'autorisation.\n\nPour modifier le compte, ton jeton développeur Google Ads doit être en accès Basic — la même autorisation que pour la vue Tendance. Une fois accordée, ce bouton fonctionnera sans rien changer d'autre."
+        : "L'action a échoué : " + ((r && r.error) || "erreur inconnue") + ".");
+      return;
+    }
+    if (action === "exclude") exclMap[ek] = { resourceName: r.resourceName, campaignId: p.campaignId, type: p.type, value: p.placement };
+    else if (action === "reactivate") delete exclMap[ek];
+    else if (action === "target") managedMap[mk] = { resourceName: r.resourceName, adGroupId: p.adGroupId, type: p.type, value: p.placement };
+    else delete managedMap[mk];
+    render();
+  });
+  const close = () => ov.remove();
+  ov.querySelector("[data-x]").onclick = close;
+  ov.onclick = (e) => { if (e.target === ov) close(); };
+  const onKey = (e) => { if (e.key === "Escape") { close(); document.removeEventListener("keydown", onKey); } };
+  document.addEventListener("keydown", onKey);
+  mArrive(ov.querySelector(".modal-body"));
+}
+// ── Infobulle instantanée (remplace title=, qui met ~1 s à apparaître) ──
+// Apparition immédiate + animation d'entrée. Contenu injecté en textContent (jamais en HTML).
+let arTipEl = null, arTipCur = null;
+function arTipInit() {
+  if (arTipEl) return;
+  arTipEl = document.createElement("div"); arTipEl.className = "ar-tip"; document.body.appendChild(arTipEl);
+  const hide = () => { arTipEl.classList.remove("show"); arTipCur = null; };
+  document.addEventListener("mouseover", (e) => {
+    const t = e.target.closest && e.target.closest("[data-tip]");
+    if (!t) { if (arTipCur) hide(); return; }
+    if (t === arTipCur) return;
+    arTipCur = t;
+    arTipEl.textContent = t.dataset.tip || "";
+    if (t.dataset.tipMore) { const s = document.createElement("span"); s.className = "ar-tip-more"; s.textContent = t.dataset.tipMore; arTipEl.appendChild(s); }
+    arTipEl.classList.add("show");
+    const r = t.getBoundingClientRect(), tw = arTipEl.offsetWidth, th = arTipEl.offsetHeight;
+    let left = Math.max(10, Math.min(r.left + r.width / 2 - tw / 2, window.innerWidth - tw - 10));
+    let top = r.top - th - 9, below = false;
+    if (top < 10) { top = r.bottom + 9; below = true; }
+    arTipEl.style.left = left + "px"; arTipEl.style.top = top + "px";
+    arTipEl.classList.toggle("below", below);
+  }, true);
+  document.addEventListener("mouseout", (e) => { const t = e.target.closest && e.target.closest("[data-tip]"); if (t && t === arTipCur) hide(); }, true);
+  window.addEventListener("scroll", () => { if (arTipCur) { arTipEl.classList.remove("show"); arTipCur = null; } }, true);
+}
+// ── Études sur lesquelles s'appuie le score (vérifiées : source primaire, année, nature) ──
+const AR_STUDIES = [
+  { t: "ANA — Programmatic Media Supply Chain Transparency", y: "2023, actualisé 2024 et T2 2025", k: "Étude sectorielle · Association of National Advertisers",
+    w: "Sur 123 M$ d'achat programmatique réellement audités, les sites « Made For Advertising » captaient 21 % des impressions et 15 % du budget, et seuls ~36 centimes par dollar entrant dans un DSP atteignaient l'internaute. Le benchmark T2 2025 chiffre encore 26,8 Md$ de dépense programmatique gaspillée par an.",
+    u: "https://www.ana.net/content/show/id/pr-2025-08-programmatictrans" },
+  { t: "Pixalate — Global Ad Fraud Benchmarks", y: "T3 2025", k: "Mesure accréditée MRC",
+    w: "Sur 106 milliards d'impressions programmatiques mesurées : 33 % de trafic invalide sur l'inventaire mobile in-app, 21 % sur le web, 19 % sur la TV connectée. C'est la donnée qui justifie de se méfier d'un CTR élevé sur une application.",
+    u: "https://www.pixalate.com/blog/q3-2025-global-ad-fraud-benchmarks-report" },
+  { t: "Blake, Nosko & Tadelis — « Consumer Heterogeneity and Paid Search Effectiveness »", y: "Econometrica, 2015", k: "Académique · revue à comité de lecture",
+    w: "Expérience à grande échelle chez eBay : les annonces sur requêtes de marque n'apportent aucun bénéfice mesurable (le trafic se reporte simplement sur l'organique) et le rendement moyen est négatif sur les utilisateurs déjà fréquents. L'impact causal réel peut être un ordre de grandeur sous ce que l'attribution laisse croire.",
+    u: "https://www.nber.org/papers/w20171" },
+  { t: "Lewis & Rao — « The Unfavorable Economics of Measuring the Returns to Advertising »", y: "Quarterly Journal of Economics, 2015", k: "Académique · revue à comité de lecture",
+    w: "25 expériences terrain sur des millions d'utilisateurs : l'intervalle de confiance médian du ROI publicitaire dépasse 100 points de pourcentage. Les ventes individuelles sont si volatiles face au coût par personne qu'un clic isolé ne prouve à peu près rien.",
+    u: "https://gwern.net/doc/economics/advertising/2015-lewis.pdf" },
+  { t: "Tolomei, Lalmas, Farahat & Haines (Yahoo) — identification des clics accidentels", y: "Information Retrieval Journal, 2018", k: "Académique",
+    w: "Sur des dizaines de millions de clics publicitaires mobiles, ceux dont le temps passé est inférieur à ~2 secondes sont identifiés comme accidentels ; en les excluant de l'apprentissage, le CTR des annonces progresse de 3,9 %. Confirme le mécanisme — les auteurs ne publient volontairement pas la part exacte de clics accidentels.",
+    u: "https://arxiv.org/abs/1804.06912" },
+  { t: "IAS — Media Quality Report, 21ᵉ édition", y: "2026, données 2025", k: "Mesure sectorielle",
+    w: "Sur plus de 300 milliards d'interactions quotidiennes : 67,9 % de visibilité moyenne en display, 79,7 % en vidéo. Près d'une impression display sur trois n'est donc jamais réellement vue — facturée, mais sans portée.",
+    u: "https://integralads.com/apac/insider/ias-media-quality-report-21st-edition/" },
+  { t: "Efron & Morris — estimation de Stein, approche bayésienne empirique", y: "JASA, 1973", k: "Académique · fondateur",
+    w: "Fondement du « shrinkage » : quand on estime plusieurs taux en parallèle, ramener chaque estimation vers la moyenne du groupe bat systématiquement l'estimation brute dès 3 éléments. C'est ce qui empêche un emplacement à 50 impressions d'être jugé sur son taux brut.",
+    u: "https://www.tandfonline.com/doi/abs/10.1080/01621459.1973.10481350" },
+  { t: "Agarwal et al. (Yahoo) — « Estimating Rates of Rare Events at Multiple Resolutions »", y: "KDD, 2007", k: "Académique",
+    w: "Application directe du shrinkage à la publicité en ligne : les taux stables mesurés au niveau agrégé (ici la campagne) servent d'a priori pour estimer les taux au niveau fin (ici chaque emplacement).",
+    u: "https://dl.acm.org/doi/10.1145/1281192.1281198" },
+  { t: "Wilson (1927) · Brown, Cai & DasGupta (2001) · Evan Miller (2009)", y: "1927 / 2001 / 2009", k: "Académique + référence praticienne",
+    w: "L'intervalle de score de Wilson donne une borne basse fiable pour un taux observé sur peu d'événements ; Brown, Cai & DasGupta établissent sa supériorité sur l'intervalle naïf et Evan Miller l'a popularisé pour classer par qualité. C'est la borne utilisée ici avant de qualifier un CTR d'anormal.",
+    u: "https://www.evanmiller.org/how-not-to-sort-by-average-rating.html" },
+];
+function arStudiesHtml() {
+  return `<div class="ar-studies">${AR_STUDIES.map((s) => `<div class="ar-study">
+    <div class="ar-study-t">${escapeHtml(s.t)}</div>
+    <div class="ar-study-m"><span class="ar-study-y">${escapeHtml(s.y)}</span><span class="ar-study-k">${escapeHtml(s.k)}</span></div>
+    <p>${escapeHtml(s.w)}</p>
+    <a href="${escapeHtml(s.u)}" target="_blank" rel="noreferrer">${escapeHtml(s.u.replace(/^https?:\/\//, "").slice(0, 62))}</a>
+  </div>`).join("")}</div>`;
+}
+// ── Fiche détaillée d'un emplacement (au clic sur une des pastilles) ──
+function arPlacementDetailModal(p, campName) {
+  const e = p._eff || {}, d = e.detail || {}, gg = p._goog || {};
+  const eur = (v) => v == null ? "—" : siEurNum(v) + " €";
+  const pcv = (v, n = 2) => v == null ? "—" : (v * 100).toFixed(n).replace(".", ",") + " %";
+  const x = (v, n = 2) => v == null ? "—" : "×" + v.toFixed(n).replace(".", ",");
+  const dP = (r) => r == null ? "—" : ((Math.round((r - 1) * 100) >= 0 ? "+" : "") + Math.round((r - 1) * 100) + " %");
+  const nm = ((p.name || p.url || "").replace(/^Mobile App:\s*/i, "").replace(/\s*\((iTunes App Store|Google Play)\).*$/i, "").trim() || p.url || "—");
+  const kpi = (l, v, sub) => `<div class="ar-dt-kpi"><span class="ar-dt-kl">${l}</span><span class="ar-dt-kv">${v}</span>${sub ? `<span class="ar-dt-ks">${sub}</span>` : ""}</div>`;
+  const wCost = d.useConv ? 0.25 : 0.65, wEng = d.useConv ? 0.15 : 0.35;
+  const bar = (label, val, weight, tip) => `<div class="ar-dt-comp" data-tip="${escapeHtml(tip)}"><span class="ar-dt-cl">${label} <b>${Math.round(weight * 100)} %</b></span><span class="ar-dt-cbar"><span style="width:${Math.max(0, Math.min(100, val))}%"></span></span><span class="ar-dt-cv">${Math.round(val)}</span></div>`;
+  const ov = document.createElement("div"); ov.className = "modal-overlay show";
+  ov.innerHTML = `<div class="modal-panel" style="width:820px;max-width:95vw;">
+    <div class="modal-head"><h2 style="font-size:15px;">${escapeHtml(nm)} <span style="color:var(--dim);font-weight:400;">· ${escapeHtml(p.typeLabel || "")}</span></h2><button class="modal-x" data-x>✕</button></div>
+    <div class="modal-body ar-dt">
+      <div class="ar-dt-verdicts">
+        <div class="ar-dt-vd"><span class="ar-dt-vl">Éval. Google (CPC)</span><span class="ar-eff ${gg.gc || "na"}">${escapeHtml(gg.label || "—")}</span></div>
+        <div class="ar-dt-arrow">${gg.rank >= 2 && (e.tier === "À exclure" || e.tier === "Faible") ? "⚠→" : "→"}</div>
+        <div class="ar-dt-vd"><span class="ar-dt-vl">Efficacité réelle</span><span class="ar-eff ${e.tc || "na"}">${escapeHtml(e.tier || "—")}${e.tc !== "na" && e.score != null ? " " + e.score : ""}</span></div>
+        <div class="ar-dt-vd"><span class="ar-dt-vl">Tendance</span><span class="ar-eff ${e.trc || "na"}">${escapeHtml(e.trend || "—")}</span></div>
+      </div>
+      <div class="ar-dt-kpis">
+        ${kpi("Impressions", pgFmtN(p.impressions))}${kpi("Clics", pgFmtN(p.clicks))}${kpi("CTR", pcv(d.ph))}
+        ${kpi("CPC", eur(d.cpc), "médiane " + eur(d.medCPC))}${kpi("CPM", eur(d.cpm), "médiane " + eur(d.medCPM))}
+        ${d.useV ? kpi("CPM visible", eur(d.vcpm), "médiane " + eur(d.medVCPM)) : ""}
+        ${d.viewability != null ? kpi("Visibilité", pcv(d.viewability, 0), d.viewability < 0.7 ? "⚠ portée surfacturée" : "impressions vues") : ""}
+        ${kpi("Coût", eur(p.cost), pcv(d.budgetShare, 1) + " du budget")}${kpi("Conversions", d.useConv ? String(p.conv || 0) : "non suivi")}
+      </div>
+      <div class="ar-dt-sec">
+        <div class="ar-dt-h">Ce que dit le CPC — et pourquoi c'est insuffisant</div>
+        <p>${escapeHtml(gg.tip || "—")}</p>
+      </div>
+      <div class="ar-dt-sec">
+        <div class="ar-dt-h">Comment l'efficacité réelle est calculée</div>
+        <p>${escapeHtml(e.effTip || "—")}</p>
+        <div class="ar-dt-comps">
+          ${bar("Coût de la portée", d.compCost || 0, wCost, d.useV
+            ? `Compare le coût pour 1000 impressions RÉELLEMENT VUES (${eur(d.cpmHat)}) à la médiane de la campagne (${eur(d.medVCPM)}). Les impressions jamais vues sont exclues du calcul : un emplacement peu visible est donc correctement pénalisé, même si son CPM brut paraît bas.`
+            : `Compare le CPM ajusté (${eur(d.cpmHat)}) à la médiane de la campagne (${eur(d.medCPM)}). Visibilité non mesurée sur cet emplacement.`)}
+          ${bar("Engagement", d.compEng || 0, wEng, d.S > 0 ? "Neutralisé à 50 : le CTR est jugé suspect (clics probablement accidentels), il ne peut donc pas faire monter la note." : `Compare le CTR ajusté (${pcv(d.pHat)}) à la référence campagne (${pcv(d.p0)}).`)}
+          ${d.useConv ? bar("Conversions", d.compConv || 0, 0.60, "Conversions rapportées à l'euro dépensé, ramenées vers la moyenne campagne quand le volume est faible.") : ""}
+        </div>
+        ${d.S > 0 ? `<div class="ar-dt-warn"><b>Pénalité clics accidentels appliquée.</b> Borne basse de Wilson du CTR : ${pcv(d.wLB)} — soit ${x(d.pHat / d.p0)} la référence campagne, alors que le seuil de suspicion sur ce type d'inventaire est ${x(d.T, 1)}. Aucune conversion enregistrée. La note est réduite de ${Math.round(65 * d.S)} %.</div>` : ""}
+      </div>
+      <div class="ar-dt-sec">
+        <div class="ar-dt-h">Tendance — ${escapeHtml(e.trend || "—")}</div>
+        <p>${escapeHtml(e.trendTip || "—")}</p>
+        ${p.ongoing ? `<div class="ar-dt-deltas">
+          <span>CPM <b>${dP(d.dCPM)}</b></span><span>CTR ajusté <b>${dP(d.dCTR)}</b></span><span>Coût <b>${dP(d.dCost)}</b></span>${d.dCPA != null ? `<span>CPA <b>${dP(d.dCPA)}</b></span>` : ""}
+          <span class="ar-dt-win">${d.W || "?"} derniers jours vs ${d.W || "?"} précédents</span></div>` : ""}
+      </div>
+      <div class="ar-dt-sec">
+        <div class="ar-dt-h">Les études sur lesquelles ce calcul s'appuie</div>
+        ${arStudiesHtml()}
+      </div>
+    </div></div>`;
+  document.body.appendChild(ov);
+  const close = () => ov.remove();
+  ov.querySelector("[data-x]").onclick = close;
+  ov.onclick = (ev) => { if (ev.target === ov) close(); };
+  const onKey = (ev) => { if (ev.key === "Escape") { close(); document.removeEventListener("keydown", onKey); } };
+  document.addEventListener("keydown", onKey);
+  mArrive(ov.querySelector(".modal-body"));
+}
+// Explication : pourquoi l'« efficacité réelle » prime sur le CPC (ouvert par la loupe de la modale).
+function arEffExplainerModal() {
+  const ov = document.createElement("div"); ov.className = "modal-overlay show";
+  ov.innerHTML = `<div class="modal-panel" style="width:640px;max-width:94vw;">
+    <div class="modal-head"><h2 style="font-size:15px;">Éval. Google vs Efficacité réelle</h2><button class="modal-x" data-x>✕</button></div>
+    <div class="modal-body ar-effx">
+      <p class="ar-effx-lead">Deux façons de juger un emplacement — et l'une des deux fait gaspiller du budget.</p>
+      <div class="ar-effx-cols">
+        <div class="ar-effx-card">
+          <div class="ar-effx-h"><span class="ar-eff hi" style="pointer-events:none;">Éval. Google</span></div>
+          <p>La lecture par défaut de Google Ads : <b>coût par clic (CPC)</b>. Un clic bon marché est présenté comme « bon ». C'est <b>trompeur</b> : le CPC ne dit rien de ce que vaut le clic.</p>
+        </div>
+        <div class="ar-effx-card">
+          <div class="ar-effx-h"><span class="ar-eff mid" style="pointer-events:none;">Efficacité réelle</span></div>
+          <p>Note calculée à partir de ce que les études récentes montrent de plus fiable : <b>coût de la portée utile</b> (CPM vs médiane campagne), <b>conversions</b>, et <b>détection des clics accidentels</b>.</p>
+        </div>
+      </div>
+      <div class="ar-effx-risk">
+        <div class="ar-effx-rt">Les risques à ne regarder que le CPC</div>
+        <ul>
+          <li><b>Les clics les moins chers sont souvent les pires.</b> Sur l'inventaire mobile in-app, Pixalate mesure <b>33 % de trafic invalide</b> (T3 2025) — le taux le plus élevé de tous les canaux. Des clics à 0,02 € qui ne viennent d'aucun humain intéressé restent affichés comme « bon marché ».</li>
+          <li><b>Un CPC bas peut masquer 0 conversion.</b> Payer 0,02 € pour 3 000 clics qui ne mènent à aucune réservation, c'est 60 € évaporés — que le CPC note pourtant « excellent ». Lewis &amp; Rao ont montré que le rendement publicitaire réel est si bruité que l'intervalle de confiance médian du ROI dépasse 100 points.</li>
+          <li><b>Le clic n'est pas le résultat.</b> Chez eBay, l'expérience de Blake, Nosko &amp; Tadelis (<i>Econometrica</i>) a montré que des annonces très cliquées n'apportaient <b>aucun bénéfice mesurable</b> : le trafic se reportait simplement depuis l'organique.</li>
+          <li><b>Une part du budget part dans de l'inventaire fabriqué pour la pub.</b> L'audit de l'ANA a trouvé <b>21 % des impressions</b> et <b>15 % du budget</b> sur des sites « Made For Advertising », et seulement ~36 ¢ par euro atteignant réellement l'internaute.</li>
+          <li><b>Un CPC élevé n'est pas forcément mauvais.</b> Un emplacement premium plus cher au clic peut convertir bien mieux : couper au seul CPC ferait perdre les meilleurs.</li>
+        </ul>
+      </div>
+      <p class="ar-effx-foot">👉 La colonne <b>Efficacité réelle</b> et la flèche <b>⚠→</b> te signalent les emplacements que le CPC surévalue (clics pas chers mais inutiles) ou sous-évalue (chers mais rentables). <b>Clique n'importe quelle pastille</b> d'une ligne pour la fiche complète et le détail du calcul.</p>
+      <div class="ar-effx-rt" style="color:var(--muted);margin:18px 0 8px;">Les études récentes derrière ce calcul</div>
+      ${arStudiesHtml()}
+      <p class="ar-effx-note">Note d'honnêteté : le chiffre « 50 à 60 % des clics in-app sont accidentels », très répandu dans le milieu, n'est <b>pas vérifiable</b> — la source primaire (GoldSpot, 2012) mesurait 38 % sur bannières statiques, et le « 60 % » provient d'un sondage déclaratif sur 500 personnes. Les travaux rigoureux récents (Yahoo 2018, Verizon Media 2021) confirment le phénomène mais ne publient pas de pourcentage. Ce calcul s'appuie donc sur des taux de trafic invalide <b>mesurés</b> plutôt que sur ce chiffre.</p>
+    </div></div>`;
+  document.body.appendChild(ov);
+  const close = () => ov.remove();
+  ov.querySelector("[data-x]").onclick = close;
+  ov.onclick = (e) => { if (e.target === ov) close(); };
+  const onKey = (e) => { if (e.key === "Escape") { close(); document.removeEventListener("keydown", onKey); } };
+  document.addEventListener("keydown", onKey);
+  mArrive(ov.querySelector(".modal-body"));
+}
+// Confirmation légère (Promise<bool>) — utilisée avant toute écriture réelle sur le compte Google Ads.
+function arConfirm(message, okLabel, danger) {
+  return new Promise((resolve) => {
+    const ov = document.createElement("div"); ov.className = "modal-overlay show";
+    ov.innerHTML = `<div class="modal-panel" style="width:440px;max-width:92vw;">
+      <div class="modal-body" style="padding:22px 22px 18px;">
+        <p style="font-size:13px;line-height:1.55;white-space:pre-line;margin:0 0 18px;">${escapeHtml(message)}</p>
+        <div style="display:flex;gap:8px;justify-content:flex-end;">
+          <button class="btn sec" data-no>Annuler</button>
+          <button class="btn${danger ? " danger" : ""}" data-yes>${escapeHtml(okLabel || "Confirmer")}</button>
+        </div>
+      </div></div>`;
+    document.body.appendChild(ov);
+    const done = (v) => { ov.remove(); resolve(v); };
+    ov.querySelector("[data-no]").onclick = () => done(false);
+    ov.querySelector("[data-yes]").onclick = () => done(true);
+    ov.onclick = (e) => { if (e.target === ov) done(false); };
+  });
+}
+// Message d'information (un seul bouton OK).
+function arNotice(message) {
+  const ov = document.createElement("div"); ov.className = "modal-overlay show";
+  ov.innerHTML = `<div class="modal-panel" style="width:460px;max-width:92vw;">
+    <div class="modal-body" style="padding:22px;">
+      <p style="font-size:13px;line-height:1.6;margin:0 0 16px;white-space:pre-line;">${escapeHtml(message)}</p>
+      <div style="display:flex;justify-content:flex-end;"><button class="btn" data-ok>OK</button></div>
+    </div></div>`;
+  document.body.appendChild(ov);
+  const close = () => ov.remove();
+  ov.querySelector("[data-ok]").onclick = close;
+  ov.onclick = (e) => { if (e.target === ov) close(); };
+}
+// Câble les boutons « Voir les N emplacements » d'un conteneur vers la modale (avec la liste complète).
+function arWirePlcModals(box, plcByCamp) {
+  box.querySelectorAll("[data-plc-modal]").forEach((bt) => bt.onclick = (e) => { e.preventDefault(); e.stopPropagation(); arPlacementsModal(bt.dataset.plcModal, plcByCamp[bt.dataset.plcModal] || []); });
+  // Clic sur un segment/légende de la barre de synthèse d'une carte → ouvre la modale filtrée sur ce palier.
+  box.querySelectorAll(".ar-plcsum[data-camp]").forEach((sum) => {
+    const cn = sum.dataset.camp;
+    sum.querySelectorAll("[data-eff-tier]").forEach((el) => el.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); arPlacementsModal(cn, plcByCamp[cn] || [], el.dataset.effTier); }));
+  });
+}
+// Modale concurrent. Deux modes :
+//  · défaut (cartes Publicité) : infos Maps + estimation SEA du domaine + avis.
+//  · opts.reviewsOnly (vue Notoriété) : en-tête comparaison avec le client + AVIS uniquement.
+function arCompetitorSeaModal(b, comp, opts) {
+  opts = opts || {};
+  const name = comp.name || "Concurrent", domain = (comp.domain || "").trim();
+  const ov = document.createElement("div"); ov.className = "modal-overlay show";
+  // En-tête comparaison concurrent ↔ client (note, avis, classement, distance).
+  const cmpHead = () => {
+    const me = opts.me || {};
+    const total = opts.total || null; // nombre total d'établissements classés
+    const fmtRating = (v) => v != null ? "★ " + String(v).replace(".", ",") : "—";
+    const fmtRank = (v) => v != null ? (total ? v + "/" + total : "#" + v) : "—";
+    const win = (a, bv, hi) => a == null || bv == null ? ["", ""] : (a === bv ? ["", ""] : (hi ? (a > bv ? ["win", ""] : ["", "win"]) : (a < bv ? ["win", ""] : ["", "win"])));
+    const rateW = win(comp.rating, me.rating, true), revW = win(comp.reviews, me.reviews, true), rankW = win(comp.rank, me.rank, false);
+    const row = (label, cv, mv, cls) => `<div class="ar-cmp-row"><span class="ar-cmp-l">${label}</span><span class="ar-cmp-v ${cls ? cls[0] : ""}">${cv}</span><span class="ar-cmp-v ${cls ? cls[1] : ""}">${mv}</span></div>`;
+    return `<div class="ar-cmp">
+        <div class="ar-cmp-row ar-cmp-h"><span class="ar-cmp-l"></span><span class="ar-cmp-v">${escapeHtml(name)}</span><span class="ar-cmp-v">${escapeHtml(me.name || "Ton établissement")}</span></div>
+        ${row("Note Google", fmtRating(comp.rating), fmtRating(me.rating), rateW)}
+        ${row("Avis", comp.reviews != null ? pgFmtN(comp.reviews) : "—", me.reviews != null ? pgFmtN(me.reviews) : "—", revW)}
+        ${row(`Classement${opts.sortLabel ? ` (${opts.sortLabel})` : ""}`, fmtRank(comp.rank), fmtRank(me.rank), rankW)}
+        ${row("Distance", comp.distance != null ? String(comp.distance).replace(".", ",") + " km" : "—", "0 km", null)}
+      </div>`;
+  };
+  const mapsHead = `<div class="ga-cards" style="margin-bottom:14px;">
+      ${pgScore("Note Google", comp.rating != null ? "★ " + String(comp.rating).replace(".", ",") : "—", "", comp.reviews != null ? pgFmtN(comp.reviews) + " avis" : "")}
+      ${pgScore("Catégorie", comp.category || "—")}
+      ${pgScore("Site web", domain || "aucun")}
+    </div>`;
+  const head = opts.reviewsOnly ? cmpHead() : mapsHead;
+  const seaBlock = opts.reviewsOnly ? "" : `<div id="arCompSea"><div class="ga-note">${domain ? "Estimation SEA en cours… (analyse payante)" : "Pas de site web référencé pour ce commerce — impossible d'estimer son SEA."}</div></div>`;
+  ov.innerHTML = `<div class="modal-panel" style="width:640px;max-width:94vw;"><div class="modal-head"><h2 style="font-size:15px;">${escapeHtml(name)}</h2><button class="modal-x" data-x>✕</button></div><div class="modal-body">${head}${seaBlock}<div id="arCompReviews">${comp.placeId ? `<div class="ar-rev-sep"></div><div class="ga-note"><span class="si-spin"></span> Récupération des avis Google (peut prendre ~30 s)…</div>` : `<div class="ar-rev-sep"></div><div class="ga-note">Avis indisponibles (établissement sans identifiant Google Maps).</div>`}</div></div></div>`;
+  document.body.appendChild(ov);
+  const close = () => ov.remove();
+  ov.querySelector("[data-x]").onclick = close;
+  ov.onclick = (e) => { if (e.target === ov) close(); };
+  const onKey = (e) => { if (e.key === "Escape") { close(); document.removeEventListener("keydown", onKey); } };
+  document.addEventListener("keydown", onKey);
+  // Avis Google (10 meilleurs + 10 pires récents) — ne dépend que du place_id, pas du domaine.
+  if (comp.placeId) {
+    const rout = ov.querySelector("#arCompReviews");
+    const revItem = (r) => `<div class="ar-rev"><div class="ar-rev-top"><span class="ar-rev-star ${r.rating >= 4 ? "hi" : (r.rating <= 2 ? "lo" : "mid")}">★ ${String(r.rating).replace(".", ",")}</span><span class="ar-rev-meta">${escapeHtml(r.author || "Anonyme")}${r.timeAgo ? ` · ${escapeHtml(r.timeAgo)}` : ""}</span></div>${r.text ? `<div class="ar-rev-txt">${escapeHtml(r.text)}</div>` : ""}</div>`;
+    const sec = (title, arr) => arr.length ? `<div class="ar-adsaud-t">${title}</div>${arr.map(revItem).join("")}` : "";
+    window.olympus.siPlaceReviews(b.id, comp.placeId).then((rr) => {
+      if (!ov.isConnected || !rout) return;
+      if (!rr?.ok || !rr.data) { rout.innerHTML = `<div class="ar-rev-sep"></div><div class="ga-note">${escapeHtml(rr?.error || "Avis indisponibles")}${rr?.budgetBlocked ? " — règle le budget dans Titan." : ""}</div>`; return; }
+      const { best = [], worst = [], total } = rr.data;
+      rout.innerHTML = `<div class="ar-rev-sep"></div><div class="ga-note" style="margin-bottom:10px;font-size:11px;">Avis Google récents${total ? ` · ${pgFmtN(total)} au total` : ""} — les mieux et les moins bien notés.</div>${sec("😊 Meilleurs avis récents", best)}${worst.length ? `<div style="height:12px;"></div>${sec("😠 Pires avis récents", worst)}` : ""}`;
+      mArrive(rout);
+    });
+  }
+  if (opts.reviewsOnly || !domain) { mArrive(ov.querySelector(".modal-body")); return; } // Notoriété = avis seuls, pas de SEA
+  const out = ov.querySelector("#arCompSea");
+  window.olympus.siCompetitorSea(b.id, domain).then((rr) => {
+    if (!ov.isConnected) return;
+    if (!rr?.ok) { out.innerHTML = `<div class="ga-note">${escapeHtml(rr?.error || "Échec")}${rr?.budgetBlocked ? " — règle le budget dans Titan." : ""}</div>`; return; }
+    const d = rr.data || {}, paid = d.paid || {}, org = d.organic || {}, kws = d.keywords || [];
+    const paidBlock = paid.count ? `<div class="ga-cards" style="margin-bottom:14px;">
+        ${pgScore("Mots-clés payants", pgFmtN(paid.count))}
+        ${pgScore("Budget estimé", "~" + pgFmtN(paid.value || 0) + " €", "", "par mois")}
+        ${pgScore("Clics payants", "~" + pgFmtN(paid.etv || 0), "", "par mois")}
+      </div>` : `<div class="ga-note" style="margin-bottom:12px;"><b>${escapeHtml(name)}</b> n'investit pas (ou très peu) en Google Ads — aucun mot-clé payant estimé.</div>`;
+    const orgBlock = `<div class="ga-note" style="margin-bottom:12px;font-size:11.5px;">Visibilité organique estimée : <b>${org.count != null ? pgFmtN(org.count) : "—"}</b> mots-clés · ${org.etv != null ? "~" + pgFmtN(org.etv) + " visites/mois" : "—"}.</div>`;
+    const g = "grid-template-columns:1fr 70px 56px 66px;";
+    const kwBlock = kws.length ? `<div class="ar-adsaud-t">Ses mots-clés (top par trafic estimé)</div>
+      <div class="ar-adskw-head" style="${g}"><span class="k">Mot-clé</span><span class="c">Volume</span><span class="c">Pos.</span><span class="c">CPC</span></div>
+      ${kws.slice(0, 25).map((k) => `<div class="ar-adskw-row" style="${g}"><span class="k">${escapeHtml(k.keyword)}</span><span class="c">${k.volume != null ? pgFmtN(k.volume) : "—"}</span><span class="c">${k.position != null ? k.position + "ᵉ" : "—"}</span><span class="c">${k.cpc != null ? siEurNum(k.cpc) + " €" : "—"}</span></div>`).join("")}` : "";
+    out.innerHTML = `<div class="ga-note" style="margin-bottom:10px;font-size:11px;">Estimations DataForSEO (crawl du marché) — pas les chiffres officiels du concurrent.</div>${paidBlock}${orgBlock}${kwBlock}`;
+    mArrive(out);
+  });
+}
+function arWireCompModals(box, b, opts) {
+  box.querySelectorAll(".ar-comp-row").forEach((row) => row.onclick = (e) => { e.preventDefault(); e.stopPropagation(); arCompetitorSeaModal(b, { name: row.dataset.compName, domain: row.dataset.compDomain || "", rating: row.dataset.compRating ? +row.dataset.compRating : null, reviews: row.dataset.compReviews ? +row.dataset.compReviews : null, category: row.dataset.compCategory || null, placeId: row.dataset.compPlace || null, rank: row.dataset.compRank ? +row.dataset.compRank : null, distance: row.dataset.compDistance ? +row.dataset.compDistance : null }, opts || {}); });
+}
+// Monte les cartes campagne RICHES (mots-clés/position/marché, audiences, emplacements, géo, concurrents)
+// dans `host`, pour la période arAdsPeriod. Partagé par Veille SEA et Publicité (Google).
+// opts: { activeOnly, connected, mktBtn (élément), msgEl (élément) }.
+function arMountRichCampaigns(host, b, opts) {
+  opts = opts || {};
+  let _adsData = null, _market = null, _competitors = null, _compMeta = null;
+  const renderActive = () => {
+    if (!host || !_adsData) return;
+    const camps = _adsData.camps;
+    let summary = "";
+    if (opts.summary) {
+      const tClicks = camps.reduce((n, c) => n + (c.clicks || 0), 0), tImpr = camps.reduce((n, c) => n + (c.impressions || 0), 0);
+      summary = `<div class="ar-rich-sub">Vue d'ensemble · ${arAdsPeriodLabel()}</div>
+        <div class="ga-cards" style="margin-bottom:22px;">
+          ${pgScore("Campagnes", camps.length, "", arAdsPeriodLabel())}
+          ${pgScore("Dépense", pgFmtN(Math.round(_adsData.totalSpend)) + " €", "", arAdsPeriodLabel())}
+          ${pgScore("Clics", pgFmtN(tClicks))}
+          ${pgScore("Impressions", pgFmtN(tImpr))}
+        </div>
+        <div class="ar-rich-sub">Détail par campagne · ${camps.length}</div>`;
+    }
+    host.innerHTML = summary + camps.map((c) => arAdsCampCard(c, _adsData.kwByCamp[c.name] || [], _adsData.audByCamp[c.name] || [], _adsData.geoByCamp[c.name], _adsData.totalSpend, _market, _competitors, _adsData.plcByCamp[c.name] || [], _compMeta)).join("");
+    arWirePlcModals(host, _adsData.plcByCamp);
+    arWireCompModals(host, b);
+    mArrive(host);
+  };
+  const loadMktComp = async (peek) => {
+    if (!_adsData) return {};
+    const kws = [...new Set(_adsData.camps.flatMap((c) => (_adsData.kwByCamp[c.name] || []).map((k) => k.keyword)))];
+    const [mkt, comp, ...serps] = await Promise.all([
+      kws.length ? window.olympus.siKwMarket(b.id, kws, peek) : Promise.resolve(null),
+      window.olympus.siLocalCompetitors(b.id, peek),
+      ...kws.map((kw) => window.olympus.siSerp(b.id, kw, peek)),
+    ]);
+    let changed = false;
+    if (mkt?.ok && mkt.data) { _market = {}; for (const it of (mkt.data.items || [])) _market[(it.keyword || "").toLowerCase()] = it; changed = true; }
+    kws.forEach((kw, i) => { const s = serps[i]; if (s?.ok && s.data) { const key = (kw || "").toLowerCase(); if (!_market[key]) _market[key] = {}; _market[key].position = s.data.myPosition ?? null; changed = true; } });
+    if (comp?.ok && comp.data) { _competitors = comp.data.competitors || []; _compMeta = { keyword: comp.data.keyword, sector: comp.data.sector, zone: comp.data.zone, auto: comp.data.auto, me: comp.data.me }; changed = true; }
+    if (changed) renderActive();
+    return { mkt, comp };
+  };
+  (async () => {
+    const [campsR, kwsR, audsR, geoR, plcR] = await Promise.all([window.olympus.argosAdsCampaigns(b.id, arAdsPeriod), window.olympus.argosAdsKeywords(b.id, arAdsPeriod), window.olympus.argosAdsAudiences(b.id, arAdsPeriod), window.olympus.argosAdsGeo(b.id), window.olympus.argosAdsPlacements(b.id, arAdsPeriod)]);
+    if (!host) return;
+    if (campsR?.warning) { host.innerHTML = `<div class="ga-note">${escapeHtml(campsR.warning)}</div>`; return; }
+    let camps = campsR?.data?.campaigns || [];
+    if (opts.activeOnly) camps = camps.filter((c) => c.current);
+    if (!camps.length) { host.innerHTML = `<div class="ga-note">Aucune campagne Google Ads ${opts.activeOnly ? "active " : ""}pour ${escapeHtml(b.name)} sur ${arAdsPeriodLabel()}.</div>`; return; }
+    const geoByCamp = {}; for (const gc2 of (geoR?.data?.campaigns || [])) geoByCamp[gc2.campaign] = gc2;
+    const kwByCamp = {}, audByCamp = {}, plcByCamp = {};
+    for (const k of (kwsR?.data?.keywords || [])) (kwByCamp[k.campaign] = kwByCamp[k.campaign] || []).push(k);
+    for (const a of (audsR?.data?.audiences || [])) if (a.name) (audByCamp[a.campaign] = audByCamp[a.campaign] || []).push(a);
+    for (const p of (plcR?.data?.placements || [])) (plcByCamp[p.campaign] = plcByCamp[p.campaign] || []).push(p);
+    const totalSpend = camps.reduce((n, c) => n + (c.spend || 0), 0);
+    _adsData = { camps, kwByCamp, audByCamp, geoByCamp, plcByCamp, totalSpend };
+    renderActive();
+    if (opts.connected) loadMktComp(true);
+  })();
+  if (opts.mktBtn) opts.mktBtn.onclick = async (e) => {
+    const bt = e.currentTarget; bt.disabled = true; const old = bt.innerHTML; bt.textContent = "Analyse marché & concurrents…";
+    const r = await loadMktComp(false);
+    bt.disabled = false; bt.innerHTML = old;
+    const m = opts.msgEl;
+    if (m) {
+      const blocked = (r && r.comp && r.comp.budgetBlocked) || (r && r.mkt && r.mkt.budgetBlocked);
+      const noSector = r && r.comp && r.comp.noSector;
+      if (noSector) { m.className = "msg err"; m.innerHTML = `Définis le <b>secteur + zone</b> du client dans <b data-goto-settings2>Réglages</b> pour les concurrents locaux.`; const g = m.querySelector("[data-goto-settings2]"); if (g) g.onclick = () => goTo("settings"); }
+      else if (blocked) { m.className = "msg err"; m.textContent = "Budget atteint — règle-le dans Titan."; }
+      else { m.className = "msg ok"; m.textContent = "Marché & concurrents locaux ajoutés aux campagnes."; }
+    }
+  };
+}
+// Période choisie pour les données Ads : {days:N} (N derniers jours) OU {from,to} (plage explicite).
+let arAdsPeriod = { days: 90 };
+function arAdsPeriodLabel() { return (arAdsPeriod.from && arAdsPeriod.to) ? `du ${arAdsPeriod.from} au ${arAdsPeriod.to}` : `${arAdsPeriod.days || 90} derniers jours`; }
+function arAdsPeriodControl() {
+  const isDays = !(arAdsPeriod.from && arAdsPeriod.to);
+  const presets = [[7, "7 j"], [30, "30 j"], [90, "90 j"]];
+  return `<div class="ar-adsperiod">
+      <div class="ga-period">${presets.map(([n, l]) => `<button class="ga-per${isDays && (arAdsPeriod.days || 90) === n ? " on" : ""}" data-adsdays="${n}">${l}</button>`).join("")}</div>
+      <span class="ar-adsperiod-r"><input type="date" class="auth-input" id="arAdsFrom" value="${arAdsPeriod.from || ""}"><span>→</span><input type="date" class="auth-input" id="arAdsTo" value="${arAdsPeriod.to || ""}"><button class="btn sec" id="arAdsRangeApply">OK</button></span>
+    </div>`;
+}
+function arWireAdsPeriod(box) {
+  box.querySelectorAll("[data-adsdays]").forEach((bt) => bt.onclick = () => { arAdsPeriod = { days: +bt.dataset.adsdays }; arRenderView(); });
+  const ap = box.querySelector("#arAdsRangeApply");
+  if (ap) ap.onclick = () => { const f = (box.querySelector("#arAdsFrom") || {}).value, t = (box.querySelector("#arAdsTo") || {}).value; if (f && t) { arAdsPeriod = { from: f, to: t }; arRenderView(); } };
+}
+// Courbe multi-lignes « intérêt dans le temps » (une ligne par mot-clé, volume mensuel).
+const AR_MONTH_FR = ["", "janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."];
+function arTrendChart(series) {
+  const clean = (series || []).filter((s) => (s.monthly || []).length >= 2);
+  if (!clean.length) return `<div class="ga-chart-empty">Pas encore de données de tendance.</div>`;
+  const maxV = Math.max(1, ...clean.flatMap((s) => s.monthly.map((p) => p.v)));
+  const w = 1000, h = 230, padX = 46, padT = 14, padB = 30;
+  const X = (i, n) => padX + (i / Math.max(1, n - 1)) * (w - padX - 12);
+  const Y = (v) => padT + (1 - v / maxV) * (h - padT - padB);
+  const grid = [0, 0.5, 1].map((f) => { const y = padT + f * (h - padT - padB); const v = Math.round(maxV * (1 - f)); return `<line x1="${padX}" y1="${y.toFixed(1)}" x2="${w - 12}" y2="${y.toFixed(1)}" class="ga-grid"/><text x="${padX - 6}" y="${(y + 3).toFixed(1)}" class="ga-axis" text-anchor="end">${pgFmtN(v)}</text>`; }).join("");
+  const lines = clean.map((s, si) => { const c = PG_PALETTE[si % PG_PALETTE.length]; const n = s.monthly.length; const dd = s.monthly.map((p, i) => `${i ? "L" : "M"}${X(i, n).toFixed(1)} ${Y(p.v).toFixed(1)}`).join(" "); return `<path d="${dd}" fill="none" stroke="${c}" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>`; }).join("");
+  const ref = clean.reduce((a, s) => s.monthly.length > a.length ? s.monthly : a, clean[0].monthly);
+  const lbl = (p) => p ? AR_MONTH_FR[p.m] + " " + String(p.y).slice(2) : "";
+  const legend = `<div class="ar-trend-leg">${clean.map((s, si) => `<span class="ar-trend-lg"><span class="dot" style="background:${PG_PALETTE[si % PG_PALETTE.length]}"></span>${escapeHtml(s.keyword)}</span>`).join("")}</div>`;
+  return `<svg viewBox="0 0 ${w} ${h}" class="ga-chart" preserveAspectRatio="xMidYMid meet">${grid}${lines}<text x="${padX}" y="${h - 6}" class="ga-axis">${lbl(ref[0])}</text><text x="${w - 12}" y="${h - 6}" class="ga-axis" text-anchor="end">${lbl(ref[ref.length - 1])}</text></svg>${legend}`;
+}
+// ── Tendance : « Google Trends maison » (Keyword Planner, gratuit) + test de mot-clé (déplacé de Publicité) ──
+async function arViewTendance(box, b, tok) {
+  const st = await window.olympus.siStatus().catch(() => null); // pour le composant « Tester un mot-clé » (SI)
+  if (tok !== undefined && !arRenderAlive(tok)) return;
+  const connected = !!(st?.ok && st.connected);
+  const priceOf = (id) => (st?.pricing?.find((p) => p.id === id) || {}).eur;
+  let html = arHead("Tendance", "intérêt de recherche dans le temps & mots-clés associés", "", false);
+  html += `<div class="ga-panel"><div class="ga-panel-h">Tendance de recherche<span class="ga-panel-x"><span class="pg-pill" style="font-size:11px;">gratuit · Google</span></span></div>
+     <p class="desc" style="margin-bottom:12px;">Volume de recherche mensuel sur ~4 ans — l'<b>évolution dans le temps</b>, la <b>saisonnalité</b>, la <b>concurrence</b>, le <b>CPC</b> et les <b>mots-clés associés / en hausse</b>. Compare plusieurs termes en les séparant par une <b>virgule</b>. Source : Google Ads Keyword Planner.</p>
+     <div class="ar-seakw-add">
+       <input class="auth-input" id="arTrendInput" placeholder="ex. restaurant, brunch, terrasse" style="flex:1;">
+       <input class="auth-input" id="arTrendLoc" placeholder="Lieu (ex. Monaco)" value="${escapeHtml(b.zone || "")}" style="width:150px;">
+       <button class="btn" id="arTrendBtn">Voir la tendance</button>
+     </div>
+     <div class="msg" id="arTrendMsg" style="margin:8px 0 0;"></div>
+     <div id="arTrendResult" style="margin-top:14px;"><div class="ga-note" style="opacity:.6;">Entre un ou plusieurs mots-clés ci-dessus pour voir leur tendance.</div></div></div>`;
+  const testerInner = connected ? `<div id="arTendKwTester"><div class="ga-note" style="opacity:.6;">Chargement…</div></div>`
+    : `<div class="ga-note">Connecte un fournisseur de données dans <b data-goconn>Titan → Search Intelligence</b> pour tester un mot-clé (ta position + concurrents).</div>`;
+  html += pgPanel("Tester un mot-clé — ta position & tes concurrents", testerInner);
+  if (tok !== undefined && !arRenderAlive(tok)) return;
+  box.innerHTML = html;
+  const gc = box.querySelector("[data-goconn]"); if (gc) gc.onclick = () => goTo("titan");
+  if (connected) arMountKwTester(box.querySelector("#arTendKwTester"), b, priceOf);
+  const out = box.querySelector("#arTrendResult"), msg = box.querySelector("#arTrendMsg");
+  const compLbl = (x) => ({ LOW: "faible", MEDIUM: "moyenne", HIGH: "forte" }[x] || (x || "").toLowerCase());
+  const delta = (p) => p == null ? "" : `<span class="ar-trend-delta ${p > 5 ? "up" : p < -5 ? "down" : "flat"}">${p > 0 ? "↗ +" : p < 0 ? "↘ " : "→ "}${p} %</span>`;
+  const renderTrends = (d) => {
+    if (!d) { out.innerHTML = ""; return; }
+    if (d.error) {
+      const basic = /DEVELOPER_TOKEN_NOT_APPROVED|explorer access|not allowed for use|PERMISSION_DENIED/i.test(d.error);
+      out.innerHTML = `<div class="ga-note">${basic ? "📈 <b>Keyword Planner nécessite l'accès « Basic »</b> du token Google Ads (il est en niveau Test/Explorer). Fais la demande dans l'<b>API Center Google Ads</b> (gratuit, ~1-2 j) — cette vue s'activera automatiquement dès l'approbation." : escapeHtml(d.error)}</div>`;
+      return;
+    }
+    const kws = d.keywords || [];
+    if (!kws.length) { out.innerHTML = `<div class="ga-note">Aucune donnée de tendance pour ces termes.</div>`; return; }
+    const chart = pgPanel("Intérêt dans le temps" + (d.location ? " · " + escapeHtml(d.location) : ""), arTrendChart(kws));
+    const kpis = kws.map((k) => `<div class="ar-trend-kpi"><div class="ar-trend-kpi-t">« ${escapeHtml(k.keyword)} »</div><div class="ga-cards">
+        ${pgScore("Volume moyen", pgFmtN(k.avgMonthly) + "/mois", "", "tendance " + (delta(k.trendPct) || "—"))}
+        ${pgScore("Concurrence", compLbl(k.competition) || "—", "", k.competitionIndex != null ? k.competitionIndex + "/100" : "")}
+        ${pgScore("CPC (haut de page)", k.cpcLow != null ? siEurNum(k.cpcLow) + "–" + siEurNum(k.cpcHigh) + " €" : "—")}
+        ${pgScore("Pic saisonnier", k.peak ? AR_MONTH_FR[k.peak.m] + " " + k.peak.y : "—", "", k.peak ? pgFmtN(k.peak.v) + " rech." : "")}
+      </div></div>`).join("");
+    const ideas = d.ideas || [];
+    const maxIdea = Math.max(1, ...ideas.map((i) => i.avgMonthly || 0));
+    const ideasBlock = ideas.length ? pgPanel("Mots-clés associés & en hausse", `<div class="ga-note" style="margin:0 0 8px;font-size:11px;">Ce que les gens cherchent autour de tes termes (volume mensuel · évolution récente).</div><div class="ga-tbl">${ideas.map((i) => `<div class="ga-tr"><span class="ga-tl">${escapeHtml(i.keyword)}${i.competition ? ` <span style="color:var(--dim);font-size:10px;">conc. ${compLbl(i.competition)}</span>` : ""}</span><span class="ga-tbar"><span class="ga-tbar-f" style="width:${Math.round((i.avgMonthly || 0) / maxIdea * 100)}%;background:#7fb2e8"></span></span><span class="ga-tv">${pgFmtN(i.avgMonthly)}<span class="ga-tpct">/mois</span> ${delta(i.trendPct)}</span></div>`).join("")}</div>`) : "";
+    out.innerHTML = chart + kpis + ideasBlock;
+    mArrive(out);
+  };
+  const load = async (force) => {
+    const kws = (box.querySelector("#arTrendInput").value || "").split(",").map((s) => s.trim()).filter(Boolean).slice(0, 5);
+    const loc = box.querySelector("#arTrendLoc").value || "";
+    if (!kws.length) { msg.className = "msg err"; msg.textContent = "Entre au moins un mot-clé."; return; }
+    msg.className = "msg"; msg.textContent = "";
+    const rr = await window.olympus.argosTrends(b.id, kws, loc, force);
+    if (rr && rr.ok) renderTrends(rr.data);
+    else out.innerHTML = `<div class="ga-note">${escapeHtml((rr && rr.error) || "Échec")}</div>`;
+    return rr;
+  };
+  box.querySelector("#arTrendBtn").onclick = async (e) => { const bt = e.currentTarget; bt.disabled = true; const old = bt.innerHTML; bt.textContent = "Analyse…"; await load(false); bt.disabled = false; bt.innerHTML = old; };
+  box.querySelector("#arTrendInput").onkeydown = (e) => { if (e.key === "Enter") box.querySelector("#arTrendBtn").click(); };
+}
+// ── Notoriété : réputation locale (Google Maps) du client vs concurrents + estimation SEA au clic ──
+async function arViewNotoriete(box, b, tok) {
+  const st = await window.olympus.siStatus().catch(() => null);
+  if (tok !== undefined && !arRenderAlive(tok)) return;
+  const connected = !!(st?.ok && st.connected);
+  const priceOf = (id) => (st?.pricing?.find((p) => p.id === id) || {}).eur;
+  const seaCost = priceOf("serp");
+  const whoisCost = priceOf("whois"); // par lot de 8 domaines
+  const refreshEst = (seaCost || 0) + 8 * (whoisCost || 0); // borne haute d'un refresh complet (concurrents + ancienneté)
+  const sandboxBadge = !connected ? "" : (st.sandbox ? `<span class="pg-pill" style="font-size:11px;">🧪 Sandbox (gratuit)</span>` : `<span class="pg-pill" style="font-size:11px;">budget ${siEur(st.budget.spent)} / ${siEur(st.budget.hard)}</span>`);
+  let html = arHead("Notoriété", "ta réputation locale vs tes concurrents (Google Maps)", "", false);
+  if (!connected) {
+    box.innerHTML = html + pgPanel("Notoriété", `<div class="ga-note">Connecte un fournisseur de données dans <b data-goconn>Titan → Search Intelligence</b> pour voir ta notoriété face à tes concurrents locaux.</div>`);
+    const g = box.querySelector("[data-goconn]"); if (g) g.onclick = () => goTo("titan"); return;
+  }
+  html += `<div class="ga-panel flat"><div class="ga-panel-h">Concurrents locaux${sandboxBadge ? `<span class="ga-panel-x">${sandboxBadge}</span>` : ""}</div>
+     <p class="desc" style="margin-bottom:12px;">Ta <b>réputation Google Maps</b> (note + avis) face à tes <b>vrais concurrents locaux</b> — secteur + zone déduits automatiquement des campagnes. L'<b>ancienneté</b> au bout de la barre = âge du nom de domaine (<b>NC</b> si pas de site). Clique une ligne pour l'<b>estimation SEA</b> d'un concurrent.</p>
+     <div style="margin-bottom:12px;"><button class="btn sec" id="arNotoBtn">Analyser les concurrents locaux${refreshEst ? ` <span class="si-cost">(≈ ${siEur(refreshEst)})</span>` : ""}</button><span class="msg" id="arNotoMsg" style="margin-left:8px;"></span></div>
+     <div id="arNotoResult"><div class="ga-note" style="opacity:.6;">Chargement…</div></div></div>`;
+  if (tok !== undefined && !arRenderAlive(tok)) return;
+  box.innerHTML = html;
+  // Tri des 100 concurrents les plus proches : distance (proche→loin), avis (+→−), note (mieux→moins bien).
+  let notoData = null, notoSort = "distance";
+  const NOTO_SORTS = [["distance", "Distance"], ["reviews", "Avis"], ["rating", "Note"]];
+  const sortComps = (comps, mode) => {
+    const a = comps.slice();
+    if (mode === "distance") a.sort((x, y) => (x.distance == null) - (y.distance == null) || (x.distance || 0) - (y.distance || 0));
+    else if (mode === "reviews") a.sort((x, y) => (y.reviews || 0) - (x.reviews || 0));
+    else if (mode === "rating") a.sort((x, y) => (y.rating || 0) - (x.rating || 0) || (y.reviews || 0) - (x.reviews || 0));
+    return a;
+  };
+  // Le filtre trie le classement : il est rendu DANS la section classement (via arLocalCompetitorsHTML).
+  const filterHtml = () => {
+    const hasDist = notoData && (notoData.competitors || []).some((c) => c.distance != null);
+    return `<div class="ar-seg" role="tablist">${NOTO_SORTS.map(([k, l]) => `<button class="ar-seg-b${notoSort === k ? " on" : ""}${k === "distance" && !hasDist ? " off" : ""}" data-notosort="${k}"${k === "distance" && !hasDist ? " disabled title=\"Distance indisponible (position du client introuvable sur Maps)\"" : ""}><span class="ar-seg-dot" style="background:${AR_SORT_COLORS[k]}"></span>${l}</button>`).join("")}</div>`;
+  };
+  const render = () => {
+    if (tok !== undefined && !arRenderAlive(tok)) return; // ignore les renders périmés (remontage de la vue)
+    const out = box.querySelector("#arNotoResult"); if (!out || !notoData) return;
+    const sorted = sortComps(notoData.competitors || [], notoSort);
+    out.innerHTML = arLocalCompetitorsHTML(sorted, { keyword: notoData.keyword, auto: notoData.auto, me: notoData.me }, 100, notoSort, true, filterHtml()) || `<div class="ga-note">Aucun concurrent local trouvé.</div>`;
+    out.querySelectorAll("[data-notosort]").forEach((bt) => bt.onclick = () => { if (notoSort === bt.dataset.notosort) return; notoSort = bt.dataset.notosort; render(); });
+    // Modale = AVIS uniquement + en-tête comparaison avec le client (note/avis/classement/distance).
+    const others = (notoData.competitors || []).filter((c) => !c.mine);
+    // Stats du client pour la comparaison : l'entrée « mine » (note/avis/distance) sinon le lookup me.
+    const me = (notoData.competitors || []).find((c) => c.mine) || notoData.me || {};
+    const meRank = (me.rating != null || me.reviews != null || me.distance != null) ? others.filter((o) => sortLt(o, me, notoSort)).length + 1 : null;
+    arWireCompModals(out, b, { reviewsOnly: true, sortLabel: { distance: "distance", reviews: "avis", rating: "note" }[notoSort], total: others.length + 1, me: { name: (notoData.me && notoData.me.title) || me.title || b.name, rating: me.rating ?? null, reviews: me.reviews ?? null, rank: meRank } });
+    mArrive(out);
+  };
+  // Ancienneté = âge du domaine (whois). undefined = pas chargé, null = NC, nombre = mois.
+  const applyAges = (agesMap, meDomain, complete) => {
+    const has = (d) => d && Object.prototype.hasOwnProperty.call(agesMap, d);
+    for (const c of (notoData.competitors || [])) c.ageMonths = has(c.domain) ? agesMap[c.domain] : (complete ? null : undefined);
+    if (notoData.me) notoData.me.ageMonths = has(meDomain) ? agesMap[meDomain] : (complete ? null : undefined);
+  };
+  const loadAges = async (peek) => {
+    if (!notoData) return null;
+    const domains = [...new Set((notoData.competitors || []).map((c) => c.domain).filter(Boolean))];
+    const ar = await window.olympus.siLocalAges(b.id, domains, peek);
+    if (!ar?.ok) return ar;
+    if (peek && ar.needFetch) return ar; // pas tout en cache : on laisse vierge, le bouton fera le fetch payant
+    applyAges(ar.ages || {}, ar.meDomain, !peek);
+    render();
+    return ar;
+  };
+  const loadNoto = async (peek) => {
+    const rr = await window.olympus.siLocalCompetitors(b.id, peek, 100); // 100 concurrents les plus proches
+    const out = box.querySelector("#arNotoResult"); if (!out) return rr;
+    if (rr?.ok && rr.data) { notoData = rr.data; if (!(notoData.competitors || []).some((c) => c.distance != null)) notoSort = "reviews"; render(); await loadAges(peek); return rr; }
+    if (peek) { out.innerHTML = `<div class="ga-note">Clique <b>« Analyser les concurrents locaux »</b> pour afficher les <b>100 concurrents les plus proches</b> et les trier par distance, avis ou note.</div>`; return rr; }
+    if (rr && rr.noSector) { out.innerHTML = `<div class="ga-note">Impossible de déduire le secteur/zone — renseigne-les dans <b data-goto-settings>Réglages</b> ou lance une campagne géociblée.</div>`; const g = out.querySelector("[data-goto-settings]"); if (g) g.onclick = () => goTo("settings"); }
+    else { out.innerHTML = `<div class="ga-note">${escapeHtml(rr?.error || "Échec")}${rr?.budgetBlocked ? " — règle le budget dans Titan." : ""}</div>`; }
+    return rr;
+  };
+  box.querySelector("#arNotoBtn").onclick = async (e) => { const bt = e.currentTarget; bt.disabled = true; const old = bt.innerHTML; bt.textContent = "Analyse…"; await loadNoto(false); bt.disabled = false; bt.innerHTML = old; };
+  loadNoto(true); // cache gratuit à l'ouverture
+}
+// ── Mots-clés Google Ads du client (réel), par campagne — vue à bascule Actives / Passées ──
+let arAdsKwScope = "current";
+async function arViewAdsKeywords(box, b, tok) {
+  const isCurrent = arAdsKwScope === "current";
+  const toggle = `<div class="ga-period">${[["current", "Actives"], ["past", "Passées"]].map(([s, l]) => `<button class="ga-per${arAdsKwScope === s ? " on" : ""}" data-adsscope="${s}">${l}</button>`).join("")}</div>`;
+  const html = arHead("Mots-clés Google Ads", "tes campagnes, leurs mots-clés, audiences et zones géographiques — " + arAdsPeriodLabel(), toggle + arAdsPeriodControl(), false);
+  const wire = () => { box.querySelectorAll("[data-adsscope]").forEach((bt) => bt.onclick = () => { if (arAdsKwScope === bt.dataset.adsscope) return; arAdsKwScope = bt.dataset.adsscope; arRenderView(); }); arWireAdsPeriod(box); };
+  if (tok !== undefined && !arRenderAlive(tok)) return;
+  const hasAds = (b.assets || []).some((a) => a.network === "google_ads");
+  if (!hasAds) {
+    box.innerHTML = html + pgPanel("Compte Google Ads non associé", `<div class="ga-note">Associe le compte Google Ads de <b>${escapeHtml(b.name)}</b> dans <b data-goconn>Réglages → Argos — Clients</b> (glisse le chip du compte sur la marque) pour voir ses campagnes et mots-clés.</div>`);
+    wire(); const g = box.querySelector("[data-goconn]"); if (g) g.onclick = () => goTo("settings"); return;
+  }
+  box.innerHTML = html + `<div class="ga-note" style="opacity:.6;">Chargement des campagnes Google Ads…</div>`; wire();
+  const [campsR, kwsR, audsR, geoR, plcR] = await Promise.all([window.olympus.argosAdsCampaigns(b.id, arAdsPeriod), window.olympus.argosAdsKeywords(b.id, arAdsPeriod), window.olympus.argosAdsAudiences(b.id, arAdsPeriod), window.olympus.argosAdsGeo(b.id), window.olympus.argosAdsPlacements(b.id, arAdsPeriod)]);
+  if (tok !== undefined && !arRenderAlive(tok)) return;
+  const allCamps = campsR?.data?.campaigns || [];
+  const camps = allCamps.filter((c) => isCurrent ? c.current : !c.current);
+  const kws = (kwsR?.data?.keywords || []).filter((k) => isCurrent ? k.current : !k.current);
+  const auds = (audsR?.data?.audiences || []).filter((a) => isCurrent ? a.current : !a.current);
+  const geoByCamp = {}; for (const gc of (geoR?.data?.campaigns || [])) geoByCamp[gc.campaign] = gc;
+  const isDemo = campsR?.data?.demo === true || kwsR?.data?.demo === true;
+  const warn = campsR?.warning || kwsR?.warning;
+  if (isDemo || warn) {
+    box.innerHTML = html + pgPanel("Données Google Ads indisponibles", `<div class="ga-note">${warn ? escapeHtml(warn) : "Le compte est associé mais aucune donnée réelle n'est encore remontée."}</div>`);
+    wire(); return;
+  }
+  if (!camps.length) {
+    const note = isCurrent
+      ? `Aucune campagne active sur <b>${arAdsPeriodLabel()}</b> pour <b>${escapeHtml(b.name)}</b>.`
+      : (allCamps.length ? `Toutes les campagnes de <b>${escapeHtml(b.name)}</b> sont actives — aucune en pause ou arrêtée sur ${arAdsPeriodLabel()}. 👍` : `Aucune campagne sur ${arAdsPeriodLabel()}.`);
+    box.innerHTML = html + pgPanel(isCurrent ? "Campagnes actives" : "Campagnes passées", `<div class="ga-note">${note}</div>`);
+    wire(); return;
+  }
+  const matchLbl = (m) => ({ EXACT: "exact", PHRASE: "expression", BROAD: "large" }[m] || (m || "").toLowerCase());
+  const kwByCamp = {}; for (const k of kws) (kwByCamp[k.campaign] = kwByCamp[k.campaign] || []).push(k);
+  const audByCamp = {}; for (const a of auds) (audByCamp[a.campaign] = audByCamp[a.campaign] || []).push(a);
+  const plcByCamp = {}; for (const p of (plcR?.data?.placements || [])) if (isCurrent ? p.current : !p.current) (plcByCamp[p.campaign] = plcByCamp[p.campaign] || []).push(p);
+  const totalKw = kws.length, totalSpend = camps.reduce((n, c) => n + (c.spend || 0), 0), totalClicks = camps.reduce((n, c) => n + (c.clicks || 0), 0);
+  let out = html + `<div class="ga-cards" style="margin-bottom:16px;">
+    ${pgScore("Campagnes", camps.length, "", isCurrent ? "en cours" : "en pause / arrêtées")}
+    ${pgScore("Mots-clés", totalKw, "", "sur ces campagnes")}
+    ${pgScore("Clics", pgFmtN(totalClicks), "", arAdsPeriodLabel())}
+    ${pgScore("Dépense", pgFmtN(Math.round(totalSpend)) + " €", "", arAdsPeriodLabel())}
+  </div>`;
+  for (const c of camps) {
+    out += arAdsCampCard(c, kwByCamp[c.name] || [], (audByCamp[c.name] || []).filter((a) => a.name), geoByCamp[c.name], totalSpend, undefined, undefined, plcByCamp[c.name] || []);
+  }
+  box.innerHTML = out;
+  wire();
+  arWirePlcModals(box, plcByCamp);
+  mArrive(box);
+}
+function siEurNum(v) { return (typeof v === "number" ? v : +v || 0).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+// « Tester un mot-clé » : monitor manuel (position + concurrents + popularité/concurrence marché par
+// lieu). Rendu dans `host`. Nécessite DataForSEO connecté (le caller vérifie). Utilisé par Publicité (Google).
+function arMountKwTester(host, b, priceOf) {
+  if (!host) return;
+  const kwCost = priceOf("serp");
+  host.innerHTML = `<p class="desc" style="margin-bottom:12px;">Ajoute un mot-clé qui t'intéresse pour voir <b>ta position</b>, <b>qui te devance</b>, sa <b>popularité</b> (volume de recherche) et la <b>concurrence</b> — de quoi décider s'il vaut le coup. Choisis le <b>lieu</b> pour la popularité. Enregistré et <b>rafraîchi tous les 7 jours</b>.</p>
+     <div class="ar-seakw-add">
+       <input class="auth-input" id="arSeaKwInput" placeholder="ex. restaurant monaco" style="flex:1;">
+       <input class="auth-input" id="arSeaKwLoc" placeholder="Lieu (ex. Monaco)" value="${escapeHtml(b.zone || "")}" style="width:150px;">
+       <button class="btn" id="arSeaKwAddBtn">Ajouter${kwCost != null ? ` <span class="si-cost">(${siEur(kwCost)})</span>` : ""}</button>
+       <button class="btn sec" id="arSeaKwRefreshAll" title="Rafraîchir tous les mots-clés maintenant">↻ Tout rafraîchir</button>
+     </div>
+     <div style="margin-top:6px;"><button class="btn sec" id="arSeaKwMktBtn" style="font-size:11px;padding:4px 10px;">Charger popularité & concurrence pour le lieu</button></div>
+     <div class="msg" id="arSeaKwMsg" style="margin:8px 0 0;"></div>
+     <div id="arSeaKwList" style="margin-top:14px;"><div class="ga-note" style="opacity:.6;">Chargement…</div></div>`;
+  const msg = host.querySelector("#arSeaKwMsg");
+  const posBadge = (d) => {
+    if (!d) return `<span class="ar-seakw-pos none">à analyser</span>`;
+    if (d.myPosition != null) return `<span class="ar-seakw-pos top">${d.myPosition}ᵉ organique</span>`;
+    return `<span class="ar-seakw-pos out">hors top 20</span>`;
+  };
+  const ageTxt = (at) => { if (!at) return ""; const days = Math.floor((Date.now() - at) / 86400000); const stale = days >= 7; return `<span class="ar-seakw-age${stale ? " stale" : ""}">${days <= 0 ? "aujourd'hui" : "il y a " + days + " j"}${stale ? " · à rafraîchir" : ""}</span>`; };
+  const compLbl2 = (x) => ({ LOW: "faible", MEDIUM: "moyenne", HIGH: "forte" }[x] || (x || "").toLowerCase());
+  let _kwMarket = {};
+  const mktBadge = (kw) => { const m = _kwMarket[(kw || "").toLowerCase()]; if (!m) return ""; return `<span class="ar-seakw-mkt">${m.volume != null ? pgFmtN(m.volume) + " rech./mois" : ""}${m.competition ? " · conc. " + compLbl2(m.competition) : ""}${m.cpc != null ? " · CPC marché " + siEurNum(m.cpc) + " €" : ""}</span>`; };
+  const renderList = (keywords) => {
+    const out = host.querySelector("#arSeaKwList"); if (!out) return;
+    if (!keywords.length) { out.innerHTML = `<div class="ga-note">Aucun mot-clé encore. Ajoute-en un ci-dessus (ex. « restaurant monaco ») pour suivre ta position et les annonces concurrentes.</div>`; return; }
+    out.innerHTML = keywords.map((k) => {
+      const d = k.data; const ads = (d && d.ads) || []; const org = (d && d.organic) || [];
+      return `<div class="ar-seakw" data-kw="${escapeHtml(k.keyword)}">
+        <div class="ar-seakw-h">
+          <span class="kw">${escapeHtml(k.keyword)}</span>
+          ${posBadge(d)}
+          ${mktBadge(k.keyword)}
+          ${d && d.adCount > 0 ? `<span class="ar-seakw-ads">${d.iAdvertise ? "✓ tu annonces · " : ""}${d.adCount} annonce${d.adCount > 1 ? "s" : ""}</span>` : ""}
+          ${ageTxt(k.at)}
+          <span class="ar-seakw-actions">
+            <button class="ar-seakw-btn" data-refresh title="Rafraîchir ce mot-clé">↻</button>
+            <button class="ar-seakw-btn del" data-del title="Supprimer">✕</button>
+          </span>
+        </div>
+        ${d ? `<div class="ar-seakw-body">
+          ${org.length ? `<div class="ar-seakw-sub">Qui se classe devant ${escapeHtml(b.name)}</div>
+            <div class="ga-tbl">${org.slice(0, 6).map((o) => { const mine = d.myPosition != null && o.position === d.myPosition; return `<div class="ga-tr"><span class="ga-tl">${mine ? "◂ " : ""}${o.position ?? "—"}. ${escapeHtml(o.domain)}${mine ? " (vous)" : ""}</span></div>`; }).join("")}</div>`
+            : `<div class="ga-note" style="margin:4px 0;">Aucun résultat organique capté.</div>`}
+          ${ads.length ? `<div class="ar-seakw-sub" style="margin-top:8px;">Annonces Google Ads détectées</div>
+            ${ads.slice(0, 6).map((ad) => `<div class="ar-sea-ad sm"><div class="t">${escapeHtml(ad.domain)}${ad.title ? ` — ${escapeHtml(ad.title)}` : ""}</div>${ad.description ? `<div class="d2">${escapeHtml(ad.description)}</div>` : ""}</div>`).join("")}` : ""}
+        </div>` : ""}
+      </div>`;
+    }).join("");
+    out.querySelectorAll(".ar-seakw").forEach((row) => {
+      const kw = row.dataset.kw;
+      row.querySelector("[data-del]").onclick = async () => { await window.olympus.siSeaKwRemove(b.id, kw); reload(); };
+      row.querySelector("[data-refresh]").onclick = async (e) => { const bt = e.currentTarget; bt.disabled = true; bt.textContent = "…"; await window.olympus.siSeaKwRefresh(b.id, kw); reload(); };
+    });
+    mArrive(out);
+  };
+  const reload = async () => { const r = await window.olympus.siSeaKwList(b.id); if (r && r.ok) { renderList(r.keywords); loadKwMarket(true); } };
+  const loadKwMarket = async (peek) => {
+    const r = await window.olympus.siSeaKwList(b.id); const kws = (r?.keywords || []).map((k) => k.keyword);
+    if (!kws.length) return { ok: true };
+    const loc = (host.querySelector("#arSeaKwLoc") || {}).value || "";
+    const mk = await window.olympus.siKwMarket(b.id, kws, peek, loc);
+    if (mk?.ok && mk.data) { _kwMarket = {}; for (const it of (mk.data.items || [])) _kwMarket[(it.keyword || "").toLowerCase()] = it; renderList(r.keywords); }
+    return mk;
+  };
+  { const mb = host.querySelector("#arSeaKwMktBtn"); if (mb) mb.onclick = async (e) => { const bt = e.currentTarget; bt.disabled = true; const old = bt.innerHTML; bt.textContent = "Chargement…"; const mk = await loadKwMarket(false); bt.disabled = false; bt.innerHTML = old; if (mk && !mk.ok) { msg.className = "msg err"; msg.textContent = mk.budgetBlocked ? "Budget atteint — règle-le dans Titan." : "Échec marché."; } else { msg.className = "msg ok"; msg.textContent = "Popularité & concurrence chargées."; } }; }
+  host.querySelector("#arSeaKwAddBtn").onclick = async (e) => {
+    const inp = host.querySelector("#arSeaKwInput"); const val = inp.value.trim(); if (!val) return;
+    const bt = e.currentTarget; bt.disabled = true; const old = bt.innerHTML; bt.textContent = "Analyse…";
+    msg.className = "msg"; msg.textContent = "";
+    const rr = await window.olympus.siSeaKwAdd(b.id, val);
+    bt.disabled = false; bt.innerHTML = old;
+    if (!rr || !rr.ok) { msg.className = "msg err"; msg.textContent = rr && rr.budgetBlocked ? "Budget atteint — règle-le dans Titan." : "Échec : " + ((rr && rr.error) || "réessaie"); }
+    else { inp.value = ""; msg.className = "msg ok"; msg.textContent = `« ${rr.keyword} » ajouté et analysé.`; }
+    reload();
+  };
+  host.querySelector("#arSeaKwInput").addEventListener("keydown", (e) => { if (e.key === "Enter") host.querySelector("#arSeaKwAddBtn").click(); });
+  host.querySelector("#arSeaKwRefreshAll").onclick = async (e) => {
+    const bt = e.currentTarget; bt.disabled = true; const old = bt.innerHTML; bt.textContent = "Rafraîchissement…";
+    msg.className = "msg"; msg.textContent = "Rafraîchissement de tous les mots-clés…";
+    const rr = await window.olympus.siSeaKwRefresh(b.id);
+    bt.disabled = false; bt.innerHTML = old;
+    msg.className = "msg ok"; msg.textContent = rr && rr.results ? `${rr.results.length} mot(s)-clé rafraîchi(s).` : "Terminé.";
+    reload();
+  };
+  reload();
+}
+// ── Veille Meta : benchmark des comptes concurrents suivis (saisie manuelle) ──
+async function arViewVeilleMeta(box, b, tok) {
   const r = await arGet(b.id + ":comp", () => window.olympus.argosCompetitors(b.id));
   if (!r.ok) { box.innerHTML = `<div class="ga-note">${escapeHtml(r.error)}</div>`; return; }
   const rows = r.data.rows || [];
-  let html = arHead("Concurrence", "benchmark face aux comptes suivis", `<button class="btn sec" id="arAddComp">＋ Suivre un concurrent</button>`, "Meta ne donne pas accès aux données de comptes que tu ne gères pas — saisie manuelle uniquement");
+  let html = arHead("Veille Meta", "benchmark des comptes suivis (Instagram / Facebook)", `<button class="btn sec" id="arAddComp">＋ Suivre un concurrent</button>`, "Meta ne donne pas accès aux données de comptes que tu ne gères pas — saisie manuelle");
   html += pgPanel("Benchmark", `
     <div class="ar-comp-row head"><span>Compte</span><span class="v">Abonnés</span><span class="v">Croissance</span><span class="v">Engagement</span><span class="v">Posts/30 j</span></div>
     ${rows.map((c) => `<div class="ar-comp-row${c.mine ? " mine" : ""}">
@@ -5690,6 +8018,12 @@ async function arViewConcurrence(box, b, tok) {
     </div>`).join("")}`);
   const meIdx = rows.findIndex((x) => x.mine);
   if (meIdx >= 0) html += `<div class="ga-note" style="margin-top:12px;">${escapeHtml(b.name)} est <b>${meIdx + 1}ᵉ sur ${rows.length}</b> en abonnés dans son groupe de veille${meIdx > 0 ? " — l'engagement est le levier le plus rapide pour remonter" : " — position de leader à défendre"}.</div>`;
+  html += pgPanel("Enrichir la veille Meta", `<div class="desc" style="line-height:1.7;">Meta ne donne pas de données sur les comptes qu'on ne gère pas — d'où la saisie manuelle. Pour aller plus loin :
+    <ul style="margin:8px 0 0;padding-left:18px;">
+      <li><b>Meta Ad Library</b> (bibliothèque publicitaire publique) : voir les annonces Meta actives de n'importe quel concurrent — à brancher via l'API Ad Library.</li>
+      <li><b>Suivi manuel régulier</b> des comptes concurrents (abonnés, cadence de publication) — déjà possible ici.</li>
+      <li><b>Croiser avec la Veille SEO/SEA</b> pour une vision 360° du concurrent.</li>
+    </ul></div>`);
   if (tok !== undefined && !arRenderAlive(tok)) return;
   box.innerHTML = html;
   $("arAddComp").onclick = async () => {
@@ -5700,6 +8034,44 @@ async function arViewConcurrence(box, b, tok) {
     await window.olympus.argosCompetitorSave(b.id, list);
     b.competitors = list; delete arCache[b.id + ":comp"]; arRenderView();
   };
+}
+// Modal scrollable : classement Google réel d'un mot-clé — qui est devant le client.
+function arSerpModal(b, k) {
+  const ov = document.createElement("div"); ov.className = "modal-overlay show";
+  ov.innerHTML = `<div class="modal-panel" style="width:560px;">
+    <div class="modal-head"><h2 style="font-size:15px;">Classement Google — « ${escapeHtml(k.keyword)} »</h2><button class="modal-x" data-x>✕</button></div>
+    <div class="modal-body"><div class="ga-note">Chargement du classement…</div></div></div>`;
+  document.body.appendChild(ov);
+  const close = () => ov.remove();
+  ov.querySelector("[data-x]").onclick = close;
+  ov.onclick = (e) => { if (e.target === ov) close(); };
+  const onKey = (e) => { if (e.key === "Escape") { close(); document.removeEventListener("keydown", onKey); } };
+  document.addEventListener("keydown", onKey);
+  const body = ov.querySelector(".modal-body");
+  window.olympus.siSerp(b.id, k.keyword).then((rr) => {
+    if (!ov.isConnected) return;
+    if (!rr?.ok) { body.innerHTML = `<div class="ga-note">${escapeHtml(rr?.error || "Échec du chargement.")}${rr?.budgetBlocked ? " — <b data-goconn>régler le budget (Titan)</b>" : ""}</div>`; const g = body.querySelector("[data-goconn]"); if (g) g.onclick = () => { close(); goTo("titan"); }; return; }
+    const cd = (rr.data.domain || "").replace(/^www\./, "");
+    const gscPos = k.position != null ? +(+k.position).toFixed(1) : null; // position MOYENNE Search Console (30 j)
+    const items = rr.data.items || [];       // classement Google en direct (concurrents)
+    const inLive = items.find((x) => x.domain.replace(/^www\./, "") === cd);
+    // Lignes du classement : concurrents (position du jour) + la marque à sa position MOYENNE 30 j si absente du live,
+    // le tout trié par position → la marque apparaît là où elle se classe réellement (cohérent avec la ligne du tableau).
+    const rows = items.map((x) => ({ position: x.position, domain: x.domain.replace(/^www\./, ""), title: x.title, isMine: x.domain.replace(/^www\./, "") === cd, avg: false }));
+    if (!inLive && gscPos != null) rows.push({ position: gscPos, domain: cd, title: null, isMine: true, avg: true });
+    rows.sort((a, z) => (a.position ?? 999) - (z.position ?? 999));
+    const headline = gscPos != null
+      ? `<b>${escapeHtml(b.name)}</b> : position moyenne <b>${String(gscPos).replace(".", ",")}ᵉ</b> sur « ${escapeHtml(k.keyword)} » <span style="color:var(--dim);">(Search Console, 30 j)</span>`
+      : `<b>${escapeHtml(b.name)}</b> — « ${escapeHtml(k.keyword)} »`;
+    const sub = inLive
+      ? `Classement Google <b>en direct</b> — ${escapeHtml(b.name)} y est aujourd'hui ${inLive.position}ᵉ :`
+      : `Concurrents à leur <b>position du jour</b> ; ${escapeHtml(b.name)} est placé à sa <b>position moyenne 30 j</b> (le live d'un instant peut le sortir du top 20, la moyenne lisse ces variations) :`;
+    const fmtPos = (p, avg) => avg ? String(+(+p).toFixed(1)).replace(".", ",") : (p ?? "—");
+    body.innerHTML = `<div class="si-serp-i" style="margin-bottom:4px;font-size:14px;">${headline}</div>
+      <div class="desc" style="font-size:11.5px;margin-bottom:12px;">${sub}</div>
+      ${rows.map((x) => `<div class="si-serprow${x.isMine ? " mine" : ""}"><span class="p">${fmtPos(x.position, x.avg)}</span><span class="dd"><span class="d">${escapeHtml(x.domain)}${x.isMine ? " ◂ vous" : ""}${x.avg ? ` <span style="font-size:9px;font-weight:600;letter-spacing:.04em;color:var(--dim);border:1px solid var(--line);border-radius:4px;padding:1px 4px;vertical-align:1px;">moy. 30 j</span>` : ""}</span>${x.title ? `<span class="tt">${escapeHtml(x.title)}</span>` : ""}</span></div>`).join("") || `<div class="ga-note">Aucun résultat organique.</div>`}`;
+    mArrive(body);
+  });
 }
 // Mini-saisie inline (window.prompt n'existe pas sous Electron)
 function arMiniInput(box, label) {
@@ -5719,55 +8091,124 @@ function arMiniInput(box, label) {
 
 // ── Rapport : narratif + export PDF ──
 async function arViewRapport(box, b, tok) {
-  const [ov, ads, lst] = await Promise.all([
-    arGet(b.id + ":ov:30", () => window.olympus.argosOverview(b.id, 30)),
-    arGet(b.id + ":ads", () => window.olympus.argosAds(b.id)),
-    arGet(b.id + ":listen", () => window.olympus.argosListening(b.id)),
-  ]);
-  const d = ov.ok ? ov.data : null; const a = ads.ok ? ads.data : null; const l = lst.ok ? lst.data : null;
-  if (!d) { box.innerHTML = `<div class="ga-note">Pas de données.</div>`; return; }
-  const bestNet = d.perNet.slice().sort((x, y) => y.engagement - x.engagement)[0];
-  const lines = [
-    `<b>${pgFmtN(d.reach)}</b> personnes touchées sur 30 jours, pour ${d.published} publication(s) — engagement moyen <b>${d.engagement} %</b>.`,
-    bestNet ? `${arNet(bestNet.network).label} est le réseau le plus engageant (${bestNet.engagement} %) — y concentrer les formats qui performent.` : "",
-    a ? `Publicité : <b>${a.totals.spend.toLocaleString("fr-FR")} €</b> dépensés pour ${a.totals.conversions} conversions (ROAS moyen ×${a.totals.roas}).` : "",
-    l ? `Écoute : ${l.mentions.length} mention(s), dont ${l.sentiment.neg} négative(s)${l.sentiment.neg > 1 ? " — à traiter en priorité dans l'inbox" : ""}.` : "",
-    d.topPosts[0] ? `Le post « ${escapeHtml(d.topPosts[0].title)} » domine (${pgFmtN(d.topPosts[0].reach)} de portée) — un candidat au recyclage.` : "",
-  ].filter(Boolean);
-  let html = arHead("Rapport", "bilan social · 30 derniers jours", `<button class="cal-btn primary" id="arPdf">⤓ Exporter en PDF</button>`);
-  html += `<div class="ga-cards">
-    ${pgScore("Portée", pgFmtN(d.reach))}
-    ${pgScore("Engagement", d.engagement + " %")}
-    ${pgScore("Dépense pub", (a ? a.totals.spend.toLocaleString("fr-FR") : "—") + " €")}
-    ${pgScore("Santé", `${d.health}<span class="ga-unit">/100</span>`)}
-  </div>`;
-  html += pgPanel("Portée par jour", pgAreaChart((d.byDay || []).map((x) => ({ label: pgDayLabel(x.date), value: x.reach }))));
-  html += pgPanel("Analyse", lines.map((x) => `<div class="ga-anz-l">${x}</div>`).join(""));
-  if (tok !== undefined && !arRenderAlive(tok)) return;
-  box.innerHTML = html;
-  $("arPdf").onclick = async (e) => {
-    const btn = e.currentTarget; btn.disabled = true; btn.textContent = "Génération…";
-    const r = await window.olympus.pegasusExportPdf(arReportPdfHTML(b, d, a, lines), `argos-${b.id}-${todayIsoNow()}.pdf`);
-    btn.disabled = false; btn.textContent = "⤓ Exporter en PDF";
-    if (!r.ok && r.error !== "Export annulé.") alert("Échec : " + (r.error || ""));
+  const period = { days: 30 };
+  let snap = await window.olympus.argosSnapshot(b.id, period);
+  const alive = () => tok === undefined || arRenderAlive(tok);
+  const draw = () => { const f = $("arRepFrame"); if (f) f.srcdoc = arReportHTML(b, snap); };
+  let html = arHead("Rapport", "rapport client multi-canal · 30 derniers jours",
+    `<button class="cal-btn" id="arRepRefresh">⟳ Actualiser les données</button> <button class="cal-btn primary" id="arRepPdf">⤓ Exporter en PDF</button>`);
+  html += `<iframe id="arRepFrame" title="Aperçu du rapport" style="width:100%;height:calc(100vh - 200px);min-height:520px;border:1px solid var(--line);border-radius:12px;background:#fff;"></iframe>`;
+  if (!alive()) return;
+  box.innerHTML = html; draw();
+  window.olympus.argosReportSave(b.id, period, snap).catch(() => {});
+  $("arRepRefresh").onclick = async (e) => {
+    const bt = e.currentTarget; bt.disabled = true; bt.textContent = "Actualisation…";
+    snap = await arReportWarm(b);
+    if (!alive()) return;
+    draw(); window.olympus.argosReportSave(b.id, period, snap).catch(() => {});
+    bt.disabled = false; bt.textContent = "⟳ Actualiser les données";
+  };
+  $("arRepPdf").onclick = async (e) => {
+    const bt = e.currentTarget; bt.disabled = true; bt.textContent = "Génération…";
+    const r = await window.olympus.pegasusExportPdf(arReportHTML(b, snap), `rapport-${b.id}-${todayIsoNow()}.pdf`);
+    bt.disabled = false; bt.textContent = "⤓ Exporter en PDF";
+    if (r && !r.ok && r.error !== "Export annulé.") alert("Échec : " + (r.error || ""));
   };
 }
-function arReportPdfHTML(b, d, a, lines) {
-  const C = { acc: "#7a1b28" };
+// Réchauffe UNIQUEMENT les sources GRATUITES (Google + Meta) puis renvoie un snapshot frais.
+// Les sources DataForSEO (payantes) restent en cache — jamais rappelées ici.
+async function arReportWarm(b) {
+  const days = 30, P = { days };
+  await Promise.allSettled([
+    window.olympus.argosWeb(b.id, days, true), window.olympus.argosSeo(b.id, days, true), window.olympus.argosSeoIntel(b.id, days, true),
+    window.olympus.argosVitals(b.id, true), window.olympus.argosCrawl(b.id, true),
+    window.olympus.argosAdsCampaigns(b.id, P, true), window.olympus.argosAdsKeywords(b.id, P, true), window.olympus.argosAdsAudiences(b.id, P, true),
+    window.olympus.argosAdsGeo(b.id, true), window.olympus.argosAdsPlacements(b.id, P, true),
+    window.olympus.argosOverview(b.id, days, true), window.olympus.argosAudience(b.id, true),
+  ]);
+  return await window.olympus.argosSnapshot(b.id, P);
+}
+// Document de rapport client autonome (HTML print-ready) assemblé depuis le snapshot. Sert à la
+// fois d'aperçu (iframe) et de source du PDF. Ne montre QUE les sections réelles (demo exclu).
+function arReportHTML(b, s) {
+  const A = "#7a1b28", INK = "#1c1c1c", MU = "#666", LN = "#e7e4e5", SOFT = "#f7f5f6";
+  const TC = { hi: "#2f855a", mid: "#8bbf9a", warn: "#c9821f", lo: "#c0392b", na: "#cfcccd" };
+  const g = s.google || {}, m = s.meta || {}, si = s.si || {};
+  const real = (x) => (x && x.demo !== true) ? x : null;
+  const web = real(g.web), seo = real(g.seo), seoI = real(g.seoIntel), vit = real(g.vitals), crawl = real(g.crawl);
+  const camps = real(g.adsCampaigns), plc = real(g.adsPlacements), adsT = real((s.ads || {}).totals);
+  const social = real(m.overview), dov = real(si.domainOverview), bl = real(si.backlinks), loc = real(si.localCompetitors);
+  const N = (v) => pgFmtN(v || 0), E = (v) => siEurNum(v || 0) + " €", P = (v, d = 1) => (v == null ? "—" : (+v).toFixed(d).replace(".", ",") + " %");
+  const dec = (v, d = 1) => (v == null ? "—" : (+v).toFixed(d).replace(".", ","));
   const now = new Date().toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" });
-  const kpi = (v, l) => `<div style="text-align:center;"><div style="font-size:28px;font-weight:800;color:${C.acc};">${v}</div><div style="font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#888;margin-top:3px;">${l}</div></div>`;
-  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><style>
-    *{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#1c1c1c;font-size:13px;line-height:1.55;padding:8px 4px}
-    .head{border-bottom:3px solid ${C.acc};padding-bottom:14px;margin-bottom:22px}.brand{color:${C.acc};font-weight:800;letter-spacing:.14em;font-size:12px}
-    h1{font-size:24px;margin:6px 0 3px;font-weight:700}.meta{color:#666;font-size:12px}
-    .kpis{display:flex;gap:34px;justify-content:center;border:1px solid #e6e6e6;border-radius:12px;padding:18px;margin-bottom:18px}
-    .anz p{margin:6px 0;color:#333}b{color:#111}
-    .foot{margin-top:28px;border-top:1px solid #eee;padding-top:12px;color:#999;font-size:11px;text-align:center}
-  </style></head><body>
-    <div class="head"><div class="brand">ORPHIC AGENCY · ARGOS</div><h1>Bilan social — ${escapeHtml(b.name)}</h1><div class="meta">30 derniers jours · édité le ${now}</div></div>
-    <div class="kpis">${kpi(pgFmtN(d.reach), "portée")}${kpi(d.engagement + " %", "engagement")}${kpi(pgFmtN(d.followers), "abonnés")}${a ? kpi("×" + a.totals.roas, "ROAS") : ""}</div>
-    <div class="anz">${lines.map((x) => `<p>${x}</p>`).join("")}</div>
-    <div class="foot">Généré par Argos · Olympus — Orphic Agency, Monaco</div>
+  const spark = (pts) => { pts = (pts || []).filter((v) => v != null); if (pts.length < 2) return ""; const w = 560, h = 46, n = pts.length, mx = Math.max(...pts, 1), mn = Math.min(...pts, 0); const X = (i) => i / (n - 1) * w, Y = (v) => h - ((v - mn) / ((mx - mn) || 1)) * (h - 8) - 4; const d = pts.map((v, i) => (i ? "L" : "M") + X(i).toFixed(1) + " " + Y(v).toFixed(1)).join(" "); return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}" preserveAspectRatio="none" style="display:block"><path d="${d} L${w} ${h} L0 ${h} Z" fill="${A}14"/><path d="${d}" fill="none" stroke="${A}" stroke-width="2"/></svg>`; };
+  const bars = (items) => { if (!items || !items.length) return ""; const mx = Math.max(...items.map((x) => x.value || 0), 1); return items.slice(0, 6).map((x) => `<div style="display:flex;align-items:center;gap:8px;margin:3px 0;font-size:11px"><span style="width:150px;color:${MU};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(x.label || "")}</span><span style="flex:1;height:8px;background:${SOFT};border-radius:5px;overflow:hidden"><span style="display:block;height:100%;width:${Math.round((x.value || 0) / mx * 100)}%;background:${A}"></span></span><span style="width:60px;text-align:right;font-weight:600">${N(x.value)}</span></div>`).join(""); };
+  const kpi = (v, l) => `<div style="flex:1;text-align:center;padding:2px 6px"><div style="font-size:22px;font-weight:800;color:${A};line-height:1.1">${v}</div><div style="font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:${MU};margin-top:4px">${l}</div></div>`;
+  const kband = (arr) => `<div style="display:flex;gap:8px">${arr.filter(Boolean).join("")}</div>`;
+  const sec = (title, inner) => inner ? `<section style="margin:20px 0;break-inside:avoid"><h2 style="font-size:12.5px;color:${A};text-transform:uppercase;letter-spacing:.05em;border-bottom:1px solid ${LN};padding-bottom:5px;margin:0 0 10px">${title}</h2>${inner}</section>` : "";
+  const panel = (inner) => `<div style="border:1px solid ${LN};border-radius:10px;padding:10px 13px;margin:8px 0">${inner}</div>`;
+  const par = (t) => `<p style="font-size:12px;line-height:1.55;color:#333;margin:5px 0">${t}</p>`;
+
+  const kpis = [];
+  if (social) kpis.push(kpi(N(social.reach), "portée sociale"));
+  if (web) kpis.push(kpi(N(web.totals.sessions), "sessions web"));
+  if (seo) kpis.push(kpi(N(seo.totals.clicks), "clics SEO"));
+  if (adsT) kpis.push(kpi(E(adsT.totals.spend), "dépense pub"));
+  let locRank = null;
+  if (loc && loc.me) { const others = (loc.competitors || []).filter((c) => !c.mine); locRank = others.filter((c) => (c.reviews || 0) > (loc.me.reviews || 0)).length + 1; kpis.push(kpi("#" + locRank, "rang notoriété")); }
+  const kpiBand = kpis.length ? `<div style="display:flex;gap:8px;border:1px solid ${LN};border-radius:12px;padding:15px 8px;margin:14px 0 4px;background:${SOFT}">${kpis.join(`<div style="width:1px;background:${LN}"></div>`)}</div>` : "";
+
+  let body = "";
+  if (social) {
+    const best = (social.perNet || []).slice().sort((a, b) => b.engagement - a.engagement)[0];
+    body += sec("Réseaux sociaux",
+      par(`<b>${N(social.reach)}</b> personnes touchées sur 30 jours pour ${social.published} publication(s), engagement moyen <b>${P(social.engagement)}</b> · <b>${N(social.followers)}</b> abonnés.`)
+      + panel(spark((social.byDay || []).map((x) => x.reach)))
+      + ((social.perNet || []).length ? `<table style="width:100%;border-collapse:collapse;font-size:11px;margin-top:4px">${social.perNet.map((k) => `<tr><td style="padding:3px 0;color:${MU}">${escapeHtml(k.network)}</td><td style="text-align:right">${N(k.followers)} abonnés</td><td style="text-align:right">${P(k.engagement)} eng.</td><td style="text-align:right">${k.posts} posts</td></tr>`).join("")}</table>` : "")
+      + (best ? par(`${escapeHtml(best.network)} est le réseau le plus engageant (${P(best.engagement)}).`) : ""));
+  }
+  if (web) body += sec("Site web",
+    kband([kpi(N(web.totals.sessions), "sessions"), kpi(N(web.totals.users), "visiteurs"), kpi(N(web.totals.pageviews), "pages vues"), kpi(N(web.totals.conversions), "conversions"), vit ? kpi(vit.mobile.score + "/100", "perf mobile") : ""])
+    + panel(spark((web.byDay || []).map((x) => x.sessions)))
+    + ((web.channels || []).length ? `<div style="font-size:11px;color:${MU};margin:8px 0 2px">Canaux d'acquisition</div>${bars(web.channels)}` : ""));
+  if (seo) body += sec("Référencement (SEO)",
+    kband([kpi(N(seo.totals.clicks), "clics"), kpi(N(seo.totals.impressions), "impressions"), kpi(P(seo.totals.ctr * 100, 1), "CTR"), kpi(dec(seo.totals.position), "position moy."), dov ? kpi(N(dov.organic.count), "mots-clés") : "", bl ? kpi(N(bl.referringDomains), "réf. domaines") : ""])
+    + panel(spark((seo.byDay || []).map((x) => x.clicks)))
+    + ((seo.topQueries || []).length ? `<div style="font-size:11px;color:${MU};margin:8px 0 2px">Requêtes les plus performantes</div><table style="width:100%;border-collapse:collapse;font-size:11px">${seo.topQueries.slice(0, 8).map((q) => `<tr><td style="padding:2px 0">${escapeHtml(q.label)}</td><td style="text-align:right;color:${MU}">pos ${dec(q.position)}</td><td style="text-align:right">${N(q.clicks)} clics</td></tr>`).join("")}</table>` : "")
+    + (seoI && (seoI.quickWins || []).length ? par(`Opportunités rapides : ${seoI.quickWins.slice(0, 3).map((q) => "« " + escapeHtml(q.query) + " »").join(", ")} (proches du top, à pousser).`) : ""));
+  if (adsT || camps || plc) {
+    let inner = "";
+    if (adsT) { inner += kband([kpi(E(adsT.totals.spend), "dépense"), kpi(N(adsT.totals.conversions), "conversions"), kpi("×" + (adsT.totals.roas || 0), "ROAS"), kpi((adsT.campaigns || []).length, "campagnes")]); if ((adsT.platformSplit || []).length) inner += `<div style="font-size:11px;color:${MU};margin:8px 0 2px">Répartition par plateforme</div>${bars(adsT.platformSplit.map((x) => ({ label: x.platform, value: x.spend })))}`; }
+    else if (camps && camps.campaigns[0]) { const c = camps.campaigns[0]; inner += par(`Campagne « ${escapeHtml(c.name)} » (${escapeHtml(c.channelLabel)}) : <b>${E(c.spend)}</b>, ${N(c.impressions)} impressions, ${N(c.clicks)} clics.`); }
+    if (plc && (plc.placements || []).length) {
+      arScorePlacements(plc.placements);
+      const byT = {}; let tot = 0; for (const pp of plc.placements) { const t = (pp._eff && pp._eff.tier) || "Volume insuffisant"; byT[t] = (byT[t] || 0) + (pp.cost || 0); tot += pp.cost || 0; }
+      const order = [["Efficace", "hi"], ["Correct", "mid"], ["Faible", "warn"], ["À exclure", "lo"], ["Volume insuffisant", "na"]];
+      const seg = order.filter(([k]) => byT[k] > 0).map(([k, cl]) => `<span style="height:100%;width:${(byT[k] / tot * 100).toFixed(1)}%;background:${TC[cl]}"></span>`).join("");
+      const bad = (byT["Faible"] || 0) + (byT["À exclure"] || 0);
+      inner += `<div style="font-size:11px;color:${MU};margin:10px 0 3px">Où est parti le budget Display (${N(plc.placements.length)} emplacements)</div><div style="display:flex;height:14px;border-radius:7px;overflow:hidden;gap:1px">${seg}</div>` + (tot > 0 ? par(`Sur ${E(tot)}, <b style="color:${TC.lo}">${E(bad)} (${Math.round(bad / tot * 100)} %)</b> dans des emplacements peu efficaces (« Faible »/« À exclure »).`) : "");
+    }
+    body += sec("Publicité", inner);
+  }
+  if (loc && loc.me) {
+    const others = (loc.competitors || []).filter((c) => !c.mine);
+    body += sec("Notoriété locale",
+      par(`<b>${escapeHtml(loc.me.title)}</b> — note ${dec(loc.me.rating)}★ (${N(loc.me.reviews)} avis), classé <b>#${locRank}</b> sur ${others.length + 1} établissements du secteur${loc.sector || loc.keyword ? " « " + escapeHtml(loc.sector || loc.keyword) + " »" : ""}${loc.zone ? " à " + escapeHtml(loc.zone) : ""}.`)
+      + (others.length ? `<table style="width:100%;border-collapse:collapse;font-size:11px;margin-top:4px">${others.slice(0, 5).map((c, i) => `<tr><td style="padding:2px 0;color:${MU}">${i + 1}. ${escapeHtml(c.title)}</td><td style="text-align:right">${dec(c.rating)}★</td><td style="text-align:right">${N(c.reviews)} avis</td></tr>`).join("")}</table>` : ""));
+  }
+  if (crawl) body += sec("Audit technique du site",
+    kband([kpi(crawl.healthScore + "/100", "santé technique"), kpi(N(crawl.pages), "pages"), kpi(N(crawl.indexable), "indexables")])
+    + ((crawl.tickets || []).length ? `<table style="width:100%;border-collapse:collapse;font-size:11px;margin-top:6px">${crawl.tickets.map((t) => `<tr><td style="padding:2px 0">${escapeHtml(t.label)}</td><td style="text-align:right;color:${t.sev === "high" ? TC.lo : t.sev === "med" ? TC.warn : MU}">${t.count}</td></tr>`).join("")}</table>` : ""));
+
+  const missNames = { "google.web": "Site web", "google.seo": "SEO", "google.adsPlacements": "Emplacements Ads", "google.adsCampaigns": "Campagnes Ads", "meta.overview": "Réseaux sociaux", "si.localCompetitors": "Notoriété", "google.vitals": "Performance", "google.crawl": "Audit technique", "si.domainOverview": "Autorité SEO", "si.backlinks": "Backlinks" };
+  const shown = [...new Set((s.missing || []).map((x) => missNames[x]).filter(Boolean))];
+  const missNote = shown.length ? `<div style="font-size:10px;color:${MU};margin-top:12px;border-top:1px dashed ${LN};padding-top:8px">Sections non incluses (données non chargées) : ${shown.join(", ")}. Clique « Actualiser les données » ou ouvre les vues correspondantes pour les intégrer.</div>` : "";
+  if (!body) body = `<p style="color:${MU};font-size:12px">Aucune donnée réelle en cache pour cette marque. Clique « Actualiser les données », ou ouvre les vues (Site web, SEO, Publicité, Notoriété) pour alimenter le rapport.</p>`;
+
+  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:-apple-system,"Segoe UI",Roboto,sans-serif;color:${INK};padding:26px 30px;background:#fff}h1{font-size:22px;font-weight:700;margin:5px 0 2px}table td{vertical-align:top}@media print{body{padding:0}section{break-inside:avoid}}</style></head><body>
+    <header style="border-bottom:3px solid ${A};padding-bottom:12px"><div style="color:${A};font-weight:800;letter-spacing:.16em;font-size:11px">ORPHIC AGENCY · ARGOS</div><h1>Rapport de performance — ${escapeHtml(b.name)}</h1><div style="color:${MU};font-size:11px">30 derniers jours · édité le ${now}</div></header>
+    ${kpiBand}${body}${missNote}
+    <footer style="margin-top:24px;border-top:1px solid ${LN};padding-top:10px;color:#999;font-size:10px;text-align:center">Généré par Argos · Olympus — Orphic Agency, Monaco</footer>
   </body></html>`;
 }
 
@@ -5895,7 +8336,7 @@ function arPaintClusters(box) {
       <div class="ar-bucket-items">
         ${bucket.items.length ? bucket.items.map((item) => {
           const owner = assigned.get(bucket.network + ":" + item.id);
-          return `<div class="ar-chip${owner ? " owned" : ""}" draggable="true" data-network="${bucket.network}" data-id="${escapeHtml(item.id)}" data-label="${escapeHtml(item.label)}" title="${owner ? "déjà dans « " + escapeHtml(owner) + " » — glisse pour réaffecter" : "glisse vers un client"}">${escapeHtml(item.label)}${owner ? ` <span class="ar-chip-owner">· ${escapeHtml(owner)}</span>` : ""}</div>`;
+          return `<div class="ar-chip${owner ? " owned" : ""}" draggable="true" data-network="${bucket.network}" data-id="${escapeHtml(item.id)}" data-label="${escapeHtml(item.label)}" title="${owner ? "déjà dans « " + escapeHtml(owner) + " » — glisse pour réaffecter" : "glisse vers un client"}${item.sub ? " — " + escapeHtml(item.sub) : ""}">${escapeHtml(item.label)}${item.sub ? ` <span class="ar-chip-sub">${escapeHtml(item.sub)}</span>` : ""}${owner ? ` <span class="ar-chip-owner">· ${escapeHtml(owner)}</span>` : ""}</div>`;
         }).join("") : `<div class="ar-bucket-empty">Aucun compte</div>`}
       </div>
     </div>`).join("");
@@ -6002,7 +8443,131 @@ function arWireClusters(box) {
     else { m.className = "msg err"; m.textContent = "Échec de l'enregistrement."; }
   });
 }
-document.querySelector('.nav-item[data-page="titan"]').addEventListener("click", () => { renderTitanArgosConn(); renderTitanArgosClusters(); });
+// Bouton conscient du coût : « Libellé (0,43 €) » — pour toute action déclenchant un appel payant.
+const siEur = (n) => (n == null ? "" : (n < 0.01 ? "< 0,01" : n.toFixed(2).replace(".", ",")) + " €");
+function siCostBtn(id, label, eur, cls = "btn") { return `<button class="${cls}" id="${id}">${escapeHtml(label)}${eur != null ? ` <span class="si-cost">(${siEur(eur)})</span>` : ""}</button>`; }
+// Carte de connexion du fournisseur de données (Titan) : clés chiffrées, test de solde, budget.
+async function renderTitanSiConn() {
+  const box = $("titanSiConn"); if (!box) return;
+  const r = await window.olympus.siStatus();
+  if (!r || !r.ok) { box.innerHTML = `<div class="msg err">Search Intelligence indisponible.</div>`; return; }
+  const b = r.budget || {};
+  const pct = b.hard ? Math.min(100, Math.round((b.spent / b.hard) * 100)) : 0;
+  const overSoft = b.soft && b.spent >= b.soft;
+  const tarifs = (r.pricing || []).map((p) => `<div class="ga-kv-r"><span>${escapeHtml(p.label)}</span><b>${siEur(p.eur)}</b></div>`).join("");
+  const pw = await window.olympus.siPrewarmStatus().catch(() => null);
+  const pwp = pw && pw.prewarm;
+  const pwCalls = pwp ? (pwp.results || []).reduce((n, x) => n + (x.calls || 0), 0) : 0;
+  const pwLast = pwp && pwp.lastAt ? `Dernier : ${new Date(pwp.lastAt).toLocaleString("fr-FR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })} · ${pwCalls} appels` : "jamais lancé";
+  box.innerHTML = `
+    <div class="ar-conn-card" style="max-width:620px;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+        <b style="font-size:14px;">🔎 ${escapeHtml(r.providerLabel || "DataForSEO")}</b>
+        <span class="pg-pill ${r.connected ? "ok" : ""}" style="font-size:11px;">${r.connected ? "connecté · " + escapeHtml(r.login || "") : "non connecté"}</span>
+      </div>
+      <div class="auth-row2" style="margin-top:6px;">
+        <div class="auth-field" style="flex:1"><label>Login (e-mail DataForSEO)</label><input class="auth-input" id="siLogin" value="${escapeHtml(r.login || "")}" placeholder="email@exemple.com"></div>
+        <div class="auth-field" style="flex:1"><label>Mot de passe API</label><input class="auth-input" id="siPass" type="password" placeholder="${r.connected ? "•••••••• (inchangé)" : "clé API"}"></div>
+      </div>
+      <div class="act" style="margin-top:8px;display:flex;gap:8px;align-items:center;">
+        <button class="btn" id="siSaveBtn">Enregistrer les clés</button>
+        <button class="btn sec" id="siTestBtn">Tester la connexion</button>
+        <span class="msg" id="siConnMsg" style="margin:0;"></span>
+      </div>
+      <label style="display:flex;align-items:center;gap:9px;margin-top:12px;cursor:pointer;font-size:12.5px;color:var(--txt);">
+        <input type="checkbox" id="siSandbox" ${r.sandbox ? "checked" : ""}>
+        <span>🧪 Mode Sandbox — appels gratuits, données factices (pour tester sans dépenser ni vérifier le compte)</span>
+      </label>
+      <div style="margin-top:18px;border-top:1px solid var(--line);padding-top:14px;">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;">
+          <b style="font-size:13px;">Budget mensuel</b>
+          <span class="desc" style="font-size:12px;">Dépensé : <b style="color:${overSoft ? "#e0868f" : "var(--txt)"}">${siEur(b.spent)}</b> / ${siEur(b.hard)}</span>
+        </div>
+        <div class="ar-budget" style="margin-bottom:12px;"><i style="width:${pct}%;background:${overSoft ? "#e0868f" : "var(--accent2)"}"></i></div>
+        <div class="auth-row2">
+          <div class="auth-field" style="flex:1"><label>Alerte à (soft, €)</label><input class="auth-input" id="siSoft" type="number" min="0" step="1" value="${b.soft ?? 20}"></div>
+          <div class="auth-field" style="flex:1"><label>Blocage à (hard, €)</label><input class="auth-input" id="siHard" type="number" min="0" step="1" value="${b.hard ?? 50}"></div>
+          <div style="display:flex;align-items:flex-end;"><button class="btn sec" id="siBudgetBtn">Enregistrer</button></div>
+        </div>
+      </div>
+      <div style="margin-top:18px;border-top:1px solid var(--line);padding-top:14px;">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;">
+          <b style="font-size:13px;">Rafraîchissement hebdomadaire</b>
+          <span class="desc" style="font-size:11.5px;">${escapeHtml(pwLast)}</span>
+        </div>
+        <p class="desc" style="font-size:11.5px;margin:0 0 10px;">Chaque <b>lundi à 01:00</b>, toutes les données payantes de chaque client (vue d'ensemble, backlinks, concurrents, et le classement de chaque mot-clé) sont récupérées et mises en cache <b>7 jours</b> — la loupe et les vues s'affichent alors instantanément, sans nouvel appel. Cache répliqué dans Supabase ${pw && pw.cloud ? "(session active ✓)" : "— <b>connecte-toi à Olympus</b> pour la persistance/partage"}.</p>
+        <label style="display:flex;align-items:center;gap:9px;margin-bottom:10px;cursor:pointer;font-size:12.5px;color:var(--txt);">
+          <input type="checkbox" id="siAuto" ${!pw || pw.auto !== false ? "checked" : ""}>
+          <span>Rafraîchir automatiquement (rattrapage au lancement si l'app était fermée à 01:00)</span>
+        </label>
+        <div class="act" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <button class="btn sec" id="siPrewarmBtn">Lancer le rafraîchissement maintenant</button>
+          <button class="btn sec" id="siCloudSqlBtn">Installer le cache Supabase</button>
+          <span class="msg" id="siPwMsg" style="margin:0;"></span>
+        </div>
+        <div id="siCloudSqlBox" style="display:none;margin-top:12px;"></div>
+      </div>
+      <details style="margin-top:14px;"><summary class="desc" style="cursor:pointer;font-size:12px;">Voir les tarifs à l'appel</summary>
+        <div class="ga-kv" style="margin-top:8px;">${tarifs}</div>
+        <p class="desc" style="font-size:11px;margin-top:8px;">Tarifs indicatifs par requête (convertis en €). Chaque action affichera son coût estimé avant exécution.</p>
+      </details>
+    </div>`;
+  const msg = $("siConnMsg");
+  $("siSaveBtn").onclick = async () => {
+    msg.className = "msg"; msg.textContent = "Enregistrement…";
+    const rr = await window.olympus.siSaveKeys($("siLogin").value, $("siPass").value);
+    if (rr.ok) { msg.className = "msg ok"; msg.textContent = "Clés enregistrées."; $("siPass").value = ""; renderTitanSiConn(); }
+    else { msg.className = "msg err"; msg.textContent = "Échec."; }
+  };
+  $("siTestBtn").onclick = async () => {
+    msg.className = "msg"; msg.textContent = "Test en cours…";
+    const rr = await window.olympus.siTest();
+    if (rr && rr.ok) { msg.className = "msg ok"; msg.textContent = `Connecté ✓ — solde ${rr.balance != null ? rr.balance + " " + rr.currency : "?"}`; }
+    else { msg.className = "msg err"; msg.textContent = "Échec : " + ((rr && rr.error) || "vérifie les identifiants"); }
+  };
+  $("siBudgetBtn").onclick = async () => {
+    const rr = await window.olympus.siSetBudget($("siSoft").value, $("siHard").value);
+    msg.className = "msg ok"; msg.textContent = "Budget mis à jour."; if (rr.ok) renderTitanSiConn();
+  };
+  $("siSandbox").onchange = async (e) => {
+    await window.olympus.siSetSandbox(e.target.checked);
+    msg.className = "msg ok"; msg.textContent = e.target.checked ? "Sandbox activé — appels gratuits." : "Sandbox désactivé — appels réels facturés.";
+  };
+  const pwMsg = $("siPwMsg");
+  $("siAuto").onchange = async (e) => {
+    await window.olympus.siSetPrewarmAuto(e.target.checked);
+    pwMsg.className = "msg ok"; pwMsg.textContent = e.target.checked ? "Rafraîchissement auto activé." : "Rafraîchissement auto désactivé.";
+  };
+  $("siPrewarmBtn").onclick = async (e) => {
+    const btn = e.currentTarget; btn.disabled = true; btn.textContent = "Rafraîchissement…";
+    pwMsg.className = "msg"; pwMsg.textContent = "En cours (peut prendre 1–2 min)…";
+    const rr = await window.olympus.siPrewarmNow();
+    btn.disabled = false; btn.textContent = "Lancer le rafraîchissement maintenant";
+    if (rr && rr.ok) {
+      const calls = (rr.results || []).reduce((n, x) => n + (x.calls || 0), 0);
+      const blocked = (rr.results || []).some((x) => x.budgetBlocked);
+      pwMsg.className = "msg ok"; pwMsg.textContent = `${(rr.results || []).length} client(s), ${calls} appels${blocked ? " — budget atteint, arrêt" : ""} · budget ${siEur(rr.budget && rr.budget.spent)}`;
+      setTimeout(() => renderTitanSiConn(), 900);
+    } else { pwMsg.className = "msg err"; pwMsg.textContent = "Échec : " + ((rr && rr.error) || "réessaie"); }
+  };
+  $("siCloudSqlBtn").onclick = async () => {
+    const sb = $("siCloudSqlBox");
+    if (sb.style.display === "block") { sb.style.display = "none"; return; }
+    const rr = await window.olympus.siCloudSql();
+    if (!rr || !rr.ok) { pwMsg.className = "msg err"; pwMsg.textContent = "SQL indisponible."; return; }
+    sb.style.display = "block";
+    sb.innerHTML = `<p class="desc" style="font-size:11.5px;margin:0 0 8px;">À exécuter <b>une seule fois</b> dans le SQL Editor du Supabase Olympus, puis reviens : le cache sera persistant et partagé.</p>
+      <pre style="background:var(--bg-soft,#f4f4f6);border:1px solid var(--line);border-radius:8px;padding:10px;font-size:11px;overflow:auto;max-height:200px;white-space:pre;">${escapeHtml(rr.sql)}</pre>
+      <div class="act" style="display:flex;gap:8px;margin-top:8px;">
+        <button class="btn" id="siSqlCopy">Copier le SQL</button>
+        ${rr.editor ? `<button class="btn sec pg-open" data-url="${escapeHtml(rr.editor)}">Ouvrir le SQL Editor ↗</button>` : ""}
+        <span class="msg" id="siSqlMsg" style="margin:0;"></span>
+      </div>`;
+    $("siSqlCopy").onclick = async () => { await navigator.clipboard.writeText(rr.sql); const m = $("siSqlMsg"); m.className = "msg ok"; m.textContent = "SQL copié — colle-le dans le SQL Editor, exécute, puis reviens."; };
+    sb.querySelectorAll(".pg-open").forEach((b) => { b.onclick = () => window.olympus.openExternal(b.dataset.url); });
+  };
+}
+document.querySelector('.nav-item[data-page="titan"]').addEventListener("click", () => { renderTitanArgosConn(); renderTitanArgosClusters(); renderTitanSiConn(); });
 
 // ── Nouvelle marque ──
 // Édition légère (nom/secteur/identifiants d'affichage) — le rattachement aux vrais comptes
@@ -6017,7 +8582,11 @@ function arBrandModal(brand) {
     <div class="modal-head"><h2>${brand.id ? "Modifier le client" : "Nouveau client"}</h2><button class="modal-x" data-x>✕</button></div>
     <div class="modal-body">
       <div class="auth-field"><label>Nom</label><input class="auth-input" id="arBrName" value="${escapeHtml(brand.name || "")}" placeholder="Nom du client"></div>
-      <div class="auth-field"><label>Secteur</label><input class="auth-input" id="arBrSect" value="${escapeHtml(brand.secteur || "")}" placeholder="mode, hôtellerie, restaurant…"></div>
+      <div class="auth-row2" style="margin-top:6px;">
+        <div class="auth-field" style="flex:1;"><label>Secteur d'activité <span style="color:var(--dim);font-weight:400;">(optionnel)</span></label><input class="auth-input" id="arBrSect" value="${escapeHtml(brand.secteur || "")}" placeholder="restaurant, hôtellerie, mode…"></div>
+        <div class="auth-field" style="flex:1;"><label>Zone <span style="color:var(--dim);font-weight:400;">(optionnel)</span></label><input class="auth-input" id="arBrZone" value="${escapeHtml(brand.zone || "")}" placeholder="Monaco, Nice, Paris 8e…"></div>
+      </div>
+      <div class="ga-note" style="margin-top:4px;font-size:11px;">Servent à trouver les <b>vrais concurrents locaux</b> (via Google Maps). <b>Laissés vides</b>, ils sont <b>déduits automatiquement</b> de la campagne (zone = géociblage, secteur = mots-clés). À remplir seulement pour affiner.</div>
       <div class="mq-label" style="margin-top:6px;">Identifiants affichés (facultatif — juste pour l'affichage)</div>
       ${nets.map((n) => `<div class="auth-field" style="margin-top:6px;"><label>${arNet(n).ic} ${arNet(n).label}</label><input class="auth-input" data-brnet="${n}" value="${escapeHtml((brand.networks || {})[n] || "")}" placeholder="@compte"></div>`).join("")}
       <div class="ga-note" style="margin-top:14px;">${assetCount ? `${assetCount} compte(s) réseau relié(s)` : "Aucun compte réseau relié"} — pour connecter les vrais comptes (Facebook, Instagram, Ads…), utilise <b>Titan → Argos — Clients</b> (glisser-déposer, réservé aux gérants).</div>
@@ -6036,7 +8605,7 @@ function arBrandModal(brand) {
     if (!name) return;
     const networks = {};
     ov.querySelectorAll("[data-brnet]").forEach((i) => { if (i.value.trim()) networks[i.dataset.brnet] = i.value.trim(); });
-    const r = await window.olympus.argosBrandSave({ id: brand.id, name, secteur: ov.querySelector("#arBrSect").value.trim(), networks });
+    const r = await window.olympus.argosBrandSave({ id: brand.id, name, secteur: ov.querySelector("#arBrSect").value.trim(), zone: ov.querySelector("#arBrZone").value.trim(), networks });
     arState = null; if (r.ok && r.brand) arBrand = r.brand.id; arInvalidate();
     close(); renderArgos();
   };
@@ -6047,7 +8616,7 @@ function arBrandModal(brand) {
     arState = null; arBrand = null; arInvalidate(); close(); renderArgos();
   };
 }
-$("arNewBrand").onclick = () => arBrandModal();
+{ const nb = $("setNewBrand"); if (nb) nb.onclick = () => arBrandModal(); }
 document.querySelector('.nav-item[data-page="argos"]').addEventListener("click", renderArgos);
 
 // ══════════ ATLAS (drive — démo) ══════════
@@ -6325,7 +8894,7 @@ function mnSeed() {
     { id: "n1", title: "CR — réunion équipe du 14", body: "Points clés :\n\n— Maison Solène : shoot validé samedi 18, studio Cannes. Astrid cale la shotlist.\n— Villa Riviera : pack réseaux livré, attente retour Marc.\n— Solaris : la campagne Èze surperforme, prévoir un shoot lifestyle plage en août.\n— Recrutement : on relance l'annonce assistant·e prod en septembre.", when: d(4), pinned: true, people: ["Lucas Dubois", "Astrid Berges"], event: null },
     { id: "n2", title: "Checklist matériel — shoot Solène", body: "Boîtiers :\n— A7 IV ×2 + FX6\n— 24-70 GM II, 85 1.4, 35 1.4\n\nLumière :\n— 2× Aputure 600d + softbox 120\n— Réflecteurs, drapeaux\n\nDivers :\n— Fond 2,4 m (blanc + sable)\n— Batteries ×8, CFexpress ×6\n— Steamer pour les vêtements !", when: d(1), pinned: true, people: ["Lucas Dubois"], event: { title: "Shoot produit — Maison Solène", date: "2026-07-18" } },
     { id: "n3", title: "Idées contenu — Solaris août", body: "1. Série « golden hour » sur la plage de la Mala\n2. Macro sur les charnières bois — process artisanal\n3. Duo avec créateur local (cross-post)\n4. UGC : reprendre les 3 meilleurs posts clients\n5. Teaser collection automne fin août", when: d(2), pinned: false, people: ["Astrid Berges"], event: null },
-    { id: "n4", title: "Process livraison client", body: "1. Sélection dans Apollon (48 h après le shoot)\n2. Retouche fine (5 j ouvrés)\n3. Upload Atlas → dossier client\n4. Mail Iris avec lien + suivi d'ouverture\n5. Événement « Rendu » dans Chronos\n6. Facture à J+3 après livraison", when: d(9), pinned: false, people: ["Lucas Dubois", "Astrid Berges"], event: null },
+    { id: "n4", title: "Process livraison client", body: "1. Sélection dans Apollon (48 h après le shoot)\n2. Retouche fine (5 j ouvrés)\n3. Upload Atlas → dossier client\n4. Mail Athéna avec lien + suivi d'ouverture\n5. Événement « Rendu » dans Chronos\n6. Facture à J+3 après livraison", when: d(9), pinned: false, people: ["Lucas Dubois", "Astrid Berges"], event: null },
     { id: "n5", title: "Idées perso", body: "— Nouveau boîtier : attendre l'annonce de septembre\n— Formation colorimétrie DaVinci (Lucas intéressé aussi)\n— Regarder les studios plus grands à Sophia", when: d(6), pinned: false, people: [], event: null },
   ];
 }
@@ -6463,12 +9032,210 @@ function showAuthView(id) {
   $("hub").classList.add("hidden");
 }
 
+// ══════════ Iris — accueil / assistante IA ══════════
+// (Renommage 2026 : l'assistant s'appelle « Iris » à l'écran. Préfixes internes `at*` + ids `rbAthena*`/`ic-athena`
+//  conservés pour éviter un refactor risqué. « Athéna » désigne désormais le MAIL, dont le code reste préfixé `ir*`/`page-iris`.)
+let atMessages = [];   // historique multi-tours envoyé à l'API [{role, content}]
+let atBusy = false;
+// Sélecteur de modèle façon Claude Code (choix réel du modèle Claude utilisé par Athéna).
+const AT_MODELS = [
+  { id: "claude-opus-4-8", name: "Opus 4.8", sub: "Le plus puissant" },
+  { id: "claude-sonnet-5", name: "Sonnet 5", sub: "Équilibré" },
+  { id: "claude-haiku-4-5", name: "Haiku 4.5", sub: "Rapide & économique" },
+];
+let atModel = localStorage.getItem("athenaModel") || "claude-sonnet-5";
+if (!AT_MODELS.some((m) => m.id === atModel)) atModel = "claude-sonnet-5";
+function atModelLabel(id) { const m = AT_MODELS.find((x) => x.id === id); return m ? m.name : "Sonnet 5"; }
+function atRenderModel() { const el = $("atModelName"); if (el) el.textContent = atModelLabel(atModel); }
+function atModelMenu(anchor) {
+  document.querySelectorAll(".at-modelmenu").forEach((m) => m.remove());
+  const menu = document.createElement("div"); menu.className = "at-modelmenu";
+  menu.innerHTML = AT_MODELS.map((m) => `<div class="at-mm-item${m.id === atModel ? " on" : ""}" data-model="${m.id}"><span class="mm-check">✓</span><span>${m.name}</span><span class="mm-sub">${m.sub}</span></div>`).join("");
+  document.body.appendChild(menu);
+  const r = anchor.getBoundingClientRect();
+  menu.style.left = Math.max(10, Math.min(r.left, window.innerWidth - menu.offsetWidth - 10)) + "px";
+  menu.style.top = (r.top - menu.offsetHeight - 8) + "px";
+  menu.querySelectorAll("[data-model]").forEach((it) => it.onclick = () => { atModel = it.dataset.model; localStorage.setItem("athenaModel", atModel); atRenderModel(); menu.remove(); });
+  setTimeout(() => { const close = (e) => { if (!e.target.closest(".at-modelmenu") && e.target !== anchor && !anchor.contains(e.target)) { menu.remove(); document.removeEventListener("mousedown", close, true); } }; document.addEventListener("mousedown", close, true); }, 0);
+}
+function atGreeting() {
+  const h = new Date().getHours();
+  const g = h < 5 ? "Bonne nuit" : h < 18 ? "Bonjour" : "Bonsoir";
+  const first = (currentUserName || "").trim().split(/\s+/)[0] || "";
+  const el = $("atHello"); if (el) el.textContent = first ? `${g} ${first}` : g;
+}
+function atMd(t) { return escapeHtml(String(t || "")).replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>"); }
+function atScrollBottom() { const s = $("atScroll"); if (s) s.scrollTop = s.scrollHeight; }
+function atAutosize() { const t = $("atInput"); if (!t) return; t.style.height = "auto"; t.style.height = Math.min(160, t.scrollHeight) + "px"; }
+function atAddMsg(role, text) {
+  $("atWrap").classList.add("chatting");
+  const el = document.createElement("div");
+  el.className = "at-msg " + (role === "user" ? "user" : "ai");
+  el.innerHTML = (role === "user" ? "" : `<div class="at-av">✦</div>`) + `<div class="at-bubble">${atMd(text)}</div>`;
+  $("atThread").appendChild(el); atScrollBottom();
+}
+function atTyping(on) {
+  let t = document.getElementById("atTypingRow");
+  if (on) { if (t) return; t = document.createElement("div"); t.id = "atTypingRow"; t.className = "at-msg ai"; t.innerHTML = `<div class="at-av">✦</div><div class="at-bubble"><span class="at-typing"><i></i><i></i><i></i></span></div>`; $("atThread").appendChild(t); atScrollBottom(); }
+  else if (t) t.remove();
+}
+// Contexte temps réel injecté dans le prompt : agenda du jour + à venir, chats non lus, mails à traiter.
+async function atGatherContext() {
+  const lines = [], now = new Date();
+  const iso = (d) => isoD(d.getFullYear(), d.getMonth(), d.getDate());
+  const today = iso(now);
+  lines.push("Date : " + now.toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric" }) + ".");
+  try {
+    const far = new Date(now.getTime() + 8 * 864e5);
+    const r = await window.olympus.chronosList(today, iso(far));
+    const evs = (r.ok ? r.events : []).filter((e) => !e.done);
+    const todayEv = evs.filter((e) => e.date === today).sort((a, b) => (a.time || "").localeCompare(b.time || ""));
+    const soon = evs.filter((e) => e.date > today).sort((a, b) => a.date.localeCompare(b.date) || (a.time || "").localeCompare(b.time || "")).slice(0, 8);
+    lines.push(`\nAGENDA D'AUJOURD'HUI (${todayEv.length}) :`);
+    lines.push(todayEv.length ? todayEv.map((e) => ` - ${e.time ? e.time.slice(0, 5) : "journée"}${e.end_time ? "–" + e.end_time.slice(0, 5) : ""} · ${e.title}${e.location ? " (" + e.location + ")" : ""}`).join("\n") : " (rien de prévu)");
+    if (soon.length) lines.push("\nÀ VENIR (prochains jours) :\n" + soon.map((e) => ` - ${rbDM(e.date)}${e.time ? " " + e.time.slice(0, 5) : ""} · ${e.title}`).join("\n"));
+  } catch {}
+  try {
+    const un = (typeof hmConvs !== "undefined" ? hmConvs : []).filter((c) => c.unread > 0);
+    if (un.length) lines.push("\nCHATS NON LUS (Hermès) :\n" + un.map((c) => ` - ${c.name} (${c.unread} message${c.unread > 1 ? "s" : ""})`).join("\n"));
+  } catch {}
+  try {
+    const unread = (typeof irMails !== "undefined" ? irMails : []).filter((m) => m.dir === "in" && m.unread && !m.trash).slice(0, 8);
+    if (unread.length) lines.push("\nE-MAILS À TRAITER (Athéna) :\n" + unread.map((m) => ` - ${m.toName || m.to} — « ${m.subject} »${m.client ? " [" + m.client + "]" : ""}`).join("\n"));
+  } catch {}
+  return lines.join("\n");
+}
+async function atSend(text) {
+  text = (text != null ? text : $("atInput").value).trim();
+  if (!text || atBusy) return;
+  if (!(await aiEnsureKey())) return;
+  atBusy = true; $("atSend").disabled = true;
+  $("atInput").value = ""; atAutosize();
+  atAddMsg("user", text);
+  atMessages.push({ role: "user", content: text });
+  atTyping(true);
+  const context = await atGatherContext();
+  const r = await window.olympus.aiChat({ messages: atMessages, context, userName: currentUserName, model: atModel }).catch((e) => ({ ok: false, error: String(e) }));
+  atTyping(false); atBusy = false; $("atSend").disabled = false;
+  if (!r || !r.ok) {
+    atMessages.pop();
+    if (r && r.needKey) { if (await aiKeyModal()) return atSend(text); return; }
+    atAddMsg("ai", "⚠️ " + ((r && r.error) || "Je n'ai pas pu répondre pour le moment."));
+    return;
+  }
+  atMessages.push({ role: "assistant", content: r.text });
+  atAddMsg("ai", r.text);
+  atPersist();   // sauvegarde la conversation (reprise possible depuis la colonne de droite)
+  if (r.cost) { const c = $("atCost"); if (c) { c.textContent = "Dernière requête : " + aiFmtCost(r.cost); c.title = `Entrée ${r.cost.inTok} · sortie ${r.cost.outTok} tokens (estimé)`; } }
+  $("atInput").focus();
+}
+function atNewConversation() {
+  atConvId = null; atMessages = []; $("atThread").innerHTML = ""; $("atWrap").classList.remove("chatting");
+  const c = $("atCost"); if (c) c.textContent = "";
+  $("atInput").value = ""; atAutosize(); $("atInput").focus();
+}
+// ── Persistance des conversations Athéna (localStorage) : reprendre / démarrer ──
+let atConvId = null;
+function atLoadConvs() { try { return JSON.parse(localStorage.getItem("athenaConvs") || "[]"); } catch { return []; } }
+function atSaveConvs(list) { try { localStorage.setItem("athenaConvs", JSON.stringify(list.slice(0, 80))); } catch {} }
+function atConvTitle(msgs) { const f = msgs.find((m) => m.role === "user"); const t = ((f ? f.content : "Conversation") || "Conversation").replace(/\s+/g, " ").trim() || "Conversation"; return t.length > 48 ? t.slice(0, 48) + "…" : t; }
+function atRelTime(ts) {
+  const min = Math.floor((Date.now() - ts) / 60000);
+  if (min < 1) return "à l'instant";
+  if (min < 60) return "il y a " + min + " min";
+  if (min < 1440) return "il y a " + Math.floor(min / 60) + " h";
+  const days = Math.floor(min / 1440);
+  if (days === 1) return "hier";
+  if (days < 7) return "il y a " + days + " j";
+  return new Date(ts).toLocaleDateString("fr-FR", { day: "numeric", month: "short" });
+}
+function atPersist() {
+  if (!atMessages.length) return;
+  const list = atLoadConvs();
+  if (!atConvId) atConvId = "c" + Date.now().toString(36) + Math.floor(Math.random() * 1e4).toString(36);
+  const conv = { id: atConvId, title: atConvTitle(atMessages), messages: atMessages.slice(), updated: Date.now() };
+  const idx = list.findIndex((c) => c.id === atConvId);
+  if (idx >= 0) list[idx] = conv; else list.unshift(conv);
+  list.sort((a, b) => b.updated - a.updated);
+  atSaveConvs(list);
+  if (typeof rbView !== "undefined" && rbView === 3) rbRenderAthenaConvs();
+}
+function atOpenConv(id) {
+  const conv = atLoadConvs().find((c) => c.id === id); if (!conv) return;
+  atConvId = conv.id; atMessages = (conv.messages || []).slice();
+  $("atThread").innerHTML = ""; $("atWrap").classList.add("chatting");
+  for (const m of atMessages) atAddMsg(m.role === "assistant" ? "ai" : "user", m.content);
+  const c = $("atCost"); if (c) c.textContent = "";
+  goTo("home"); setTimeout(atScrollBottom, 60);
+}
+function atStartNew() { atNewConversation(); goTo("home"); setTimeout(() => $("atInput").focus(), 40); }
+// Vue « Conversations Athéna » de la colonne droite (4e onglet)
+function rbRenderAthenaConvs() {
+  const el = $("rbAthenaConvs"); if (!el) return;
+  const list = atLoadConvs();
+  el.innerHTML = list.length ? list.map((c) => {
+    const n = (c.messages || []).filter((m) => m.role === "user").length;
+    return `<div class="rb-conv${c.id === atConvId ? " on" : ""}" data-atconv="${escapeHtml(c.id)}">
+      <div class="rb-conv-main"><div class="rb-conv-t">${escapeHtml(c.title)}</div>
+      <div class="rb-conv-m">${escapeHtml(atRelTime(c.updated))} · ${n} message${n > 1 ? "s" : ""}</div></div>
+      <button class="rb-conv-del" data-atdel="${escapeHtml(c.id)}" title="Supprimer">✕</button>
+    </div>`;
+  }).join("") : '<div class="rb-empty">Aucune conversation pour l\'instant.</div>';
+}
+(function wireAthena() {
+  const inp = $("atInput"); if (!inp) return;
+  inp.addEventListener("input", atAutosize);
+  inp.addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); atSend(); } });
+  $("atSend").onclick = () => atSend();
+  $("atSugs").addEventListener("click", (e) => { const b = e.target.closest("[data-sug]"); if (b) atSend(b.dataset.sug); });
+  $("atNew").onclick = atNewConversation;
+  $("atModelBtn").onclick = (e) => atModelMenu(e.currentTarget);
+  atRenderModel();
+})();
+
+// ══════════ Bouton version / mise à jour (bas de la barre latérale) ══════════
+(function initUpdateBtn() {
+  const btn = $("navUpdate"); if (!btn) return;
+  const sub = $("nuSub"), ic = $("nuIc");
+  let available = false, updating = false;
+  window.olympus.appInfo().then((i) => { if (i && !available) sub.textContent = "v" + i.version + " · à jour"; }).catch(() => {});
+  async function check(manual) {
+    if (updating) return;
+    btn.classList.add("checking"); if (manual) sub.textContent = "Vérification…";
+    const r = await window.olympus.appCheckUpdate().catch(() => ({ ok: false }));
+    btn.classList.remove("checking");
+    if (r && r.ok && r.updateAvailable) {
+      available = true; btn.classList.add("available"); ic.textContent = "↑";
+      sub.textContent = "Mise à jour dispo" + (r.latest ? " · v" + r.latest : "");
+    } else {
+      available = false; btn.classList.remove("available"); ic.textContent = "✓";
+      const cur = r && r.current; sub.textContent = cur ? "v" + cur + " · à jour" : "à jour";
+      if (manual && r && !r.ok) { ic.textContent = "⟳"; sub.textContent = "Vérif. impossible"; }
+    }
+  }
+  async function doUpdate() {
+    if (!available || updating) return;
+    updating = true; btn.classList.remove("available"); btn.classList.add("updating", "checking"); ic.textContent = "⟳";
+    sub.textContent = "Mise à jour…";
+    const r = await window.olympus.appDoUpdate().catch((e) => ({ ok: false, error: String(e) }));
+    if (!r || !r.ok) {   // si ok, l'app redémarre toute seule
+      updating = false; btn.classList.remove("updating", "checking"); available = true; btn.classList.add("available"); ic.textContent = "↑"; sub.textContent = "Échec — réessayer";
+      if (typeof atToast === "function") atToast("Échec de la mise à jour : " + ((r && r.error) || "inconnu"));
+    }
+  }
+  btn.onclick = () => { if (available) doUpdate(); else check(true); };
+  btn.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); btn.click(); } };
+  setTimeout(() => check(false), 1800);                 // 1er contrôle peu après le lancement
+  setInterval(() => check(false), 20 * 60 * 1000);      // puis toutes les 20 min
+})();
+
 function enterHub(user) {
   currentRole = user.role || "classic";
   currentUserId = user.id || null;
   $("auth").classList.add("hidden");
   $("hub").classList.remove("hidden");
   const name = ((user.first_name || "") + " " + (user.last_name || "")).trim() || user.email;
+  currentUserName = name;
   const initial = (user.first_name || user.email || "?").charAt(0).toUpperCase();
   $("accName").textContent = name;
   $("accRole").textContent = user.role === "super_admin" ? "super admin" : "membre";
@@ -6482,7 +9249,8 @@ function enterHub(user) {
   refreshLocks(); refreshEnv(); refreshTitan(); startChat(); renderChronos(); renderWheel(); startPresence(); refreshIris(); refreshClaude(); refreshConnections(); argosPrewarmAll();
   renderArgos(); renderAtlas(); renderApollon(); renderMnemosyne();   // pré-rendu des apps de l'espace de travail
   if (currentRole === "super_admin") refreshMembers();
-  goTo("hermes");
+  atGreeting();
+  goTo("home");
 }
 
 // Connexion
